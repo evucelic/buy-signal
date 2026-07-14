@@ -1,0 +1,7 @@
+numpy
+pandas
+pandas-market-calendars
+yfinance
+selenium
+lxml
+pip-system-certs

@@ -1,0 +1,14 @@
+name: buysignal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pandas
+  - pandas-market-calendars  # US market holidays / trading days (runner.py)
+  - lxml                     # parse FINRA margin-statistics HTML tables (collectors/margin_debt.py)
+  - requests
+  - ipykernel           # run data.ipynb
+  - pip
+  - pip:
+      - yfinance>=1.4   # latest 1.x; pulls in curl_cffi for reliable fetching
+      - selenium        # scrape CME FedWatch (collectors/fed_rate.py); needs a Chrome binary
