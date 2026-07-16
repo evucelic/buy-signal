@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from config import SIGNAL_WEIGHTS
-from signals import vix_signal, rate_signal
+from signals import rate_signal, vix_signal
 # from signals import margin_signal, sector_signal  # enable as built
 
 
@@ -11,10 +11,10 @@ from signals import vix_signal, rate_signal
 class BuySignal:
     score: float            # weighted aggregate
     state: str              # "none" | "soft" | "strong"
-    subsignals: list        # the underlying SubSignal objects
+    subsignals: list       # the underlying SubSignal objects
 
 
-def compute_signal(vix=None):
+def compute_signal(vix: float | None = None) -> BuySignal:
     """Score every available sub-signal and combine them; unbuilt/failing ones are skipped."""
     scorers = [
         lambda: vix_signal.score(vix),

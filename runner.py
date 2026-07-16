@@ -24,11 +24,11 @@ EXTENDED_AFTER = timedelta(hours=4)  # after-hours run 4h past the close
 CLOSED, PRE_MARKET, REGULAR, AFTER_HOURS = "closed", "pre_market", "regular", "after_hours"
 
 
-def _now_et(now=None):
+def _now_et(now: datetime | None = None) -> datetime:
     return now.astimezone(ET) if now else datetime.now(ET)
 
 
-def market_session(now=None):
+def market_session(now: datetime | None = None) -> str:
     """Classify the NYSE session for `now` (any tz; defaults to real time)."""
     now = _now_et(now)
     sched = _NYSE.schedule(start_date=now.date(), end_date=now.date())
@@ -48,7 +48,7 @@ def market_session(now=None):
     return AFTER_HOURS
 
 
-def refresh_macro():
+def refresh_macro() -> None:
     """Refresh the slow macro indicators (#2-#5); skip ones not built yet."""
     from collectors import fed_rate, margin_debt, sectors
 
@@ -61,7 +61,7 @@ def refresh_macro():
             pass
 
 
-def tick(now=None):
+def tick(now: datetime | None = None):
     """One scheduled cycle. Returns the BuySignal, or None when the market is closed."""
     now = _now_et(now)
     session = market_session(now)
@@ -69,7 +69,7 @@ def tick(now=None):
         print(f"[{_stamp(now)}] Market closed — idle.")
         return None
 
-    current_vix = vix.fetch_vix()
+    current_vix = vix.get_latest_vix()
     if session in (PRE_MARKET, AFTER_HOURS) or current_vix >= VIX_SOFT:
         refresh_macro()
 
@@ -78,11 +78,11 @@ def tick(now=None):
     return result
 
 
-def _stamp(now_et):
+def _stamp(now_et: datetime) -> str:
     return f"{now_et:%Y-%m-%d %H:%M %Z} (local {now_et.astimezone():%H:%M %Z})"
 
 
-def report(result, session, now_et=None):
+def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
     print(f"[{_stamp(now_et)}] session={session}")
     print(f"  Signal: {result.state.upper()}  (score {result.score:+.2f})")
