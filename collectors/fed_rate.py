@@ -1,11 +1,18 @@
-"""Scrape CME FedWatch meeting probabilities; cache per-meeting expected rates.
+# TODO implement the changes below
 
-Reduces each meeting to one number, E_t = sum_j p_j * bucket_midpoint_j, and caches
-``meeting_date, expected_rate, current_rate`` (current_rate from FRED). The brittle
-Selenium fetch (`_fetch_html`) is separate from the pure parser (`_parse_probabilities`)
-so the math is testable offline against data/fedwatch_sample.html.
+"""Scrape CME FedWatch meeting probabilities and cache the meeting data.
+
+Collection plan for the current FedRate workflow:
+- pull the FedWatch page
+- find the meeting closest to one year from today
+- if two meetings are equally far away, choose the later one
+- scrape the meeting's Probabilities table from the QuikStrike iframe
+- use the Ease / No Change / Hike percentages directly as the meeting probabilities
+- cache the selected meeting date plus those three probabilities for the signal layer
+
+The brittle Selenium fetch (`_fetch_html`) should stay separate from the pure parsing
+helper so the scraping logic is testable offline.
 """
-
 import io
 import os
 import random

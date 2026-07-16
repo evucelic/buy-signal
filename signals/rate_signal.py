@@ -1,10 +1,17 @@
+# TODO implement the  changes listed below
 """Score indicator #2: Fed rate trajectory from CME FedWatch.
 
-One "Fed tilt" in bps, weighting later meetings more (near meetings are mostly hold):
-    tilt = 100 * sum(w_t * (E_t - current_rate)) / sum(w_t),  w_t = t
-Negative tilt = cuts priced = good for stocks (idea.md #2).
-"""
+Current plan for this signal:
+- use the meeting closest to one year from the current date
+- if two meetings are equally far away, pick the later meeting
+- read the meeting's Ease / No Change / Hike probabilities directly from the
+  FedWatch Probabilities table
+- treat those probabilities as the diagnostic output for this signal
 
+The final checklist pass/fail rule can stay separate from the collector:
+- pass when the selected meeting is not hike-heavy
+- fail when hike probability dominates
+"""
 import numpy as np
 import pandas as pd
 
