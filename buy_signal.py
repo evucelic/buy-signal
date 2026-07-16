@@ -1,54 +1,91 @@
-"""Combine the sub-signals into one weighted-average buy signal."""
+"""Combine the sub-signals into a checklist-style alert."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Callable
 
-from config import SIGNAL_WEIGHTS
 from signals import rate_signal, vix_signal
+from signals.base import SubSignal
 # from signals import margin_signal, sector_signal  # enable as built
 
 
 @dataclass
 class BuySignal:
-    score: float            # weighted aggregate
-    state: str              # "none" | "soft" | "strong"
-    subsignals: list       # the underlying SubSignal objects
+    score: float
+    state: str
+    passing_count: int
+    subsignals: list[SubSignal]
+    missing_signals: list[str] = field(default_factory=list)
+    explanation: str = ""
+
+
+Scorer = tuple[str, Callable[[], SubSignal]]
+
+
+def _evaluate_alert(subsignals_by_name: dict[str, SubSignal], missing_signals: list[str]) -> tuple[str, str]:
+    vix = subsignals_by_name.get("vix")
+    fed_rate = subsignals_by_name.get("fed_rate")
+
+    if vix is None or fed_rate is None:
+        return "none", "NONE: VIX or rate signal is unavailable."
+    if not vix.passes or not fed_rate.passes:
+        return "none", "NONE: VIX fear and non-hiking rates are not both present."
+
+    if missing_signals:
+        return (
+            "soft",
+            "SOFT: VIX fear + non-hiking rates; missing signals: " + ", ".join(sorted(set(missing_signals))),
+        )
+    return "strong", "STRONG: VIX fear + non-hiking rates."
 
 
 def compute_signal(vix: float | None = None) -> BuySignal:
-    """Score every available sub-signal and combine them; unbuilt/failing ones are skipped."""
-    scorers = [
-        lambda: vix_signal.score(vix),
-        rate_signal.score,
-        # margin_signal.score,
-        # sector_signal.score,
+    """Score every available sub-signal and combine them via explicit checklist rules."""
+    scorers: list[Scorer] = [
+        ("vix", lambda: vix_signal.score(vix)),
+        ("fed_rate", rate_signal.score),
+        # ("margin_debt", margin_signal.score),
+        # ("sector", sector_signal.score),
     ]
-    subs = []
-    for scorer in scorers:
+
+    subsignals_by_name: dict[str, SubSignal] = {}
+    missing_signals: list[str] = []
+
+    for name, scorer in scorers:
         try:
-            subs.append(scorer())
+            signal = scorer()
         except NotImplementedError:
-            continue  # collector not built yet
-        except Exception as exc:  # a flaky/missing source must not kill the signal
-            print(f"signal skipped ({type(exc).__name__}: {exc})")
+            missing_signals.append(name)
+            continue
+        except Exception as exc:
+            missing_signals.append(name)
+            print(f"signal skipped ({name}: {type(exc).__name__}: {exc})")
+            continue
 
-    if not subs:
-        return BuySignal(0.0, "none", subs)
+        subsignals_by_name[name] = signal
+        if not signal.passes and signal.state == "unavailable":
+            missing_signals.append(name)
 
-    total_weight = sum(SIGNAL_WEIGHTS.get(s.name, 1.0) for s in subs)
-    score = sum(s.score * SIGNAL_WEIGHTS.get(s.name, 1.0) for s in subs) / total_weight
+    subsignals = list(subsignals_by_name.values())
+    passing_count = sum(1 for signal in subsignals if signal.passes)
+    score = passing_count / len(subsignals) if subsignals else 0.0
+    state, explanation = _evaluate_alert(subsignals_by_name, missing_signals)
 
-    if score >= 0.66:
-        state = "strong"
-    elif score >= 0.33:
-        state = "soft"
-    else:
-        state = "none"
-
-    return BuySignal(score, state, subs)
+    return BuySignal(
+        score=score,
+        state=state,
+        passing_count=passing_count,
+        subsignals=subsignals,
+        missing_signals=sorted(set(missing_signals)),
+        explanation=explanation,
+    )
 
 
 if __name__ == "__main__":
     result = compute_signal()
-    print(f"Signal: {result.state.upper()}  (score {result.score:+.2f})")
-    for s in result.subsignals:
-        print(f"  - {s.name:12s} {s.state:6s} {s.detail}")
+    print(f"Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
+    print(f"Rule: {result.explanation}")
+    if result.missing_signals:
+        print(f"Missing: {', '.join(result.missing_signals)}")
+    for signal in result.subsignals:
+        status = "PASS" if signal.passes else "FAIL"
+        print(f"  - {signal.name:12s} {status:4s} {signal.state:11s} {signal.detail}")

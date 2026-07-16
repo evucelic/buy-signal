@@ -12,8 +12,6 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from buy_signal import compute_signal
-from collectors import vix
-from config import VIX_SOFT
 
 ET = ZoneInfo("America/New_York")
 _NYSE = mcal.get_calendar("XNYS")
@@ -62,18 +60,18 @@ def refresh_macro() -> None:
 
 
 def tick(now: datetime | None = None):
-    """One scheduled cycle. Returns the BuySignal, or None when the market is closed."""
+    """One scheduled cycle. Returns the alert result, or None when the market is closed."""
     now = _now_et(now)
     session = market_session(now)
     if session == CLOSED:
         print(f"[{_stamp(now)}] Market closed — idle.")
         return None
 
-    current_vix = vix.get_latest_vix()
-    if session in (PRE_MARKET, AFTER_HOURS) or current_vix >= VIX_SOFT:
+    result = compute_signal()
+    current_vix = next((signal for signal in result.subsignals if signal.name == "vix"), None)
+    if current_vix is not None and (session in (PRE_MARKET, AFTER_HOURS) or current_vix.passes):
         refresh_macro()
 
-    result = compute_signal(vix=current_vix)
     report(result, session, now)
     return result
 
@@ -85,9 +83,13 @@ def _stamp(now_et: datetime) -> str:
 def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
     print(f"[{_stamp(now_et)}] session={session}")
-    print(f"  Signal: {result.state.upper()}  (score {result.score:+.2f})")
+    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
+    print(f"  Rule: {result.explanation}")
+    if result.missing_signals:
+        print(f"  Missing: {', '.join(result.missing_signals)}")
     for s in result.subsignals:
-        print(f"    - {s.name:12s} {s.state:6s} {s.detail}")
+        status = "PASS" if s.passes else "FAIL"
+        print(f"    - {s.name:12s} {status:4s} {s.state:11s} {s.detail}")
 
 
 if __name__ == "__main__":

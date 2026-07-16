@@ -14,9 +14,9 @@ def score(vix: float | None = None) -> SubSignal:
         vix = get_latest_vix()
 
     if vix >= VIX_STRONG:
-        return SubSignal("vix", 1.0, STRONG, f"VIX {vix:.1f} >= {VIX_STRONG}, high fear")
+        return SubSignal("vix", vix, STRONG, f"VIX {vix:.1f} >= {VIX_STRONG}, high fear", passes=True)
     if vix >= VIX_SOFT:
-        return SubSignal("vix", 0.6, SOFT, f"VIX {vix:.1f} in soft band")
+        return SubSignal("vix", vix, SOFT, f"VIX {vix:.1f} in soft band", passes=True)
     if vix <= VIX_OPTIMISTIC:
-        return SubSignal("vix", -0.5, NONE, f"VIX {vix:.1f} very low, optimistic/complacent")
-    return SubSignal("vix", 0.0, NONE, f"VIX {vix:.1f} calm, no signal")
+        return SubSignal("vix", vix, NONE, f"VIX {vix:.1f} very low, optimistic/complacent", passes=False)
+    return SubSignal("vix", vix, NONE, f"VIX {vix:.1f} calm, no signal", passes=False)

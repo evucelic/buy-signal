@@ -13,7 +13,7 @@ from config import FED_EASE_BPS, FED_HIKE_BPS, FEDWATCH_HORIZON_MONTHS
 from signals.base import SubSignal
 
 
-def score():
+def score() -> SubSignal:
     df = latest_fedwatch().sort_values("meeting_date").reset_index(drop=True)
 
     cutoff = df["meeting_date"].iloc[0] + pd.DateOffset(months=FEDWATCH_HORIZON_MONTHS)
@@ -27,11 +27,11 @@ def score():
     tilt_bps = 100 * np.sum(weights * delta) / np.sum(weights)
 
     if tilt_bps <= FED_EASE_BPS:
-        sig, state = 1.0, "cutting"
+        state = "cutting"
     elif tilt_bps >= FED_HIKE_BPS:
-        sig, state = -1.0, "hiking"
+        state = "hiking"
     else:
-        sig, state = 0.0, "flat"
+        state = "flat"
 
     # Per-meeting expected move (bps) vs the current rate.
     moves = ", ".join(
@@ -39,4 +39,4 @@ def score():
         for d, e in zip(df["meeting_date"], expected)
     )
     detail = f"tilt {tilt_bps:+.1f}bp vs {current:.2f}% now | moves: {moves}"
-    return SubSignal("fed_rate", sig, state, detail)
+    return SubSignal("fed_rate", tilt_bps, state, detail, passes=state != "hiking")

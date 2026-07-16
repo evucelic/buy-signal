@@ -9,7 +9,7 @@ import yfinance as yf
 
 from config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER
 
-_RECENT_WINDOW = "5d"
+_RECENT_WINDOW = "5d" # 5 days to have some leeway with failing to fetch
 
 
 def _download_close(period: str) -> pd.Series | None:
@@ -44,10 +44,10 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
     if first_run:
         filepath.parent.mkdir(parents=True, exist_ok=True)
     else:
-        old = pd.read_csv(filepath, index_col=0)["Close"]
+        old = pd.read_csv(filepath, index_col=0)["Close"] # fetch the old data from cache (CSV file on machine)
         old.index = pd.to_datetime(old.index, utc=True)
-        new = pd.concat([old, new])
-        new = new[~new.index.duplicated(keep="last")].sort_index()
+        new = pd.concat([old, new]) # concat the new and old dataframes
+        new = new[~new.index.duplicated(keep="last")].sort_index() # deduplicate indexes if they overlap
 
     new.to_csv(filepath)
     print(f"VIX cache updated: {len(new)} rows, latest {new.index[-1]} = {new.iloc[-1]:.2f}")
@@ -55,7 +55,7 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
 
 
 def load_latest_cached_vix(filepath: Path = VIX_CSV) -> float | None:
-    """Most recent cached VIX close, without fetching."""
+    """Most recent cached VIX close, without fetching. Returns the last row of the VIX CSV file"""
     filepath = Path(filepath)
     if not filepath.exists():
         return None
@@ -67,7 +67,7 @@ def load_latest_cached_vix(filepath: Path = VIX_CSV) -> float | None:
 
 
 def get_latest_vix(filepath: Path = VIX_CSV) -> float:
-    """Refresh the cache and return the current VIX close."""
+    """Refresh the cache and return the current (last recorded in the CSV file) VIX close."""
     filepath = Path(filepath)
     first_run = not filepath.exists()
     refreshed = refresh_vix_cache(filepath)
