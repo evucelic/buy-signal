@@ -1,49 +1,67 @@
-# TODO implement the  changes listed below
-"""Score indicator #2: Fed rate trajectory from CME FedWatch.
+"""Score the one-year CME FedWatch rate outlook."""
 
-Current plan for this signal:
-- use the meeting closest to one year from the current date
-- if two meetings are equally far away, pick the later meeting
-- read the meeting's Ease / No Change / Hike probabilities directly from the
-  FedWatch Probabilities table
-- treat those probabilities as the diagnostic output for this signal
+from __future__ import annotations
 
-The final checklist pass/fail rule can stay separate from the collector:
-- pass when the selected meeting is not hike-heavy
-- fail when hike probability dominates
-"""
-import numpy as np
 import pandas as pd
 
 from collectors.fed_rate import latest_fedwatch
-from config import FED_EASE_BPS, FED_HIKE_BPS, FEDWATCH_HORIZON_MONTHS
 from signals.base import SubSignal
 
 
+def _meeting(df: pd.DataFrame, horizon: str) -> pd.Series:
+    """Return the meeting row for a horizon, or the latest row if missing."""
+    if "horizon" in df.columns:
+        matches = df.loc[df["horizon"] == horizon]
+        if not matches.empty:
+            return matches.iloc[0]
+    return df.iloc[-1]
+
+
+def _probabilities(meeting: pd.Series) -> tuple[float, float, float]:
+    """Return Ease, No Change, and Hike probabilities from one meeting row."""
+    ease = float(meeting.get("prob_ease", 0.0))
+    no_change = float(meeting.get("prob_no_change", 0.0))
+    hike = float(meeting.get("prob_hike", 0.0))
+    return ease, no_change, hike
+
+
+def _format_meeting(label: str, meeting: pd.Series) -> str:
+    """Format one meeting's probabilities for the signal detail."""
+    ease, no_change, hike = _probabilities(meeting)
+    return (
+        f"{label} {meeting['meeting_date'].date()} | "
+        f"ease {ease:.1%}, no change {no_change:.1%}, hike {hike:.1%}"
+    )
+
+
 def score() -> SubSignal:
+    """Return the FedWatch sub-signal for the one-year meeting."""
     df = latest_fedwatch().sort_values("meeting_date").reset_index(drop=True)
 
-    cutoff = df["meeting_date"].iloc[0] + pd.DateOffset(months=FEDWATCH_HORIZON_MONTHS)
-    df = df[df["meeting_date"] <= cutoff]
+    meetings = {
+        "nearest": _meeting(df, "nearest"),
+        "6m": _meeting(df, "six_month"),
+        "1y": _meeting(df, "one_year"),
+    }
 
-    expected = df["expected_rate"].to_numpy()
-    # Anchor to today's actual rate (FRED); fall back to nearest meeting for old caches.
-    current = float(df["current_rate"].iloc[0]) if "current_rate" in df.columns else expected[0]
-    delta = expected - current
-    weights = np.arange(1, len(expected) + 1)
-    tilt_bps = 100 * np.sum(weights * delta) / np.sum(weights)
+    ease, no_change, hike = _probabilities(meetings["1y"])
 
-    if tilt_bps <= FED_EASE_BPS:
-        state = "cutting"
-    elif tilt_bps >= FED_HIKE_BPS:
+    if hike > max(ease, no_change):
         state = "hiking"
+    elif ease > max(no_change, hike):
+        state = "cutting"
     else:
         state = "flat"
 
-    # Per-meeting expected move (bps) vs the current rate.
-    moves = ", ".join(
-        f"{d.strftime('%b%y')} {100 * (e - current):+.0f}"
-        for d, e in zip(df["meeting_date"], expected)
+    detail = " | ".join(
+        _format_meeting(label, meeting)
+        for label, meeting in meetings.items()
     )
-    detail = f"tilt {tilt_bps:+.1f}bp vs {current:.2f}% now | moves: {moves}"
-    return SubSignal("fed_rate", tilt_bps, state, detail, passes=state != "hiking")
+
+    return SubSignal(
+        "fed_rate",
+        hike,
+        state,
+        detail,
+        passes=state != "hiking",
+    )

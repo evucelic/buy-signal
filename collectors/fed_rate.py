@@ -1,134 +1,216 @@
-# TODO implement the changes below
+"""Collect CME FedWatch probabilities for three time horizons."""
 
-"""Scrape CME FedWatch meeting probabilities and cache the meeting data.
+from __future__ import annotations
 
-Collection plan for the current FedRate workflow:
-- pull the FedWatch page
-- find the meeting closest to one year from today
-- if two meetings are equally far away, choose the later one
-- scrape the meeting's Probabilities table from the QuikStrike iframe
-- use the Ease / No Change / Hike percentages directly as the meeting probabilities
-- cache the selected meeting date plus those three probabilities for the signal layer
-
-The brittle Selenium fetch (`_fetch_html`) should stay separate from the pure parsing
-helper so the scraping logic is testable offline.
-"""
-import io
-import os
 import random
+import re
 import time
-import urllib.request
+from pathlib import Path
 
 import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
-from config import (FEDWATCH_CSV, FEDWATCH_URL, FETCH_JITTER_SEC, FRED_TARGET_RANGE_CSV,
-                    SCRAPE_BACKOFF_SEC, SCRAPE_RETRIES, USER_AGENTS)
+from config import (
+    FEDWATCH_CSV,
+    FEDWATCH_URL,
+    FETCH_JITTER_SEC,
+    SCRAPE_BACKOFF_SEC,
+    SCRAPE_RETRIES,
+)
+
+_HORIZONS = {
+    "nearest": pd.DateOffset(),
+    "six_month": pd.DateOffset(months=6),
+    "one_year": pd.DateOffset(years=1),
+}
+
+_TABLE_XPATH = (
+    "//table[contains(concat(' ', normalize-space(@class), ' '), ' grid-thm ')"
+    " and .//th[normalize-space()='Ease']"
+    " and .//th[normalize-space()='No Change']"
+    " and .//th[normalize-space()='Hike']]"
+)
+
+_DATE_PATTERN = re.compile(r"\b\d{1,2}/\d{1,2}/\d{4}\b")
 
 
-def _build_driver():
-    """Headless Chrome with the stealth needed for CME to serve the real page."""
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
+def _build_driver() -> webdriver.Chrome:
+    """Return a headless Chrome driver."""
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1200")
 
-    opts = Options()
-    for arg in ("--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"):
-        opts.add_argument(arg)
-    opts.add_argument(f"--window-size={random.randint(1680, 1920)},{random.randint(1200, 1440)}")
-    opts.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-
-    driver = webdriver.Chrome(options=opts)
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument",
-                           {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"})
+    driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(60)
     return driver
 
 
-def _fetch_html():
-    """Scrape and return the FedWatch probabilities table HTML (meeting x bucket grid)."""
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.support.ui import WebDriverWait
+def _percentage(text: str) -> float:
+    """Convert a percentage string to a decimal probability."""
+    return float(text.replace("%", "").strip()) / 100
 
+
+def _fetch_meeting_probabilities() -> pd.DataFrame:
+    """Scrape meeting probabilities into a DataFrame."""
     driver = _build_driver()
+
     try:
         driver.get(FEDWATCH_URL)
         wait = WebDriverWait(driver, 40)
-        driver.switch_to.frame(wait.until(EC.presence_of_element_located(
-            (By.CSS_SELECTOR, "iframe[id^='cmeIframe-']"))))   # the QuikStrike iframe
-        tab = wait.until(EC.presence_of_element_located(
-            (By.XPATH, "//a[normalize-space()='Probabilities']")))
-        driver.execute_script("arguments[0].click();", tab)   # JS click dodges the sticky header
-        table = wait.until(EC.presence_of_element_located(
-            (By.XPATH, "//table[contains(., 'Conditional Meeting Probabilities')]")))
-        return table.get_attribute("outerHTML")
+
+        iframe = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "iframe[id^='cmeIframe-']")
+            )
+        )
+        driver.switch_to.frame(iframe)
+
+        probability_tab = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//a[normalize-space()='Probabilities']")
+            )
+        )
+        driver.execute_script("arguments[0].click()", probability_tab)
+
+        tables = wait.until(
+            EC.presence_of_all_elements_located((By.XPATH, _TABLE_XPATH))
+        )
+
+        rows: list[dict] = []
+        seen_dates: set[pd.Timestamp] = set()
+
+        for table in tables:
+            try:
+                card = table.find_element(
+                    By.XPATH,
+                    "ancestor::*[contains(normalize-space(.), '/')][1]",
+                )
+                date_match = _DATE_PATTERN.search(card.text)
+                values = table.find_elements(
+                    By.CSS_SELECTOR,
+                    "tr:last-child td.number",
+                )
+
+                if not date_match or len(values) != 3:
+                    continue
+
+                meeting_date = pd.to_datetime(
+                    date_match.group(),
+                    format="%m/%d/%Y",
+                )
+
+                if meeting_date in seen_dates:
+                    continue
+
+                ease, no_change, hike = map(
+                    _percentage,
+                    (cell.text for cell in values),
+                )
+
+                rows.append(
+                    {
+                        "meeting_date": meeting_date,
+                        "prob_ease": ease,
+                        "prob_no_change": no_change,
+                        "prob_hike": hike,
+                    }
+                )
+                seen_dates.add(meeting_date)
+
+            except (ValueError, TypeError):
+                continue
+
+        if not rows:
+            raise ValueError("No FedWatch meeting probabilities found.")
+
+        return (
+            pd.DataFrame(rows)
+            .sort_values("meeting_date")
+            .reset_index(drop=True)
+        )
+
     finally:
         driver.quit()
 
 
-def _bucket_midpoint(label):
-    """Midpoint (%) of a bucket like '275-300' (bps) or '4.25-4.50' (%)."""
-    low, high = (float(x) for x in label.split("-"))
-    if low > 100 and high > 100:   # bps -> percent
-        low, high = low / 100, high / 100
-    return (low + high) / 2
+def _select_meetings(
+    meetings: pd.DataFrame,
+    today: pd.Timestamp,
+) -> pd.DataFrame:
+    """Select the nearest, six-month, and one-year meetings."""
+    rows = []
+
+    for horizon, offset in _HORIZONS.items():
+        target = today + offset
+        distance = (meetings["meeting_date"] - target).abs()
+        candidates = meetings.loc[distance == distance.min()]
+        meeting = candidates.sort_values("meeting_date").iloc[-1]
+
+        rows.append({**meeting.to_dict(), "horizon": horizon})
+
+    return pd.DataFrame(rows)
 
 
-def _parse_probabilities(html):
-    """Probabilities table HTML -> DataFrame[meeting_date, expected_rate]. Pure, no network."""
-    df = pd.read_html(io.StringIO(html))[0]
-    df.columns = [c[-1] if isinstance(c, tuple) else c for c in df.columns]
-
-    dates = pd.to_datetime(df["Meeting Date"], format="%m/%d/%Y")
-    buckets = [c for c in df.columns if c != "Meeting Date"]
-    probs = df[buckets].apply(lambda s: s.astype(str).str.rstrip("%").astype(float) / 100)
-    midpoints = pd.Series({b: _bucket_midpoint(b) for b in buckets})
-    return pd.DataFrame({"meeting_date": dates,
-                         "expected_rate": probs.mul(midpoints, axis=1).sum(axis=1)})
-
-
-def _current_target_rate():
-    """Current fed funds target midpoint (%) from FRED's range bounds."""
-    raw = urllib.request.urlopen(FRED_TARGET_RANGE_CSV, timeout=30).read()
-    last = pd.read_csv(io.BytesIO(raw)).dropna().iloc[-1]
-    return (float(last["DFEDTARU"]) + float(last["DFEDTARL"])) / 2
-
-
-def update_fed_rate_data(filepath=FEDWATCH_CSV):
-    """Scrape FedWatch + current rate; cache the snapshot (overwrite). Never crashes."""
-    filepath = str(filepath)
-    time.sleep(random.uniform(*FETCH_JITTER_SEC))   # jitter before the first attempt
-
+def _fetch_with_retries() -> pd.DataFrame | None:
+    """Fetch meeting probabilities with retry/backoff."""
     for attempt in range(SCRAPE_RETRIES):
         try:
-            snapshot = _parse_probabilities(_fetch_html())
-            break
-        except Exception as exc:   # scrape/parse is brittle; back off and retry
+            return _fetch_meeting_probabilities()
+        except Exception as exc:
             if attempt + 1 == SCRAPE_RETRIES:
-                print(f"FedWatch scrape failed after {SCRAPE_RETRIES} tries "
-                      f"({type(exc).__name__}); cache unchanged.")
-                return
-            wait = SCRAPE_BACKOFF_SEC * 2 ** attempt + random.uniform(0, 1)
-            print(f"FedWatch attempt {attempt + 1} failed ({type(exc).__name__}); retry in {wait:.0f}s")
-            time.sleep(wait)
+                print(
+                    f"FedWatch scrape failed after {SCRAPE_RETRIES} tries "
+                    f"({type(exc).__name__}); cache unchanged."
+                )
+                return None
 
-    try:
-        current = _current_target_rate()
-    except Exception as exc:   # fall back to the nearest meeting if FRED is unreachable
-        current = float(snapshot["expected_rate"].iloc[0])
-        print(f"FRED current-rate fetch failed ({type(exc).__name__}); using nearest meeting {current:.3f}%")
-    snapshot["current_rate"] = current
+            delay = (
+                SCRAPE_BACKOFF_SEC * 2**attempt
+                + random.uniform(0, 1)
+            )
+            print(
+                f"FedWatch attempt {attempt + 1} failed "
+                f"({type(exc).__name__}); retry in {delay:.0f}s"
+            )
+            time.sleep(delay)
 
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    return None
+
+
+def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> None:
+    """Refresh the cached FedWatch snapshot."""
+    filepath = Path(filepath)
+    time.sleep(random.uniform(*FETCH_JITTER_SEC))
+
+    meetings = _fetch_with_retries()
+    if meetings is None:
+        return
+
+    snapshot = _select_meetings(
+        meetings,
+        pd.Timestamp.now().normalize(),
+    )
+
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(filepath, index=False)
-    print(f"FedWatch cache updated: {len(snapshot)} meetings, "
-          f"{snapshot['meeting_date'].iloc[0].date()} -> {snapshot['meeting_date'].iloc[-1].date()}, "
-          f"current {current:.3f}%")
+
+    print(
+        f"FedWatch cache updated: {len(snapshot)} meetings, "
+        f"{snapshot['meeting_date'].min().date()} -> "
+        f"{snapshot['meeting_date'].max().date()}"
+    )
 
 
-def latest_fedwatch(filepath=FEDWATCH_CSV):
-    """Cached snapshot as DataFrame[meeting_date, expected_rate, current_rate]."""
+def latest_fedwatch(
+    filepath: Path | str = FEDWATCH_CSV,
+) -> pd.DataFrame:
+    """Load the cached FedWatch snapshot."""
     return pd.read_csv(filepath, parse_dates=["meeting_date"])
 
 

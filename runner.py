@@ -84,7 +84,7 @@ def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
     print(f"[{_stamp(now_et)}] session={session}")
     print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
-    print(f"  Rule: {result.explanation}")
+    print(f"  Rule: {result.detail}")
     if result.missing_signals:
         print(f"  Missing: {', '.join(result.missing_signals)}")
     for s in result.subsignals:
