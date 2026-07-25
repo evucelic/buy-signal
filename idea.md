@@ -24,6 +24,11 @@ if the market is ALSO falling, it suggessts there is even more deleveraging
 there should be a leading sector which suggests there is possible growth in the future, might want to invest into those
 5. the leading sector's earning profile should be on an upward trajectory
 
+6. Market % change (dip watch)
+track daily/weekly/monthly % change for SPY, Nasdaq Composite (^IXIC), and Dow Jones (^DJI)
+mainly care about dips: a meaningful down day on SPY is the buy-checklist trigger
+NASDAQ/DOW numbers, and SPY's own weekly/monthly change, are diagnostic context only
+
 
 Calculating the signal:
 before the market opens and after the market closes calculate 1. 2. 3. 4. and 5. and based on that calculate the signal (including extended trading)

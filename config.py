@@ -10,6 +10,7 @@ VIX_CSV = DATA_DIR / "vixdata.csv"
 FEDWATCH_CSV = DATA_DIR / "fedwatch.csv"
 MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
+MARKET_CSV = DATA_DIR / "market.csv"
 
 # --- Tickers -----------------------------------------------------------------
 VIX_TICKER = "^VIX"
@@ -68,10 +69,19 @@ CF_BYPASS_IMAGE = "ghcr.io/sarperavci/cloudflarebypassforscraping:latest"
 CF_BYPASS_PORT = 8000
 CF_BYPASS_URL = f"http://localhost:{CF_BYPASS_PORT}"
 
+# --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
+INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}
+MARKET_PRIMARY_INDEX = "SPY"
+MARKET_LOOKBACK_DAYS = 90           # yfinance daily-bar history fetched (buffer over monthly lookback)
+MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
+MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
+MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip
+
 # --- Signal combination: weights for the weighted-average score --------------
 SIGNAL_WEIGHTS = {
     "vix": 1.0,
     "fed_rate": 1.0,
     "margin_debt": 1.0,
     "sector": 1.0,
+    "market_dip": 1.0,
 }
