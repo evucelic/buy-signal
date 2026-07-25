@@ -6,7 +6,8 @@ dependencies:
   - pandas
   - pandas-market-calendars  # US market holidays / trading days (runner.py)
   - lxml                     # parse FINRA margin-statistics HTML tables (collectors/margin_debt.py)
-  - requests
+  - openpyxl                 # read the FINRA margin-statistics .xlsx (collectors/margin_debt.py)
+  - requests                 # replay Cloudflare clearance cookies (collectors/margin_debt.py)
   - ipykernel           # run data.ipynb
   - pip
   - pip:

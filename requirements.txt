@@ -5,3 +5,5 @@ yfinance
 selenium
 lxml
 pip-system-certs
+openpyxl
+requests
