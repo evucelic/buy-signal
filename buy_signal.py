@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from signals import rate_signal, vix_signal
+from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
 from signals.base import SubSignal
 
 
@@ -24,11 +24,6 @@ def _alert_state(subsignals: list[SubSignal], missing_signals: list[str]) -> tup
     if missing_signals:
         return "soft", "SOFT: required signals passed, but some signals are missing."
     return "strong", "STRONG: all required signals passed."
-
-
-def _signal_detail(signal: SubSignal) -> str:
-    status = "PASS" if signal.passes else "FAIL"
-    return f"{signal.name}: {status} score={signal.score:+.2f} state={signal.state} detail={signal.detail}"
 
 
 def compute_signal(vix: float | None = None) -> BuySignal:
@@ -52,17 +47,33 @@ def compute_signal(vix: float | None = None) -> BuySignal:
         missing_signals.append("fed_rate")
         print(f"signal skipped (fed_rate: {type(exc).__name__}: {exc})")
 
+    try:
+        subsignals.append(margin_signal.score())
+    except NotImplementedError:
+        missing_signals.append("margin_debt")
+    except Exception as exc:
+        missing_signals.append("margin_debt")
+        print(f"signal skipped (margin_debt: {type(exc).__name__}: {exc})")
+
+    try:
+        subsignals.append(market_signal.score())
+    except NotImplementedError:
+        missing_signals.append("market_dip")
+    except Exception as exc:
+        missing_signals.append("market_dip")
+        print(f"signal skipped (market_dip: {type(exc).__name__}: {exc})")
+
+    try:
+        subsignals.append(sector_signal.score())
+    except NotImplementedError:
+        missing_signals.append("sector")
+    except Exception as exc:
+        missing_signals.append("sector")
+        print(f"signal skipped (sector: {type(exc).__name__}: {exc})")
+
     passing_count = sum(1 for signal in subsignals if signal.passes)
     score = passing_count / len(subsignals) if subsignals else 0.0
     state, summary = _alert_state(subsignals, missing_signals)
-    detail_parts = [_signal_detail(signal) for signal in subsignals]
-    if missing_signals:
-        detail_parts.append("missing: " + ", ".join(sorted(set(missing_signals))))
-    detail = " | ".join(detail_parts)
-    if detail:
-        detail = f"{summary} | {detail}"
-    else:
-        detail = summary
 
     return BuySignal(
         score=score,
@@ -70,7 +81,7 @@ def compute_signal(vix: float | None = None) -> BuySignal:
         passing_count=passing_count,
         subsignals=subsignals,
         missing_signals=sorted(set(missing_signals)),
-        detail=detail,
+        detail=summary,
     )
 
 
