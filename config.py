@@ -17,21 +17,6 @@ VIX_TICKER = "^VIX"
 VIX_INTERVAL = "1h"
 VIX_LOOKBACK_DAYS = 729   # Yahoo caps 1h intraday history at ~730 days
 
-# SPDR sector ETFs, used to find the leading sector (#4) and its trend.
-SECTOR_ETFS = {
-    "Technology": "XLK",
-    "Financials": "XLF",
-    "Energy": "XLE",
-    "Health Care": "XLV",
-    "Industrials": "XLI",
-    "Consumer Discretionary": "XLY",
-    "Consumer Staples": "XLP",
-    "Utilities": "XLU",
-    "Materials": "XLB",
-    "Real Estate": "XLRE",
-    "Communication Services": "XLC",
-}
-
 # --- VIX thresholds (#1): higher VIX = more fear = potential buying dip -------
 VIX_STRONG = 30.0      # strong "fear" signal
 VIX_SOFT = 22.0        # soft signal band
@@ -76,6 +61,11 @@ MARKET_LOOKBACK_DAYS = 90           # yfinance daily-bar history fetched (buffer
 MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip
+
+# --- Leading industries (#4/#5): top industries by market cap, earnings growth ---
+SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
+SECTOR_GROWTH_QUORUM = 3      # at least this many of the top N must have positive forward earnings growth
+SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for earnings growth
 
 # --- Signal combination: weights for the weighted-average score --------------
 SIGNAL_WEIGHTS = {

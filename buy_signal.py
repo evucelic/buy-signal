@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from signals import margin_signal, market_signal, rate_signal, vix_signal
+from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
 from signals.base import SubSignal
 
 
@@ -67,6 +67,14 @@ def compute_signal(vix: float | None = None) -> BuySignal:
     except Exception as exc:
         missing_signals.append("market_dip")
         print(f"signal skipped (market_dip: {type(exc).__name__}: {exc})")
+
+    try:
+        subsignals.append(sector_signal.score())
+    except NotImplementedError:
+        missing_signals.append("sector")
+    except Exception as exc:
+        missing_signals.append("sector")
+        print(f"signal skipped (sector: {type(exc).__name__}: {exc})")
 
     passing_count = sum(1 for signal in subsignals if signal.passes)
     score = passing_count / len(subsignals) if subsignals else 0.0
