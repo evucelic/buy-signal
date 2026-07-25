@@ -1,0 +1,30 @@
+name: Margin debt scraper smoke test
+
+on:
+  schedule:
+    # Daily at 13:00 UTC, days 18-31 -- FINRA's stated "third week" release window,
+    # padded through month-end since it often lands late. This is the window where
+    # a broken Cloudflare bypass or scraper would actually matter locally, so that's
+    # when it's worth finding out.
+    - cron: '0 13 18-31 * *'
+  workflow_dispatch: {}
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # runner.py starts the cfbypass container itself (docker is preinstalled on
+      # ubuntu-latest runners) -- the same code path as a local run. Data is
+      # intentionally not persisted (data/*.csv stays gitignored); this just fails
+      # loudly if the Cloudflare bypass or FINRA's page layout breaks.
+      - name: Run runner.py
+        run: python runner.py

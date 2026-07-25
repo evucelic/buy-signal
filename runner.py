@@ -1,17 +1,28 @@
 """Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
 
-One tick() per call, driven by an external scheduler (cron, /loop, a loop). Sessions come
-from the exchange schedule, so holidays/early-closes/DST are handled. Full recompute pre-open
-and post-close; during the regular session just track VIX, recomputing macro only on a band
-crossing. VIX is tracked across all of 04:00-20:00 ET (it moves in extended hours too).
+One tick() per call — hourly, the highest frequency any signal needs (VIX and market_dip
+refresh every tick). `python runner.py` does a single tick, for an external scheduler (cron,
+GitHub Actions, /loop); `python runner.py --loop` runs tick() forever itself, sleeping
+TICK_INTERVAL_SEC between calls. Sessions come from the exchange schedule, so holidays/
+early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
+session just track VIX, recomputing macro only on a band crossing. Each macro collector has
+its own once-a-day grace period (see should_refresh() in collectors/fed_rate.py, sectors.py,
+margin_debt.py), so a VIX band crossing that persists for several hourly ticks in a row only
+triggers one real refresh, not one per tick. VIX is tracked across all of 04:00-20:00 ET (it
+moves in extended hours too).
 """
 
+import subprocess
+import sys
 from datetime import datetime, time, timedelta
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
+import requests
 
 from buy_signal import compute_signal
+from config import CF_BYPASS_CONTAINER, CF_BYPASS_IMAGE, CF_BYPASS_PORT, CF_BYPASS_URL, TICK_INTERVAL_SEC
 
 ET = ZoneInfo("America/New_York")
 _NYSE = mcal.get_calendar("XNYS")
@@ -46,17 +57,63 @@ def market_session(now: datetime | None = None) -> str:
     return AFTER_HOURS
 
 
+def _cf_bypass_ready(timeout: float = 30.0) -> bool:
+    """Poll the bypass service until it accepts connections, or give up after `timeout`s."""
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        try:
+            requests.get(CF_BYPASS_URL, timeout=2)
+            return True
+        except requests.exceptions.ConnectionError:
+            sleep(1)
+    print(f"{CF_BYPASS_CONTAINER} never became reachable at {CF_BYPASS_URL}")
+    return False
+
+
+def _ensure_cf_bypass_running() -> bool:
+    """Start the local Cloudflare-bypass container (for margin_debt) if it isn't up."""
+    name_filter = f"name=^{CF_BYPASS_CONTAINER}$"
+    try:
+        running = subprocess.run(
+            ["docker", "ps", "-q", "-f", name_filter],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        print(f"docker unavailable ({type(exc).__name__}); skipping margin-debt refresh.")
+        return False
+
+    if running.stdout.strip():
+        return True
+
+    # `docker start` on a stopped container can leave stale X11/Xvfb state behind
+    # (the image runs a headed browser internally); recreate it fresh instead.
+    subprocess.run(["docker", "rm", "-f", CF_BYPASS_CONTAINER], capture_output=True, text=True, timeout=10)
+
+    print(f"Starting {CF_BYPASS_CONTAINER} container for margin-debt scraping...")
+    result = subprocess.run(
+        ["docker", "run", "-d", "--name", CF_BYPASS_CONTAINER,
+         "-p", f"{CF_BYPASS_PORT}:8000", CF_BYPASS_IMAGE],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        print(f"Failed to start {CF_BYPASS_CONTAINER}: {result.stderr.strip()}")
+        return False
+    return _cf_bypass_ready()
+
+
 def refresh_macro() -> None:
-    """Refresh the slow macro indicators (#2-#5); skip ones not built yet."""
+    """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today."""
     from collectors import fed_rate, margin_debt, sectors
 
-    for update in (fed_rate.update_fed_rate_data,
-                   margin_debt.update_margin_debt_data,
-                   sectors.update_sector_data):
-        try:
-            update()
-        except NotImplementedError:
-            pass
+    if fed_rate.should_refresh():
+        fed_rate.update_fed_rate_data()
+
+    if sectors.should_refresh():
+        sectors.update_sector_data()
+
+    # should_refresh() skips most of the month, so the container starts on demand.
+    if margin_debt.should_refresh() and _ensure_cf_bypass_running():
+        margin_debt.update_margin_debt_data()
 
 
 def tick(now: datetime | None = None):
@@ -92,5 +149,22 @@ def report(result, session: str, now_et: datetime | None = None) -> None:
         print(f"    - {s.name:12s} {status:4s} {s.state:11s} {s.detail}")
 
 
+def run_forever(interval_sec: float = TICK_INTERVAL_SEC) -> None:
+    """Tick every interval_sec, forever. A failing tick is logged and skipped, not fatal."""
+    print(f"Runner starting: tick every {interval_sec / 60:.0f}m (Ctrl+C to stop).")
+    try:
+        while True:
+            try:
+                tick()
+            except Exception as exc:
+                print(f"[{_stamp(_now_et())}] tick failed ({type(exc).__name__}: {exc}); retrying next cycle.")
+            sleep(interval_sec)
+    except KeyboardInterrupt:
+        print("Runner stopped.")
+
+
 if __name__ == "__main__":
-    tick()
+    if "--loop" in sys.argv:
+        run_forever()
+    else:
+        tick()
