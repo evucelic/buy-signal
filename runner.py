@@ -149,15 +149,27 @@ def report(result, session: str, now_et: datetime | None = None) -> None:
         print(f"    - {s.name:12s} {status:4s} {s.state:11s} {s.detail}")
 
 
-def run_forever(interval_sec: float = TICK_INTERVAL_SEC) -> None:
-    """Tick every interval_sec, forever. A failing tick is logged and skipped, not fatal."""
+def run_forever(interval_sec: float = TICK_INTERVAL_SEC, on_tick=None) -> None:
+    """Tick every interval_sec, forever. A failing tick is logged and skipped, not fatal.
+
+    If given, on_tick(result, error) is called after every attempt (result is tick()'s return,
+    None when the market's closed or the tick failed; error is the caught exception, or None).
+    A failing callback is itself logged and skipped, same as a failing tick.
+    """
     print(f"Runner starting: tick every {interval_sec / 60:.0f}m (Ctrl+C to stop).")
     try:
         while True:
+            result, error = None, None
             try:
-                tick()
+                result = tick()
             except Exception as exc:
+                error = exc
                 print(f"[{_stamp(_now_et())}] tick failed ({type(exc).__name__}: {exc}); retrying next cycle.")
+            if on_tick is not None:
+                try:
+                    on_tick(result, error)
+                except Exception as exc:
+                    print(f"[{_stamp(_now_et())}] on_tick callback failed ({type(exc).__name__}: {exc})")
             sleep(interval_sec)
     except KeyboardInterrupt:
         print("Runner stopped.")

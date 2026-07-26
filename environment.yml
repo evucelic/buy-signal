@@ -8,6 +8,7 @@ dependencies:
   - lxml                     # parse FINRA margin-statistics HTML tables (collectors/margin_debt.py)
   - openpyxl                 # read the FINRA margin-statistics .xlsx (collectors/margin_debt.py)
   - requests                 # replay Cloudflare clearance cookies (collectors/margin_debt.py)
+  - python-dotenv            # load .env for TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID (telegram_bot.py)
   - ipykernel           # run data.ipynb
   - pip
   - pip:

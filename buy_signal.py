@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
 from signals.base import SubSignal
+
+# compute_signal() drives collectors that read-modify-write shared CSV caches; serialize
+# concurrent callers (e.g. the background tick loop and an on-demand Telegram /signal) so
+# they don't race on the same file.
+_lock = threading.Lock()
 
 
 @dataclass
@@ -28,6 +34,11 @@ def _alert_state(subsignals: list[SubSignal], missing_signals: list[str]) -> tup
 
 def compute_signal(vix: float | None = None) -> BuySignal:
     """Score the available signals and combine them with checklist rules."""
+    with _lock:
+        return _compute_signal(vix)
+
+
+def _compute_signal(vix: float | None) -> BuySignal:
     subsignals: list[SubSignal] = []
     missing_signals: list[str] = []
 
