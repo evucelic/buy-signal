@@ -7,3 +7,4 @@ lxml
 pip-system-certs
 openpyxl
 requests
+python-dotenv
