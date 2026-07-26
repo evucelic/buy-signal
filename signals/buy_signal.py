@@ -49,40 +49,30 @@ def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
 
     try:
         subsignals.append(vix_signal.score(vix, allow_refresh=allow_refresh))
-    except NotImplementedError:
-        missing_signals.append("vix")
     except Exception as exc:
         missing_signals.append("vix")
         print(f"signal skipped (vix: {type(exc).__name__}: {exc})")
 
     try:
         subsignals.append(rate_signal.score())
-    except NotImplementedError:
-        missing_signals.append("fed_rate")
     except Exception as exc:
         missing_signals.append("fed_rate")
         print(f"signal skipped (fed_rate: {type(exc).__name__}: {exc})")
 
     try:
         subsignals.append(margin_signal.score())
-    except NotImplementedError:
-        missing_signals.append("margin_debt")
     except Exception as exc:
         missing_signals.append("margin_debt")
         print(f"signal skipped (margin_debt: {type(exc).__name__}: {exc})")
 
     try:
         subsignals.append(market_signal.score(allow_refresh=allow_refresh))
-    except NotImplementedError:
-        missing_signals.append("market_dip")
     except Exception as exc:
         missing_signals.append("market_dip")
         print(f"signal skipped (market_dip: {type(exc).__name__}: {exc})")
 
     try:
         subsignals.append(sector_signal.score())
-    except NotImplementedError:
-        missing_signals.append("sector")
     except Exception as exc:
         missing_signals.append("sector")
         print(f"signal skipped (sector: {type(exc).__name__}: {exc})")

@@ -1,10 +1,9 @@
 """Collect FINRA margin statistics (margin debt); cache to CSV.
 
 finra.org sits behind Cloudflare Turnstile, which plain requests/headless Selenium
-can't get past. A local Docker bypass service solves it and hands back clearance
+can't get past. The cfbypass compose service solves it and hands back clearance
 cookies over HTTP, which get replayed through a plain `requests.Session` to fetch
-the xlsx directly (no browser needed for the download itself). See config.CF_BYPASS_*;
-runner.py starts the container on demand.
+the xlsx directly (no browser needed for the download itself). See config.CF_BYPASS_*.
 """
 
 from __future__ import annotations
@@ -19,9 +18,6 @@ import requests
 
 from collectors.freshness import refreshed_today
 from config import (
-    CF_BYPASS_CONTAINER,
-    CF_BYPASS_IMAGE,
-    CF_BYPASS_PORT,
     CF_BYPASS_URL,
     FETCH_JITTER_SEC,
     MARGIN_DEBT_CSV,
@@ -47,8 +43,8 @@ def _get_clearance() -> tuple[dict, str]:
         resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=60)
     except requests.exceptions.ConnectionError as exc:
         raise RuntimeError(
-            f"Cloudflare bypass service not reachable at {CF_BYPASS_URL}. Start it with: "
-            f"docker run -d --name {CF_BYPASS_CONTAINER} -p {CF_BYPASS_PORT}:8000 {CF_BYPASS_IMAGE}"
+            f"Cloudflare bypass service not reachable at {CF_BYPASS_URL}. "
+            "Start it with: docker compose up -d cfbypass"
         ) from exc
     resp.raise_for_status()
     data = resp.json()

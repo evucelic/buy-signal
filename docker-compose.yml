@@ -1,0 +1,20 @@
+services:
+  cfbypass:
+    image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
+    container_name: cfbypass
+    ports:
+      - "8000:8000"   # host-published for local bare-metal testing; not internet-reachable
+    restart: unless-stopped   # unless the security group also opens 8000 (it shouldn't)
+
+  bot:
+    build: .
+    image: ghcr.io/evucelic/buy-signal:latest   # `docker compose pull` fetches this in production
+    container_name: buysignal-bot
+    env_file: .env
+    environment:
+      - CF_BYPASS_HOST=cfbypass   # compose's internal DNS; config.py defaults to localhost otherwise
+    volumes:
+      - ./data:/app/data   # persists the CSV caches across redeploys/restarts
+    depends_on:
+      - cfbypass
+    restart: unless-stopped
