@@ -1,5 +1,6 @@
 """Thresholds, tickers, data-source IDs, and file paths for all indicators."""
 
+import os
 from pathlib import Path
 
 # --- Paths -------------------------------------------------------------------
@@ -47,12 +48,12 @@ MARGIN_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-stat
 MARGIN_SHEET_NAME = "Customer Margin Balances"
 MARGIN_DELEVERAGE_MONTHS = 1    # min consecutive months of decrease = deleveraging
 MARGIN_REFRESH_WINDOW_DAY = 21  # FINRA's stated "third week"; past this, expect a newer release
-# finra.org sits behind Cloudflare Turnstile; a local Docker service solves it and
-# hands back clearance cookies (collectors/margin_debt.py, runner.py starts it on demand).
-CF_BYPASS_CONTAINER = "cfbypass"
-CF_BYPASS_IMAGE = "ghcr.io/sarperavci/cloudflarebypassforscraping:latest"
+# finra.org sits behind Cloudflare Turnstile; the cfbypass compose service solves it and hands
+# back clearance cookies (collectors/margin_debt.py). CF_BYPASS_HOST is the compose service
+# name in production (docker-compose.yml sets it), localhost for local/bare-metal dev.
+CF_BYPASS_HOST = os.environ.get("CF_BYPASS_HOST", "localhost")
 CF_BYPASS_PORT = 8000
-CF_BYPASS_URL = f"http://localhost:{CF_BYPASS_PORT}"
+CF_BYPASS_URL = f"http://{CF_BYPASS_HOST}:{CF_BYPASS_PORT}"
 
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}

@@ -12,7 +12,6 @@ triggers one real refresh, not one per tick. VIX is tracked across all of 04:00-
 moves in extended hours too).
 """
 
-import subprocess
 import sys
 from datetime import datetime, time, timedelta
 from time import monotonic, sleep
@@ -22,7 +21,7 @@ import pandas_market_calendars as mcal
 import requests
 
 from buy_signal import compute_signal
-from config import CF_BYPASS_CONTAINER, CF_BYPASS_IMAGE, CF_BYPASS_PORT, CF_BYPASS_URL, TICK_INTERVAL_SEC
+from config import CF_BYPASS_URL, TICK_INTERVAL_SEC
 
 ET = ZoneInfo("America/New_York")
 _NYSE = mcal.get_calendar("XNYS")
@@ -58,7 +57,7 @@ def market_session(now: datetime | None = None) -> str:
 
 
 def _cf_bypass_ready(timeout: float = 30.0) -> bool:
-    """Poll the bypass service until it accepts connections, or give up after `timeout`s."""
+    """Poll the (compose-managed, always-running) bypass service until it accepts connections."""
     deadline = monotonic() + timeout
     while monotonic() < deadline:
         try:
@@ -66,39 +65,8 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
             return True
         except requests.exceptions.ConnectionError:
             sleep(1)
-    print(f"{CF_BYPASS_CONTAINER} never became reachable at {CF_BYPASS_URL}")
+    print(f"cfbypass never became reachable at {CF_BYPASS_URL}")
     return False
-
-
-def _ensure_cf_bypass_running() -> bool:
-    """Start the local Cloudflare-bypass container (for margin_debt) if it isn't up."""
-    name_filter = f"name=^{CF_BYPASS_CONTAINER}$"
-    try:
-        running = subprocess.run(
-            ["docker", "ps", "-q", "-f", name_filter],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f"docker unavailable ({type(exc).__name__}); skipping margin-debt refresh.")
-        return False
-
-    if running.stdout.strip():
-        return True
-
-    # `docker start` on a stopped container can leave stale X11/Xvfb state behind
-    # (the image runs a headed browser internally); recreate it fresh instead.
-    subprocess.run(["docker", "rm", "-f", CF_BYPASS_CONTAINER], capture_output=True, text=True, timeout=10)
-
-    print(f"Starting {CF_BYPASS_CONTAINER} container for margin-debt scraping...")
-    result = subprocess.run(
-        ["docker", "run", "-d", "--name", CF_BYPASS_CONTAINER,
-         "-p", f"{CF_BYPASS_PORT}:8000", CF_BYPASS_IMAGE],
-        capture_output=True, text=True, timeout=60,
-    )
-    if result.returncode != 0:
-        print(f"Failed to start {CF_BYPASS_CONTAINER}: {result.stderr.strip()}")
-        return False
-    return _cf_bypass_ready()
 
 
 def refresh_macro() -> None:
@@ -111,8 +79,7 @@ def refresh_macro() -> None:
     if sectors.should_refresh():
         sectors.update_sector_data()
 
-    # should_refresh() skips most of the month, so the container starts on demand.
-    if margin_debt.should_refresh() and _ensure_cf_bypass_running():
+    if margin_debt.should_refresh() and _cf_bypass_ready():
         margin_debt.update_margin_debt_data()
 
 
