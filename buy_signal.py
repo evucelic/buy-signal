@@ -26,11 +26,6 @@ def _alert_state(subsignals: list[SubSignal], missing_signals: list[str]) -> tup
     return "strong", "STRONG: all required signals passed."
 
 
-def _signal_detail(signal: SubSignal) -> str:
-    status = "PASS" if signal.passes else "FAIL"
-    return f"{signal.name}: {status} score={signal.score:+.2f} state={signal.state} detail={signal.detail}"
-
-
 def compute_signal(vix: float | None = None) -> BuySignal:
     """Score the available signals and combine them with checklist rules."""
     subsignals: list[SubSignal] = []
@@ -79,14 +74,6 @@ def compute_signal(vix: float | None = None) -> BuySignal:
     passing_count = sum(1 for signal in subsignals if signal.passes)
     score = passing_count / len(subsignals) if subsignals else 0.0
     state, summary = _alert_state(subsignals, missing_signals)
-    detail_parts = [_signal_detail(signal) for signal in subsignals]
-    if missing_signals:
-        detail_parts.append("missing: " + ", ".join(sorted(set(missing_signals))))
-    detail = " | ".join(detail_parts)
-    if detail:
-        detail = f"{summary} | {detail}"
-    else:
-        detail = summary
 
     return BuySignal(
         score=score,
@@ -94,7 +81,7 @@ def compute_signal(vix: float | None = None) -> BuySignal:
         passing_count=passing_count,
         subsignals=subsignals,
         missing_signals=sorted(set(missing_signals)),
-        detail=detail,
+        detail=summary,
     )
 
 

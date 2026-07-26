@@ -15,7 +15,12 @@ def score() -> SubSignal:
     daily = changes[MARKET_PRIMARY_INDEX]["daily"]
     dip = daily <= MARKET_DIP_THRESHOLD
 
-    state = "dip" if dip else "flat"
+    if dip:
+        state = "dip"
+    elif daily >= abs(MARKET_DIP_THRESHOLD):
+        state = "growth"
+    else:
+        state = "flat"
     detail = " | ".join(_format_index(name, changes[name]) for name in INDEX_TICKERS)
 
     return SubSignal("market_dip", daily, state, detail, passes=dip)

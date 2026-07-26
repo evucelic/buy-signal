@@ -68,6 +68,9 @@ SECTOR_TOP_N = 5              # how many top industries (by market cap, across a
 SECTOR_GROWTH_QUORUM = 3      # at least this many of the top N must have positive forward earnings growth
 SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for earnings growth
 
+# --- Runner cadence -----------------------------------------------------------
+TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
+
 # --- Signal combination: weights for the weighted-average score --------------
 SIGNAL_WEIGHTS = {
     "vix": 1.0,

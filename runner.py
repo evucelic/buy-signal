@@ -1,16 +1,19 @@
 """Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
 
-One tick() per call, driven by an external scheduler (cron, /loop, a loop) — hourly, the
-highest frequency any signal needs (VIX and market_dip refresh every tick). Sessions come
-from the exchange schedule, so holidays/early-closes/DST are handled. Full recompute pre-open
-and post-close; during the regular session just track VIX, recomputing macro only on a band
-crossing. Each macro collector has its own once-a-day grace period (see should_refresh() in
-collectors/fed_rate.py, sectors.py, margin_debt.py), so a VIX band crossing that persists for
-several hourly ticks in a row only triggers one real refresh, not one per tick. VIX is tracked
-across all of 04:00-20:00 ET (it moves in extended hours too).
+One tick() per call — hourly, the highest frequency any signal needs (VIX and market_dip
+refresh every tick). `python runner.py` does a single tick, for an external scheduler (cron,
+GitHub Actions, /loop); `python runner.py --loop` runs tick() forever itself, sleeping
+TICK_INTERVAL_SEC between calls. Sessions come from the exchange schedule, so holidays/
+early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
+session just track VIX, recomputing macro only on a band crossing. Each macro collector has
+its own once-a-day grace period (see should_refresh() in collectors/fed_rate.py, sectors.py,
+margin_debt.py), so a VIX band crossing that persists for several hourly ticks in a row only
+triggers one real refresh, not one per tick. VIX is tracked across all of 04:00-20:00 ET (it
+moves in extended hours too).
 """
 
 import subprocess
+import sys
 from datetime import datetime, time, timedelta
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo
@@ -19,7 +22,7 @@ import pandas_market_calendars as mcal
 import requests
 
 from buy_signal import compute_signal
-from config import CF_BYPASS_CONTAINER, CF_BYPASS_IMAGE, CF_BYPASS_PORT, CF_BYPASS_URL
+from config import CF_BYPASS_CONTAINER, CF_BYPASS_IMAGE, CF_BYPASS_PORT, CF_BYPASS_URL, TICK_INTERVAL_SEC
 
 ET = ZoneInfo("America/New_York")
 _NYSE = mcal.get_calendar("XNYS")
@@ -146,5 +149,22 @@ def report(result, session: str, now_et: datetime | None = None) -> None:
         print(f"    - {s.name:12s} {status:4s} {s.state:11s} {s.detail}")
 
 
+def run_forever(interval_sec: float = TICK_INTERVAL_SEC) -> None:
+    """Tick every interval_sec, forever. A failing tick is logged and skipped, not fatal."""
+    print(f"Runner starting: tick every {interval_sec / 60:.0f}m (Ctrl+C to stop).")
+    try:
+        while True:
+            try:
+                tick()
+            except Exception as exc:
+                print(f"[{_stamp(_now_et())}] tick failed ({type(exc).__name__}: {exc}); retrying next cycle.")
+            sleep(interval_sec)
+    except KeyboardInterrupt:
+        print("Runner stopped.")
+
+
 if __name__ == "__main__":
-    tick()
+    if "--loop" in sys.argv:
+        run_forever()
+    else:
+        tick()
