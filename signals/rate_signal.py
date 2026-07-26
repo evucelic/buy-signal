@@ -29,7 +29,7 @@ def _format_meeting(label: str, meeting: pd.Series) -> str:
     """Format one meeting's probabilities for the signal detail."""
     ease, no_change, hike = _probabilities(meeting)
     return (
-        f"{label} {meeting['meeting_date'].date()} | "
+        f"{label} {meeting['meeting_date'].date()}: "
         f"ease {ease:.1%}, no change {no_change:.1%}, hike {hike:.1%}"
     )
 

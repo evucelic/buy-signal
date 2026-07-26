@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
 from signals.base import SubSignal
 
-# compute_signal() drives collectors that read-modify-write shared CSV caches; serialize
-# concurrent callers (e.g. the background tick loop and an on-demand Telegram /signal) so
-# they don't race on the same file.
-_lock = threading.Lock()
+# compute_signal() (and any individual signal's score()) drives collectors that read-modify-
+# write shared CSV caches; serialize concurrent callers (e.g. the background tick loop and an
+# on-demand Telegram command) so they don't race on the same file.
+SIGNAL_LOCK = threading.Lock()
 
 
 @dataclass
@@ -32,18 +32,23 @@ def _alert_state(subsignals: list[SubSignal], missing_signals: list[str]) -> tup
     return "strong", "STRONG: all required signals passed."
 
 
-def compute_signal(vix: float | None = None) -> BuySignal:
-    """Score the available signals and combine them with checklist rules."""
-    with _lock:
-        return _compute_signal(vix)
+def compute_signal(vix: float | None = None, allow_refresh: bool = True) -> BuySignal:
+    """Score the available signals and combine them with checklist rules.
+
+    allow_refresh=False tells VIX/market_dip (the two that refetch every call) to prefer
+    their cache instead — for on-demand checks while the market's closed and there's nothing
+    new to find.
+    """
+    with SIGNAL_LOCK:
+        return _compute_signal(vix, allow_refresh)
 
 
-def _compute_signal(vix: float | None) -> BuySignal:
+def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
     subsignals: list[SubSignal] = []
     missing_signals: list[str] = []
 
     try:
-        subsignals.append(vix_signal.score(vix))
+        subsignals.append(vix_signal.score(vix, allow_refresh=allow_refresh))
     except NotImplementedError:
         missing_signals.append("vix")
     except Exception as exc:
@@ -67,7 +72,7 @@ def _compute_signal(vix: float | None) -> BuySignal:
         print(f"signal skipped (margin_debt: {type(exc).__name__}: {exc})")
 
     try:
-        subsignals.append(market_signal.score())
+        subsignals.append(market_signal.score(allow_refresh=allow_refresh))
     except NotImplementedError:
         missing_signals.append("market_dip")
     except Exception as exc:

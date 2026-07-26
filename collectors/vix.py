@@ -66,6 +66,22 @@ def load_latest_cached_vix(filepath: Path = VIX_CSV) -> float | None:
     return float(df["Close"].iloc[-1])
 
 
+def vix_change_pct(filepath: Path = VIX_CSV) -> float | None:
+    """Latest VIX close's % change vs the prior trading day's close, or None if too little history."""
+    filepath = Path(filepath)
+    if not filepath.exists():
+        return None
+
+    df = pd.read_csv(filepath, index_col=0)
+    if df.empty or "Close" not in df.columns:
+        return None
+    df.index = pd.to_datetime(df.index, utc=True)
+    daily = df["Close"].groupby(df.index.date).last().dropna()
+    if len(daily) < 2:
+        return None
+    return daily.iloc[-1] / daily.iloc[-2] - 1
+
+
 def get_latest_vix(filepath: Path = VIX_CSV) -> float:
     """Refresh the cache and return the current (last recorded in the CSV file) VIX close."""
     filepath = Path(filepath)
