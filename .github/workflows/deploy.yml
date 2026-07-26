@@ -35,6 +35,7 @@ jobs:
 
   deploy:
     needs: build
+    if: ${{ secrets.AWS_HOST != '' && secrets.AWS_SSH_USER != '' && secrets.AWS_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: appleboy/ssh-action@v1
