@@ -8,3 +8,4 @@ pip-system-certs
 openpyxl
 requests
 python-dotenv
+pytest
