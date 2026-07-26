@@ -13,20 +13,19 @@ moves in extended hours too).
 """
 
 import sys
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 import requests
 
-from buy_signal import compute_signal
 from config import CF_BYPASS_URL, TICK_INTERVAL_SEC
+from signals.buy_signal import compute_signal
 
 ET = ZoneInfo("America/New_York")
 _NYSE = mcal.get_calendar("XNYS")
 
-PREMARKET_OPEN = time(4, 0)          # extended hours start (ET)
 EXTENDED_AFTER = timedelta(hours=4)  # after-hours run 4h past the close
 
 CLOSED, PRE_MARKET, REGULAR, AFTER_HOURS = "closed", "pre_market", "regular", "after_hours"

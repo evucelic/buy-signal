@@ -44,5 +44,6 @@ jobs:
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
             cd ~/buy-signal
+            git pull
             docker compose pull
             docker compose up -d

@@ -55,10 +55,10 @@ def refresh_market_cache(filepath: Path = MARKET_CSV) -> bool:
     if first_run:
         filepath.parent.mkdir(parents=True, exist_ok=True)
     else:
-        old = pd.read_csv(filepath, index_col=0)  # fetch the old data from cache (CSV file on machine)
+        old = pd.read_csv(filepath, index_col=0)
         old.index = pd.to_datetime(old.index, utc=True)
-        new = pd.concat([old, new])  # concat the new and old dataframes
-        new = new[~new.index.duplicated(keep="last")].sort_index()  # deduplicate indexes if they overlap
+        new = pd.concat([old, new])
+        new = new[~new.index.duplicated(keep="last")].sort_index()
 
     new.to_csv(filepath)
     print(f"Market index cache updated: {len(new)} rows, latest {new.index[-1].date()}")

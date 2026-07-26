@@ -16,11 +16,10 @@ from datetime import datetime, timezone
 import requests
 from dotenv import load_dotenv
 
-import buy_signal
 import runner
-from buy_signal import BuySignal, compute_signal
-from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
+from signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal
 from signals.base import SubSignal
+from signals.buy_signal import BuySignal, compute_signal
 
 load_dotenv()
 

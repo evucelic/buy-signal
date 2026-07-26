@@ -25,11 +25,6 @@ VIX_OPTIMISTIC = 10.0  # very low / complacent
 
 # --- Fed rate (#2): CME FedWatch ---------------------------------------------
 FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
-FEDWATCH_HORIZON_MONTHS = 12   # weigh meetings within ~1y of the first meeting
-FED_EASE_BPS = -25.0           # tilt <= this -> easing (+1)
-FED_HIKE_BPS = 12.5            # tilt >= this -> hiking (-1); between = flat (0)
-# Current target rate = midpoint of FRED's target-range bounds (no API key).
-FRED_TARGET_RANGE_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFEDTARU,DFEDTARL"
 
 # --- Fetch hardening (anti bot-detection / rate-limiting) --------------------
 FETCH_JITTER_SEC = (2.0, 12.0)  # random pause before an external fetch, so it isn't periodic
@@ -71,12 +66,3 @@ SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for 
 
 # --- Runner cadence -----------------------------------------------------------
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
-
-# --- Signal combination: weights for the weighted-average score --------------
-SIGNAL_WEIGHTS = {
-    "vix": 1.0,
-    "fed_rate": 1.0,
-    "margin_debt": 1.0,
-    "sector": 1.0,
-    "market_dip": 1.0,
-}
