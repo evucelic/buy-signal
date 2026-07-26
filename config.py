@@ -57,7 +57,8 @@ CF_BYPASS_URL = f"http://localhost:{CF_BYPASS_PORT}"
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}
 MARKET_PRIMARY_INDEX = "SPY"
-MARKET_LOOKBACK_DAYS = 90           # yfinance daily-bar history fetched (buffer over monthly lookback)
+MARKET_INTERVAL = "1h"              # same cadence as VIX, for live intraday daily-change tracking
+MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly lookback)
 MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip

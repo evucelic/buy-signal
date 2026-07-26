@@ -1,4 +1,8 @@
-"""Fetch daily closes for SPY/^IXIC/^DJI from yfinance; cache to CSV, merging new bars by date (UTC)."""
+"""Fetch hourly closes for SPY/^IXIC/^DJI from yfinance; cache to CSV, merging new bars by timestamp (UTC).
+
+Hourly (same cadence as vix.py) so "daily" % change reflects the live intraday price, not just
+the prior finalized daily bar.
+"""
 
 from pathlib import Path
 import random
@@ -11,6 +15,7 @@ from config import (
     FETCH_JITTER_SEC,
     INDEX_TICKERS,
     MARKET_CSV,
+    MARKET_INTERVAL,
     MARKET_LOOKBACK_DAYS,
     MARKET_MONTHLY_LOOKBACK_DAYS,
     MARKET_WEEKLY_LOOKBACK_DAYS,
@@ -20,12 +25,12 @@ _RECENT_WINDOW = "5d"  # a few days to have some leeway with failing to fetch
 
 
 def _download_closes(period: str) -> pd.DataFrame | None:
-    """Daily closes for all INDEX_TICKERS as a UTC-indexed DataFrame, or None if empty."""
-    time.sleep(random.uniform(*FETCH_JITTER_SEC))   # jitter so daily pulls aren't periodic
+    """Hourly closes for all INDEX_TICKERS as a UTC-indexed DataFrame, or None if empty."""
+    time.sleep(random.uniform(*FETCH_JITTER_SEC))   # jitter so hourly pulls aren't periodic
     data = yf.download(
         list(INDEX_TICKERS.values()),
         period=period,
-        interval="1d",
+        interval=MARKET_INTERVAL,
         auto_adjust=False,
         progress=False,
     )
@@ -67,9 +72,15 @@ def latest_changes(filepath: Path = MARKET_CSV) -> dict[str, dict[str, float]] |
         return None
 
     df = pd.read_csv(filepath, index_col=0)
+    df.index = pd.to_datetime(df.index, utc=True)
+    # Index bars only cover regular NYSE hours (13:30-20:00 UTC), so a UTC calendar date is
+    # always the same as the ET trading date — grouping by it needs no timezone conversion.
+    # Today's (possibly partial) date is its own last row, so its "close" is the live price.
+    daily = df.groupby(df.index.date).last()
+
     changes = {}
     for name in INDEX_TICKERS:
-        closes = df[name].dropna()
+        closes = daily[name].dropna()
         latest = closes.iloc[-1]
         changes[name] = {
             "daily": latest / closes.iloc[-2] - 1,

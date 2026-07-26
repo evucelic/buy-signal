@@ -13,6 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from collectors.freshness import refreshed_today
 from config import (
     FEDWATCH_CSV,
     FEDWATCH_URL,
@@ -205,6 +206,11 @@ def latest_fedwatch(
 ) -> pd.DataFrame:
     """Load the cached FedWatch snapshot."""
     return pd.read_csv(filepath, parse_dates=["meeting_date"])
+
+
+def should_refresh(filepath: Path | str = FEDWATCH_CSV) -> bool:
+    """Skip if already refreshed today — CME FedWatch doesn't need more than daily tracking."""
+    return not refreshed_today(filepath)
 
 
 if __name__ == "__main__":

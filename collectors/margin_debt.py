@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import random
 import time
-from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import requests
 
+from collectors.freshness import refreshed_today
 from config import (
     CF_BYPASS_CONTAINER,
     CF_BYPASS_IMAGE,
@@ -169,8 +169,7 @@ def should_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp |
     if not filepath.exists():
         return True
 
-    checked_today = datetime.fromtimestamp(filepath.stat().st_mtime).date() == today.date()
-    if checked_today:
+    if refreshed_today(filepath, today):
         return False
 
     tier, _ = data_freshness(margin_history(filepath), today)

@@ -1,9 +1,13 @@
 """Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
 
-One tick() per call, driven by an external scheduler (cron, /loop, a loop). Sessions come
+One tick() per call, driven by an external scheduler (cron, /loop, a loop) — hourly, the
+highest frequency any signal needs (VIX and market_dip refresh every tick). Sessions come
 from the exchange schedule, so holidays/early-closes/DST are handled. Full recompute pre-open
 and post-close; during the regular session just track VIX, recomputing macro only on a band
-crossing. VIX is tracked across all of 04:00-20:00 ET (it moves in extended hours too).
+crossing. Each macro collector has its own once-a-day grace period (see should_refresh() in
+collectors/fed_rate.py, sectors.py, margin_debt.py), so a VIX band crossing that persists for
+several hourly ticks in a row only triggers one real refresh, not one per tick. VIX is tracked
+across all of 04:00-20:00 ET (it moves in extended hours too).
 """
 
 import subprocess
@@ -95,14 +99,14 @@ def _ensure_cf_bypass_running() -> bool:
 
 
 def refresh_macro() -> None:
-    """Refresh the slow macro indicators (#2-#5); skip ones not built yet."""
+    """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today."""
     from collectors import fed_rate, margin_debt, sectors
 
-    for update in (fed_rate.update_fed_rate_data, sectors.update_sector_data):
-        try:
-            update()
-        except NotImplementedError:
-            pass
+    if fed_rate.should_refresh():
+        fed_rate.update_fed_rate_data()
+
+    if sectors.should_refresh():
+        sectors.update_sector_data()
 
     # should_refresh() skips most of the month, so the container starts on demand.
     if margin_debt.should_refresh() and _ensure_cf_bypass_running():

@@ -11,6 +11,7 @@ import pandas as pd
 import yfinance as yf
 from yfinance.const import SECTOR_INDUSTY_MAPPING_LC
 
+from collectors.freshness import refreshed_today
 from config import SECTOR_TOP_CONSTITUENTS, SECTOR_TOP_N, SECTORS_CSV
 
 
@@ -75,6 +76,11 @@ def update_sector_data(filepath: Path = SECTORS_CSV) -> None:
 def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
     """Return the cached top-N industries with their market cap and earnings growth."""
     return pd.read_csv(filepath)
+
+
+def should_refresh(filepath: Path = SECTORS_CSV) -> bool:
+    """Skip if already refreshed today — industry rankings/earnings estimates move slowly."""
+    return not refreshed_today(filepath)
 
 
 if __name__ == "__main__":
