@@ -220,19 +220,21 @@ def test_handle_message_dip_respects_market_open_flag(monkeypatch, make_subsigna
 
 
 def test_handle_message_fedrate(monkeypatch, make_subsignal):
-    monkeypatch.setattr(tb.rate_signal, "score", lambda: make_subsignal("fed_rate", "flat", "x", passes=True))
+    # _SIGNAL_COMMANDS binds these score functions at import time, so patching
+    # tb.rate_signal.score wouldn't reach the already-bound dict entry -- patch the entry itself.
+    monkeypatch.setitem(tb._SIGNAL_COMMANDS, "/fedrate", lambda: make_subsignal("fed_rate", "flat", "x", passes=True))
     assert "Fed Rate" in tb._handle_message("/fedrate")
 
 
 def test_handle_message_margin(monkeypatch, make_subsignal):
-    monkeypatch.setattr(
-        tb.margin_signal, "score", lambda: make_subsignal("margin_debt", "deleveraging", "x", passes=True)
+    monkeypatch.setitem(
+        tb._SIGNAL_COMMANDS, "/margin", lambda: make_subsignal("margin_debt", "deleveraging", "x", passes=True)
     )
     assert "Margin Debt" in tb._handle_message("/margin")
 
 
 def test_handle_message_sector(monkeypatch, make_subsignal):
-    monkeypatch.setattr(tb.sector_signal, "score", lambda: make_subsignal("sector", "growing", "x", passes=True))
+    monkeypatch.setitem(tb._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
     assert "Leading Industries" in tb._handle_message("/sector")
 
 
