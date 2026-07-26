@@ -101,6 +101,7 @@ class _State:
     last_error: str | None = None
     last_result: BuySignal | None = None
     alerting: bool = False
+    last_session: str | None = None
 
 
 _state = _State(start_time=datetime.now(timezone.utc))
@@ -203,6 +204,14 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
         _state.last_error = str(error) if error else None
         if result is not None:
             _state.last_result = result
+
+    # Daily report: fires once at the regular-session close, regardless of pass/fail.
+    session = runner.market_session()
+    with _lock:
+        was_regular = _state.last_session == runner.REGULAR
+        _state.last_session = session
+    if was_regular and session != runner.REGULAR and result is not None:
+        _send(f"📅 <b>End of day</b>\n\n{_format_signal(result)}")
 
     if result is None:
         return
