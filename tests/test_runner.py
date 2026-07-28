@@ -207,3 +207,112 @@ def test_cf_bypass_ready_false_when_unreachable():
 
     with patch("runner.requests.get", side_effect=requests.exceptions.ConnectionError()):
         assert runner._cf_bypass_ready(timeout=0.1) is False
+
+
+# --- vix_active_window ---------------------------------------------------------
+
+
+def test_vix_active_window_just_before_start_is_inactive():
+    dt = datetime(2026, 7, 24, 1, 59, tzinfo=runner.CT)
+    assert runner.vix_active_window(dt) is False
+
+
+def test_vix_active_window_exactly_at_start_is_active():
+    dt = datetime(2026, 7, 24, 2, 0, tzinfo=runner.CT)  # boundary is `<=`, so == is already active
+    assert runner.vix_active_window(dt) is True
+
+
+def test_vix_active_window_just_before_end_is_active():
+    dt = datetime(2026, 7, 24, 19, 59, tzinfo=runner.CT)
+    assert runner.vix_active_window(dt) is True
+
+
+def test_vix_active_window_exactly_at_end_is_inactive():
+    dt = datetime(2026, 7, 24, 20, 0, tzinfo=runner.CT)  # boundary is `<`, so == is already inactive
+    assert runner.vix_active_window(dt) is False
+
+
+def test_vix_active_window_inactive_on_weekend_even_within_hour_range():
+    dt = datetime(2026, 7, 25, 12, 0, tzinfo=runner.CT)  # Saturday, well within 02:00-20:00
+    assert runner.vix_active_window(dt) is False
+
+
+# --- tick(): CLOSED-but-vix-active behavior ---------------------------------------------------------
+
+
+def test_tick_runs_when_closed_but_vix_window_active():
+    dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
+    assert runner.market_session(dt) == runner.CLOSED
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
+        "runner.refresh_macro"
+    ) as mock_refresh:
+        result = runner.tick(dt)
+    assert result is not None
+    mock_compute.assert_called_once()
+    mock_refresh.assert_not_called()  # closed, and this vix reading doesn't pass
+
+
+def test_tick_idle_when_closed_and_vix_window_inactive():
+    dt = datetime(2026, 7, 24, 21, 0, tzinfo=ET)  # 9pm ET = 8pm CT: both NYSE closed and VIX quiet
+    assert runner.market_session(dt) == runner.CLOSED
+    with patch("runner.compute_signal") as mock_compute:
+        result = runner.tick(dt)
+    assert result is None
+    mock_compute.assert_not_called()
+
+
+def test_tick_refreshes_during_closed_vix_window_if_vix_passes():
+    dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
+        "runner.refresh_macro"
+    ) as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
+
+
+# --- refresh_macro(force=True) ---------------------------------------------------------
+
+
+def test_refresh_macro_force_bypasses_should_refresh_gates():
+    with patch("collectors.fed_rate.should_refresh", return_value=False), patch(
+        "collectors.fed_rate.update_fed_rate_data"
+    ) as mock_fed_update, patch("collectors.sectors.should_refresh", return_value=False), patch(
+        "collectors.sectors.update_sector_data"
+    ) as mock_sector_update, patch(
+        "collectors.margin_debt.should_refresh", return_value=False
+    ), patch(
+        "runner._cf_bypass_ready", return_value=True
+    ), patch(
+        "collectors.margin_debt.update_margin_debt_data"
+    ) as mock_margin_update:
+        runner.refresh_macro(force=True)
+    mock_fed_update.assert_called_once()
+    mock_sector_update.assert_called_once()
+    mock_margin_update.assert_called_once()
+
+
+# --- run_forever(): hour-aligned sleep ---------------------------------------------------------
+
+
+def test_seconds_until_next_boundary_passes_through_non_positive_interval():
+    assert runner._seconds_until_next_boundary(0) == 0
+
+
+def test_seconds_until_next_boundary_aligns_to_wall_clock_hour(monkeypatch):
+    fixed_time = 1_700_000_000.0
+    remainder = fixed_time % 3600
+    monkeypatch.setattr(runner, "wall_time", lambda: fixed_time)
+    assert runner._seconds_until_next_boundary(3600) == 3600 - remainder
+
+
+def test_run_forever_sleeps_until_next_hour_boundary(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runner, "wall_time", lambda: 1_700_003_600.0)
+
+    def fake_sleep(sec):
+        calls.append(sec)
+        raise KeyboardInterrupt
+
+    with patch("runner.tick", return_value=None), patch("runner.sleep", side_effect=fake_sleep):
+        runner.run_forever(interval_sec=3600)
+    assert calls == [3600 - (1_700_003_600.0 % 3600)]

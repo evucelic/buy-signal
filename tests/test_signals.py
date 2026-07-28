@@ -130,10 +130,10 @@ def test_rate_cutting_passes():
         assert s.state == "cutting" and s.passes is True
 
 
-def test_rate_flat_passes():
+def test_rate_no_change_passes():
     with patch("signals.rate_signal.latest_fedwatch", return_value=_meetings_df(0.2, 0.6, 0.2)):
         s = rate_signal.score()
-        assert s.state == "flat" and s.passes is True
+        assert s.state == "no_change" and s.passes is True
 
 
 def test_rate_meeting_fallback_no_horizon_column():
@@ -146,7 +146,7 @@ def test_rate_meeting_fallback_no_horizon_column():
     with patch("signals.rate_signal.latest_fedwatch", return_value=df):
         s = rate_signal.score()
         # falls back to the last row (sorted by meeting_date) for every horizon
-        assert s.state == "flat"
+        assert s.state == "no_change"
 
 
 def test_rate_exact_tie_at_top_is_flat():
@@ -157,6 +157,7 @@ def test_rate_exact_tie_at_top_is_flat():
 
 
 def test_rate_all_zero_probabilities_is_flat():
+    # a three-way tie at 0.0 -- no probability strictly dominates, so it falls all the way to flat
     with patch("signals.rate_signal.latest_fedwatch", return_value=_meetings_df(0.0, 0.0, 0.0)):
         s = rate_signal.score()
         assert s.state == "flat"
@@ -291,16 +292,29 @@ def test_market_dip_exact_threshold_boundary():
 
 
 def test_market_growth_exact_threshold_boundary():
-    # growth condition is `daily >= abs(threshold)` (inclusive)
-    with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(0.005)):
+    # MARKET_GROWTH_THRESHOLD = 0.0055, and the condition is `daily >= threshold` (inclusive)
+    with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(0.0055)):
         s = market_signal.score()
         assert s.state == "growth" and s.passes is False
+
+
+def test_market_just_below_growth_threshold_is_flat():
+    with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(0.0054)):
+        s = market_signal.score()
+        assert s.state == "flat" and s.passes is False
 
 
 def test_market_just_inside_flat_band_both_sides():
     with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(-0.0049)):
         assert market_signal.score().state == "flat"
     with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(0.0049)):
+        assert market_signal.score().state == "flat"
+
+
+def test_market_asymmetric_thresholds_are_independent():
+    # the old symmetric behavior (growth threshold == abs(dip threshold)) no longer holds --
+    # 0.005 used to be exactly the growth boundary, now it's still inside the flat band
+    with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(0.005)):
         assert market_signal.score().state == "flat"
 
 

@@ -11,14 +11,16 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 from dotenv import load_dotenv
 
+import config
 import runner
+from collectors import freshness
 from signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal
-from signals.base import SubSignal
+from signals.base import SubSignal, format_table
 from signals.buy_signal import BuySignal, compute_signal
 
 load_dotenv()
@@ -60,7 +62,8 @@ _STATE_LABELS = {
     ("vix", "none"): "⚪ Calm",
     ("fed_rate", "hiking"): "📈 Hiking",
     ("fed_rate", "cutting"): "📉 Cutting",
-    ("fed_rate", "flat"): "➡️ Flat",
+    ("fed_rate", "no_change"): "➡️ No change",
+    ("fed_rate", "flat"): "🤔 Mixed",
     ("margin_debt", "deleveraging"): "📉 Deleveraging",
     ("margin_debt", "leveraging"): "📈 Leveraging up",
     ("market_dip", "dip"): "🔻 Dip",
@@ -77,6 +80,7 @@ _COMMANDS = [
     {"command": "margin", "description": "FINRA margin debt (deleveraging)"},
     {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
+    {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
     {"command": "status", "description": "Runner uptime and health"},
     {"command": "help", "description": "List available commands"},
 ]
@@ -89,8 +93,19 @@ _HELP_TEXT = (
     "/margin — FINRA margin debt\n"
     "/dip — SPY/NASDAQ/DOW % change\n"
     "/sector — leading industries earnings outlook\n"
+    "/refresh — force a fresh fetch of all data (bypass cache)\n"
     "/status — runner uptime and health"
 )
+
+# Cache files backing each signal, for the "data as of" freshness table appended to every
+# _format_signal() output.
+_FRESHNESS_FILES = {
+    "vix": config.VIX_CSV,
+    "market_dip": config.MARKET_CSV,
+    "fed_rate": config.FEDWATCH_CSV,
+    "margin_debt": config.MARGIN_DEBT_CSV,
+    "sector": config.SECTORS_CSV,
+}
 
 
 @dataclass
@@ -101,7 +116,7 @@ class _State:
     last_error: str | None = None
     last_result: BuySignal | None = None
     alerting: bool = False
-    last_session: str | None = None
+    last_report_date: date | None = None
 
 
 _state = _State(start_time=datetime.now(timezone.utc))
@@ -159,12 +174,31 @@ def _format_subsignal(s: SubSignal) -> str:
     return f"{header}\n{body}"
 
 
+def _humanize_age(updated_at: datetime | None) -> str:
+    if updated_at is None:
+        return "no cache"
+    secs = (datetime.now(timezone.utc) - updated_at).total_seconds()
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
+def _format_freshness() -> str:
+    rows = [[name, _humanize_age(freshness.last_modified(path))] for name, path in _FRESHNESS_FILES.items()]
+    return "<pre>" + _esc(format_table(["signal", "updated"], rows)) + "</pre>"
+
+
 def _format_signal(result: BuySignal) -> str:
     emoji, label = _ALERT_LABELS.get(result.state, ("", result.state.upper()))
     header = f"{emoji} <b>{_esc(label)}</b> ({result.passing_count}/{len(result.subsignals)} conditions met)"
     blocks = [_format_subsignal(s) for s in result.subsignals]
     if result.missing_signals:
         blocks.append(f"⚠️ missing: {_esc(', '.join(result.missing_signals))}")
+    blocks.append(f"🕓 <b>Data as of</b>\n{_format_freshness()}")
     return "\n\n".join([header, *blocks])
 
 
@@ -205,12 +239,16 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
         if result is not None:
             _state.last_result = result
 
-    # Daily report: fires once at the regular-session close, regardless of pass/fail.
-    session = runner.market_session()
+    # Daily report: fires once at DAILY_REPORT_HOUR_CT (CT wall clock), regardless of pass/fail.
+    now_ct = datetime.now(timezone.utc).astimezone(runner.CT)
     with _lock:
-        was_regular = _state.last_session == runner.REGULAR
-        _state.last_session = session
-    if was_regular and session != runner.REGULAR and result is not None:
+        already_sent_today = _state.last_report_date == now_ct.date()
+        if now_ct.hour == config.DAILY_REPORT_HOUR_CT and not already_sent_today:
+            _state.last_report_date = now_ct.date()
+            should_send = result is not None
+        else:
+            should_send = False
+    if should_send:
         _send(f"📅 <b>End of day</b>\n\n{_format_signal(result)}")
 
     if result is None:
@@ -254,6 +292,10 @@ def _handle_message(text: str) -> str | None:
         return _format_single(lambda: market_signal.score(allow_refresh=market_open))
     if text in _SIGNAL_COMMANDS:
         return _format_single(_SIGNAL_COMMANDS[text])
+    if text == "/refresh":
+        with buy_signal.SIGNAL_LOCK:
+            runner.refresh_macro(force=True)
+        return _format_signal(compute_signal(allow_refresh=True))
     if text == "/status":
         return _format_status()
     if text in ("/start", "/help"):

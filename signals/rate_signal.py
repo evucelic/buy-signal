@@ -50,8 +50,10 @@ def score() -> SubSignal:
         state = "hiking"
     elif ease > max(no_change, hike):
         state = "cutting"
+    elif no_change > max(ease, hike):
+        state = "no_change"
     else:
-        state = "flat"
+        state = "flat"  # genuine tie between two or more of ease/no_change/hike
 
     detail = " | ".join(
         _format_meeting(label, meeting)

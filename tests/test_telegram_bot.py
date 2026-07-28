@@ -2,7 +2,7 @@
 and bot.py's one testable function.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -11,9 +11,15 @@ import telegram_bot as tb
 
 
 @pytest.fixture(autouse=True)
-def reset_state():
-    """telegram_bot's module-level _state is mutable global state — reset it every test."""
+def reset_state(monkeypatch):
+    """telegram_bot's module-level _state is mutable global state — reset it every test.
+
+    Also disables the daily report by default (DAILY_REPORT_HOUR_CT -> an hour that never
+    matches) so handle_tick() tests aren't flaky depending on the real wall-clock hour when
+    the suite happens to run. Tests that specifically cover the daily report re-enable it.
+    """
     tb._state = tb._State(start_time=datetime.now(timezone.utc))
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", -1)
     yield
 
 
@@ -85,6 +91,43 @@ def test_format_signal_includes_missing_line(make_buy_signal):
     assert "missing: sector, vix" in tb._format_signal(result)
 
 
+def test_format_signal_includes_freshness_table(make_buy_signal):
+    result = make_buy_signal([])
+    assert "Data as of" in tb._format_signal(result)
+
+
+def test_format_subsignal_uses_no_change_label(make_subsignal):
+    s = make_subsignal("fed_rate", "no_change", "x", passes=True)
+    assert "No change" in tb._format_subsignal(s)
+
+
+def test_humanize_age_no_cache():
+    assert tb._humanize_age(None) == "no cache"
+
+
+def test_humanize_age_just_now():
+    assert tb._humanize_age(datetime.now(timezone.utc)) == "just now"
+
+
+def test_humanize_age_minutes():
+    assert tb._humanize_age(datetime.now(timezone.utc) - timedelta(minutes=5)) == "5m ago"
+
+
+def test_humanize_age_hours():
+    assert tb._humanize_age(datetime.now(timezone.utc) - timedelta(hours=3)) == "3h ago"
+
+
+def test_humanize_age_days():
+    assert tb._humanize_age(datetime.now(timezone.utc) - timedelta(days=2)) == "2d ago"
+
+
+def test_format_freshness_lists_all_signals(monkeypatch):
+    monkeypatch.setattr(tb.freshness, "last_modified", lambda path: None)
+    table = tb._format_freshness()
+    for name in tb._FRESHNESS_FILES:
+        assert name in table
+
+
 def test_format_status_never_ticked():
     assert "never" in tb._format_status()
 
@@ -130,27 +173,55 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, make_subsignal, make_buy
 # --- handle_tick: daily-report edge-triggering ---------------------------------------------------------
 
 
-def test_handle_tick_daily_report_fires_once_at_close(monkeypatch, make_subsignal, make_buy_signal):
+def _freeze_ct_hour(monkeypatch, hour):
+    """Freeze datetime.now(timezone.utc) so its CT-converted hour is `hour`."""
+    # 12:00 UTC is 06:00 CT (or 07:00 CST outside DST) -- offset from `hour` by the CT->UTC delta
+    # computed via a real CT time on a fixed summer (CDT) date, so the module's astimezone() call
+    # lands on the requested CT hour regardless of host timezone.
+    ct_dt = datetime(2026, 7, 24, hour, 0, tzinfo=tb.runner.CT)
+    utc_dt = ct_dt.astimezone(timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return utc_dt.astimezone(tz) if tz else utc_dt
+
+    monkeypatch.setattr(tb, "datetime", _FrozenDatetime)
+
+
+def test_handle_tick_daily_report_fires_once_at_report_hour(monkeypatch, make_subsignal, make_buy_signal):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
-    sessions = iter([tb.runner.REGULAR, tb.runner.REGULAR, tb.runner.AFTER_HOURS, tb.runner.AFTER_HOURS])
-    monkeypatch.setattr(tb.runner, "market_session", lambda: next(sessions))
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
+    _freeze_ct_hour(monkeypatch, 20)
 
     result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
-    for _ in range(4):
-        tb.handle_tick(result, None)
+    tb.handle_tick(result, None)
+    tb.handle_tick(result, None)  # same hour/date again -- must not repeat
 
     daily_reports = [s for s in sent if "End of day" in s]
     assert len(daily_reports) == 1
 
 
-def test_handle_tick_daily_report_no_false_fire_on_fresh_restart(monkeypatch, make_subsignal, make_buy_signal):
+def test_handle_tick_daily_report_does_not_fire_outside_report_hour(monkeypatch, make_subsignal, make_buy_signal):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
-    monkeypatch.setattr(tb.runner, "market_session", lambda: tb.runner.AFTER_HOURS)
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
+    _freeze_ct_hour(monkeypatch, 19)
 
     result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
     tb.handle_tick(result, None)
+
+    assert not any("End of day" in s for s in sent)
+
+
+def test_handle_tick_daily_report_skipped_when_tick_failed(monkeypatch):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
+    _freeze_ct_hour(monkeypatch, 20)
+
+    tb.handle_tick(None, RuntimeError("boom"))
 
     assert not any("End of day" in s for s in sent)
 
@@ -236,6 +307,16 @@ def test_handle_message_margin(monkeypatch, make_subsignal):
 def test_handle_message_sector(monkeypatch, make_subsignal):
     monkeypatch.setitem(tb._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
     assert "Leading Industries" in tb._handle_message("/sector")
+
+
+def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):
+    calls = []
+    monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False: calls.append(force))
+    fake = make_buy_signal([])
+    monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: fake)
+    reply = tb._handle_message("/refresh")
+    assert calls == [True]
+    assert "No buy signal" in reply
 
 
 def test_format_single_handles_exception():

@@ -17,7 +17,7 @@ import requests
 from collectors import fed_rate, margin_debt, sectors
 from collectors import market as market_mod
 from collectors import vix as vix_mod
-from collectors.freshness import refreshed_today
+from collectors.freshness import last_modified, refreshed_today
 
 # --- freshness ---------------------------------------------------------------
 
@@ -38,6 +38,19 @@ def test_refreshed_today_false_old_mtime(tmp_path):
     old = (datetime.now() - timedelta(days=2)).timestamp()
     os.utime(f, (old, old))
     assert refreshed_today(f) is False
+
+
+def test_last_modified_missing_file(tmp_path):
+    assert last_modified(tmp_path / "nope.csv") is None
+
+
+def test_last_modified_returns_aware_utc_datetime(tmp_path):
+    f = tmp_path / "x.csv"
+    f.write_text("x")
+    result = last_modified(f)
+    assert result is not None
+    assert result.tzinfo is not None
+    assert abs((datetime.now(result.tzinfo) - result).total_seconds()) < 5
 
 
 # --- collectors/vix.py ---------------------------------------------------------------

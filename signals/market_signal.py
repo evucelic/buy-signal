@@ -1,7 +1,7 @@
 """Score indicator #6: daily/weekly/monthly % change on SPY, Nasdaq Composite, and Dow Jones."""
 
 from collectors.market import get_latest_market_changes, latest_changes
-from config import INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_PRIMARY_INDEX
+from config import INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, MARKET_PRIMARY_INDEX
 from signals.base import SubSignal, format_table
 
 
@@ -29,7 +29,7 @@ def score(allow_refresh: bool = True) -> SubSignal:
 
     if dip:
         state = "dip"
-    elif daily >= abs(MARKET_DIP_THRESHOLD):
+    elif daily >= MARKET_GROWTH_THRESHOLD:
         state = "growth"
     else:
         state = "flat"

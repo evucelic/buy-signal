@@ -22,6 +22,8 @@ VIX_LOOKBACK_DAYS = 729   # Yahoo caps 1h intraday history at ~730 days
 VIX_STRONG = 30.0      # strong "fear" signal
 VIX_SOFT = 22.0        # soft signal band
 VIX_OPTIMISTIC = 10.0  # very low / complacent
+VIX_WINDOW_START_HOUR_CT = 2   # VIX starts moving ~2am Central
+VIX_WINDOW_END_HOUR_CT = 20    # ...and is done moving by ~8pm Central
 
 # --- Fed rate (#2): CME FedWatch ---------------------------------------------
 FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
@@ -58,6 +60,7 @@ MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly l
 MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip
+MARKET_GROWTH_THRESHOLD = 0.0055    # +0.55% or better daily change counts as growth
 
 # --- Leading industries (#4/#5): top industries by market cap, earnings growth ---
 SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
@@ -66,3 +69,4 @@ SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for 
 
 # --- Runner cadence -----------------------------------------------------------
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
+DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central
