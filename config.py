@@ -22,6 +22,8 @@ VIX_LOOKBACK_DAYS = 729   # Yahoo caps 1h intraday history at ~730 days
 VIX_STRONG = 30.0      # strong "fear" signal
 VIX_SOFT = 22.0        # soft signal band
 VIX_OPTIMISTIC = 10.0  # very low / complacent
+VIX_WINDOW_START_HOUR_CT = 2   # VIX starts moving ~2am Central
+VIX_WINDOW_END_HOUR_CT = 20    # ...and is done moving by ~8pm Central
 
 # --- Fed rate (#2): CME FedWatch ---------------------------------------------
 FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
@@ -30,6 +32,9 @@ FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-too
 FETCH_JITTER_SEC = (2.0, 12.0)  # random pause before an external fetch, so it isn't periodic
 SCRAPE_RETRIES = 3
 SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape retries
+# CME FedWatch's page is JS-heavy and has been observed taking close to (and sometimes past)
+# 60s to finish rendering in production; give it real headroom instead of timing out mid-load.
+FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
 # Recent desktop-Chrome UAs only — must match the real browser or detection worsens.
 USER_AGENTS = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -49,6 +54,9 @@ MARGIN_REFRESH_WINDOW_DAY = 21  # FINRA's stated "third week"; past this, expect
 CF_BYPASS_HOST = os.environ.get("CF_BYPASS_HOST", "localhost")
 CF_BYPASS_PORT = 8000
 CF_BYPASS_URL = f"http://{CF_BYPASS_HOST}:{CF_BYPASS_PORT}"
+# cfbypass solving the Cloudflare Turnstile challenge has been observed taking 90-120s+ in
+# production, so give it real headroom instead of timing out mid-solve.
+CF_BYPASS_TIMEOUT_SEC = 180
 
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}
@@ -58,6 +66,7 @@ MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly l
 MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip
+MARKET_GROWTH_THRESHOLD = 0.0055    # +0.55% or better daily change counts as growth
 
 # --- Leading industries (#4/#5): top industries by market cap, earnings growth ---
 SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
@@ -66,3 +75,4 @@ SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for 
 
 # --- Runner cadence -----------------------------------------------------------
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
+DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central
