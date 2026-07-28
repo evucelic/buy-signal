@@ -18,6 +18,7 @@ import requests
 
 from collectors.freshness import refreshed_today
 from config import (
+    CF_BYPASS_TIMEOUT_SEC,
     CF_BYPASS_URL,
     FETCH_JITTER_SEC,
     MARGIN_DEBT_CSV,
@@ -40,7 +41,7 @@ _COLUMN_MAP = {
 def _get_clearance() -> tuple[dict, str]:
     """Fetch Cloudflare clearance cookies + UA for MARGIN_STATS_URL from the local bypass service."""
     try:
-        resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=60)
+        resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=CF_BYPASS_TIMEOUT_SEC)
     except requests.exceptions.ConnectionError as exc:
         raise RuntimeError(
             f"Cloudflare bypass service not reachable at {CF_BYPASS_URL}. "
@@ -73,37 +74,33 @@ def _parse_xlsx(raw: bytes) -> pd.DataFrame:
     return df.sort_values("month").reset_index(drop=True)
 
 
-def _fetch_with_retries() -> pd.DataFrame | None:
-    """Fetch + parse the margin-statistics workbook with retry/backoff."""
+def _fetch_with_retries() -> tuple[pd.DataFrame | None, str | None]:
+    """Fetch + parse the margin-statistics workbook with retry/backoff. Returns (data, error_message)."""
+    last_error = None
     for attempt in range(SCRAPE_RETRIES):
         try:
-            return _parse_xlsx(_fetch_xlsx_bytes())
+            return _parse_xlsx(_fetch_xlsx_bytes()), None
         except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
             if attempt + 1 == SCRAPE_RETRIES:
-                print(
-                    f"Margin debt fetch failed after {SCRAPE_RETRIES} tries "
-                    f"({type(exc).__name__}: {exc}); cache unchanged."
-                )
-                return None
+                print(f"Margin debt fetch failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
+                return None, last_error
 
             delay = SCRAPE_BACKOFF_SEC * 2**attempt + random.uniform(0, 1)
-            print(
-                f"Margin debt attempt {attempt + 1} failed "
-                f"({type(exc).__name__}); retry in {delay:.0f}s"
-            )
+            print(f"Margin debt attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
             time.sleep(delay)
 
-    return None
+    return None, last_error
 
 
-def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> None:
-    """Refresh the cached FINRA margin-statistics snapshot."""
+def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> str | None:
+    """Refresh the cached FINRA margin-statistics snapshot. Returns an error message, or None on success."""
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
-    history = _fetch_with_retries()
+    history, error = _fetch_with_retries()
     if history is None:
-        return
+        return error or "unknown error"
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     history.to_csv(filepath, index=False)
@@ -114,6 +111,7 @@ def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> None:
         f"Margin debt cache updated: {len(history)} months, latest "
         f"{latest['month'].date()} = {latest['debit_balances']:,.0f} ({tier}: {message})"
     )
+    return None
 
 
 def margin_history(filepath: Path | str = MARGIN_DEBT_CSV) -> pd.DataFrame:

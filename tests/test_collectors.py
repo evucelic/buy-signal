@@ -17,7 +17,7 @@ import requests
 from collectors import fed_rate, margin_debt, sectors
 from collectors import market as market_mod
 from collectors import vix as vix_mod
-from collectors.freshness import refreshed_today
+from collectors.freshness import last_modified, refreshed_today
 
 # freshness
 
@@ -38,6 +38,19 @@ def test_refreshed_today_false_old_mtime(tmp_path):
     old = (datetime.now() - timedelta(days=2)).timestamp()
     os.utime(f, (old, old))
     assert refreshed_today(f) is False
+
+
+def test_last_modified_missing_file(tmp_path):
+    assert last_modified(tmp_path / "nope.csv") is None
+
+
+def test_last_modified_returns_aware_utc_datetime(tmp_path):
+    f = tmp_path / "x.csv"
+    f.write_text("x")
+    result = last_modified(f)
+    assert result is not None
+    assert result.tzinfo is not None
+    assert abs((datetime.now(result.tzinfo) - result).total_seconds()) < 5
 
 
 # collectors/vix.py
@@ -326,8 +339,20 @@ def test_industry_earnings_growth_no_top_companies(monkeypatch):
 def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
     path = tmp_path / "sectors.csv"
     with patch("collectors.sectors._industry_market_caps", side_effect=RuntimeError("boom")):
-        sectors.update_sector_data(path)
+        error = sectors.update_sector_data(path)
     assert not path.exists()
+    assert error is not None and "boom" in error
+
+
+def test_update_sector_data_success_returns_none(tmp_path):
+    path = tmp_path / "sectors.csv"
+    with patch(
+        "collectors.sectors._industry_market_caps",
+        return_value=pd.DataFrame({"industry": ["X"], "key": ["x"], "market_cap": [1.0]}),
+    ), patch("collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
+        error = sectors.update_sector_data(path)
+    assert error is None
+    assert path.exists()
 
 
 # collectors/fed_rate.py (non-Selenium logic only)
@@ -343,6 +368,7 @@ def test_fed_rate_should_refresh_missing_file(tmp_path):
 
 def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
     path = tmp_path / "fedwatch.csv"
-    with patch("collectors.fed_rate._fetch_with_retries", return_value=None):
-        fed_rate.update_fed_rate_data(path)
+    with patch("collectors.fed_rate._fetch_with_retries", return_value=(None, "ConnectionError: boom")):
+        error = fed_rate.update_fed_rate_data(path)
     assert not path.exists()
+    assert error == "ConnectionError: boom"
