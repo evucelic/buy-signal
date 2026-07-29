@@ -291,6 +291,29 @@ def test_refresh_macro_force_bypasses_should_refresh_gates():
     mock_margin_update.assert_called_once()
 
 
+def test_refresh_macro_returns_name_and_error_for_each_failed_collector():
+    with patch("collectors.fed_rate.update_fed_rate_data", return_value="ConnectionError: boom"), patch(
+        "collectors.sectors.update_sector_data", return_value=None
+    ), patch("runner._cf_bypass_ready", return_value=True), patch(
+        "collectors.margin_debt.update_margin_debt_data", return_value="TimeoutError: slow"
+    ):
+        failed = runner.refresh_macro(force=True)
+    assert ("fed_rate", "ConnectionError: boom") in failed
+    assert ("margin_debt", "TimeoutError: slow") in failed
+    assert not any(name == "sector" for name, _ in failed)
+
+
+def test_refresh_macro_reports_margin_debt_when_cfbypass_unreachable():
+    with patch("collectors.fed_rate.update_fed_rate_data", return_value=None), patch(
+        "collectors.sectors.update_sector_data", return_value=None
+    ), patch("runner._cf_bypass_ready", return_value=False):
+        failed = runner.refresh_macro(force=True)
+    assert len(failed) == 1
+    name, error = failed[0]
+    assert name == "margin_debt"
+    assert "cfbypass" in error
+
+
 # --- run_forever(): hour-aligned sleep ---------------------------------------------------------
 
 

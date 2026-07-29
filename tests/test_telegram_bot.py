@@ -343,12 +343,24 @@ def test_handle_message_sector(monkeypatch, make_subsignal):
 
 def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):
     calls = []
-    monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False: calls.append(force))
+    monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False: calls.append(force) or [])
     fake = make_buy_signal([])
     monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: fake)
     reply = tb._handle_message("/refresh")
     assert calls == [True]
     assert "No buy signal" in reply
+
+
+def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_signal):
+    monkeypatch.setattr(
+        tb.runner, "refresh_macro", lambda force=False: [("fed_rate", "ConnectionError: boom")]
+    )
+    fake = make_buy_signal([])
+    monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: fake)
+    reply = tb._handle_message("/refresh")
+    assert "Refresh failed" in reply
+    assert "fed_rate" in reply
+    assert "ConnectionError: boom" in reply
 
 
 def test_format_single_handles_exception():

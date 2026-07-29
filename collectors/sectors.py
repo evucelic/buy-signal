@@ -55,10 +55,10 @@ def _industry_earnings_growth(industry_key: str) -> float:
     return sum(w * g for w, g in zip(weights, growths)) / sum(weights) if weights else float("nan")
 
 
-def update_sector_data(filepath: Path = SECTORS_CSV) -> bool:
+def update_sector_data(filepath: Path = SECTORS_CSV) -> str | None:
     """Refresh the cached top-N industries (by market cap) and their earnings growth.
 
-    Returns whether the refresh actually succeeded.
+    Returns an error message, or None on success.
     """
     filepath = Path(filepath)
 
@@ -66,15 +66,16 @@ def update_sector_data(filepath: Path = SECTORS_CSV) -> bool:
         ranked = _industry_market_caps().head(SECTOR_TOP_N).copy()
         ranked["earnings_growth_estimate_1y"] = ranked["key"].apply(_industry_earnings_growth)
     except Exception as exc:
-        print(f"Sector data fetch failed ({type(exc).__name__}: {exc}); cache unchanged.")
-        return False
+        error = f"{type(exc).__name__}: {exc}"
+        print(f"Sector data fetch failed ({error}); cache unchanged.")
+        return error
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     ranked.to_csv(filepath, index=False)
 
     growing = int((ranked["earnings_growth_estimate_1y"] > 0).sum())
     print(f"Sector cache updated: top {len(ranked)} industries, {growing} with positive earnings growth")
-    return True
+    return None
 
 
 def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:

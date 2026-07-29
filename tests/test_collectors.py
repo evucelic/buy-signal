@@ -339,8 +339,20 @@ def test_industry_earnings_growth_no_top_companies(monkeypatch):
 def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
     path = tmp_path / "sectors.csv"
     with patch("collectors.sectors._industry_market_caps", side_effect=RuntimeError("boom")):
-        sectors.update_sector_data(path)
+        error = sectors.update_sector_data(path)
     assert not path.exists()
+    assert error is not None and "boom" in error
+
+
+def test_update_sector_data_success_returns_none(tmp_path):
+    path = tmp_path / "sectors.csv"
+    with patch(
+        "collectors.sectors._industry_market_caps",
+        return_value=pd.DataFrame({"industry": ["X"], "key": ["x"], "market_cap": [1.0]}),
+    ), patch("collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
+        error = sectors.update_sector_data(path)
+    assert error is None
+    assert path.exists()
 
 
 # --- collectors/fed_rate.py (non-Selenium logic only) -----------------------------------
@@ -356,6 +368,7 @@ def test_fed_rate_should_refresh_missing_file(tmp_path):
 
 def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
     path = tmp_path / "fedwatch.csv"
-    with patch("collectors.fed_rate._fetch_with_retries", return_value=None):
-        fed_rate.update_fed_rate_data(path)
+    with patch("collectors.fed_rate._fetch_with_retries", return_value=(None, "ConnectionError: boom")):
+        error = fed_rate.update_fed_rate_data(path)
     assert not path.exists()
+    assert error == "ConnectionError: boom"

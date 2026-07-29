@@ -90,30 +90,34 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
     return False
 
 
-def refresh_macro(force: bool = False) -> list[str]:
+def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
     """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today.
 
     force=True bypasses each collector's own should_refresh() gate (used by the Telegram
-    /refresh command). Returns the names of collectors that were attempted but failed, so
-    callers can surface it instead of a silently stale cache.
+    /refresh command). Returns (name, error_message) for every collector that was attempted
+    but failed, so callers can surface the actual reason instead of a silently stale cache.
     """
     from collectors import fed_rate, margin_debt, sectors
 
     failed = []
 
     if force or fed_rate.should_refresh():
-        if not fed_rate.update_fed_rate_data():
-            failed.append("fed_rate")
+        error = fed_rate.update_fed_rate_data()
+        if error:
+            failed.append(("fed_rate", error))
 
     if force or sectors.should_refresh():
-        if not sectors.update_sector_data():
-            failed.append("sector")
+        error = sectors.update_sector_data()
+        if error:
+            failed.append(("sector", error))
 
     if force or margin_debt.should_refresh():
         if not _cf_bypass_ready():
-            failed.append("margin_debt")
-        elif not margin_debt.update_margin_debt_data():
-            failed.append("margin_debt")
+            failed.append(("margin_debt", f"cfbypass service unreachable at {CF_BYPASS_URL}"))
+        else:
+            error = margin_debt.update_margin_debt_data()
+            if error:
+                failed.append(("margin_debt", error))
 
     return failed
 

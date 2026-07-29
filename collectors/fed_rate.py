@@ -156,40 +156,36 @@ def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
         driver.quit()
 
 
-def _fetch_with_retries(today: pd.Timestamp) -> pd.DataFrame | None:
-    """Fetch meeting probabilities with retry/backoff."""
+def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str | None]:
+    """Fetch meeting probabilities with retry/backoff. Returns (data, error_message)."""
+    last_error = None
     for attempt in range(SCRAPE_RETRIES):
         try:
-            return _fetch_meeting_probabilities(today)
+            return _fetch_meeting_probabilities(today), None
         except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
             if attempt + 1 == SCRAPE_RETRIES:
-                print(
-                    f"FedWatch scrape failed after {SCRAPE_RETRIES} tries "
-                    f"({type(exc).__name__}); cache unchanged."
-                )
-                return None
+                print(f"FedWatch scrape failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
+                return None, last_error
 
             delay = (
                 SCRAPE_BACKOFF_SEC * 2**attempt
                 + random.uniform(0, 1)
             )
-            print(
-                f"FedWatch attempt {attempt + 1} failed "
-                f"({type(exc).__name__}); retry in {delay:.0f}s"
-            )
+            print(f"FedWatch attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
             time.sleep(delay)
 
-    return None
+    return None, last_error
 
 
-def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> bool:
-    """Refresh the cached FedWatch snapshot. Returns whether the refresh actually succeeded."""
+def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
+    """Refresh the cached FedWatch snapshot. Returns an error message, or None on success."""
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
-    snapshot = _fetch_with_retries(pd.Timestamp.now().normalize())
+    snapshot, error = _fetch_with_retries(pd.Timestamp.now().normalize())
     if snapshot is None:
-        return False
+        return error or "unknown error"
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(filepath, index=False)
@@ -199,7 +195,7 @@ def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> bool:
         f"{snapshot['meeting_date'].min().date()} -> "
         f"{snapshot['meeting_date'].max().date()}"
     )
-    return True
+    return None
 
 
 def latest_fedwatch(

@@ -309,7 +309,8 @@ def _handle_message(text: str) -> str | None:
             failed = runner.refresh_macro(force=True)
         reply = _format_signal(compute_signal(allow_refresh=True))
         if failed:
-            reply = f"⚠️ refresh failed for: {_esc(', '.join(failed))} (see logs)\n\n{reply}"
+            lines = "\n".join(f"• {_esc(name)}: {_esc(error)}" for name, error in failed)
+            reply = f"⚠️ <b>Refresh failed</b>\n{lines}\n\n{reply}"
         return reply
     if text == "/status":
         return _format_status()
