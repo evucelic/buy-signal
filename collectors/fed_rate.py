@@ -16,6 +16,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from collectors.freshness import refreshed_today
 from config import (
     FEDWATCH_CSV,
+    FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
     FEDWATCH_URL,
     FETCH_JITTER_SEC,
     SCRAPE_BACKOFF_SEC,
@@ -53,7 +54,7 @@ def _build_driver() -> webdriver.Chrome:
     options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
 
     driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(60)
+    driver.set_page_load_timeout(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC)
     return driver
 
 

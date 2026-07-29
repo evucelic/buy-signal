@@ -32,6 +32,9 @@ FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-too
 FETCH_JITTER_SEC = (2.0, 12.0)  # random pause before an external fetch, so it isn't periodic
 SCRAPE_RETRIES = 3
 SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape retries
+# CME FedWatch's page is JS-heavy and has been observed taking close to (and sometimes past)
+# 60s to finish rendering in production; give it real headroom instead of timing out mid-load.
+FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
 # Recent desktop-Chrome UAs only — must match the real browser or detection worsens.
 USER_AGENTS = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -51,6 +54,9 @@ MARGIN_REFRESH_WINDOW_DAY = 21  # FINRA's stated "third week"; past this, expect
 CF_BYPASS_HOST = os.environ.get("CF_BYPASS_HOST", "localhost")
 CF_BYPASS_PORT = 8000
 CF_BYPASS_URL = f"http://{CF_BYPASS_HOST}:{CF_BYPASS_PORT}"
+# cfbypass solving the Cloudflare Turnstile challenge has been observed taking 90-120s+ in
+# production, so give it real headroom instead of timing out mid-solve.
+CF_BYPASS_TIMEOUT_SEC = 180
 
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}

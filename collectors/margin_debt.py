@@ -18,6 +18,7 @@ import requests
 
 from collectors.freshness import refreshed_today
 from config import (
+    CF_BYPASS_TIMEOUT_SEC,
     CF_BYPASS_URL,
     FETCH_JITTER_SEC,
     MARGIN_DEBT_CSV,
@@ -40,7 +41,7 @@ _COLUMN_MAP = {
 def _get_clearance() -> tuple[dict, str]:
     """Fetch Cloudflare clearance cookies + UA for MARGIN_STATS_URL from the local bypass service."""
     try:
-        resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=60)
+        resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=CF_BYPASS_TIMEOUT_SEC)
     except requests.exceptions.ConnectionError as exc:
         raise RuntimeError(
             f"Cloudflare bypass service not reachable at {CF_BYPASS_URL}. "
