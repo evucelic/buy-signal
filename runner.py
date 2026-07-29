@@ -90,22 +90,32 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
     return False
 
 
-def refresh_macro(force: bool = False) -> None:
+def refresh_macro(force: bool = False) -> list[str]:
     """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today.
 
     force=True bypasses each collector's own should_refresh() gate (used by the Telegram
-    /refresh command).
+    /refresh command). Returns the names of collectors that were attempted but failed, so
+    callers can surface it instead of a silently stale cache.
     """
     from collectors import fed_rate, margin_debt, sectors
 
+    failed = []
+
     if force or fed_rate.should_refresh():
-        fed_rate.update_fed_rate_data()
+        if not fed_rate.update_fed_rate_data():
+            failed.append("fed_rate")
 
     if force or sectors.should_refresh():
-        sectors.update_sector_data()
+        if not sectors.update_sector_data():
+            failed.append("sector")
 
-    if (force or margin_debt.should_refresh()) and _cf_bypass_ready():
-        margin_debt.update_margin_debt_data()
+    if force or margin_debt.should_refresh():
+        if not _cf_bypass_ready():
+            failed.append("margin_debt")
+        elif not margin_debt.update_margin_debt_data():
+            failed.append("margin_debt")
+
+    return failed
 
 
 def tick(now: datetime | None = None):

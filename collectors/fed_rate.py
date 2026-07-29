@@ -182,14 +182,14 @@ def _fetch_with_retries(today: pd.Timestamp) -> pd.DataFrame | None:
     return None
 
 
-def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> None:
-    """Refresh the cached FedWatch snapshot."""
+def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> bool:
+    """Refresh the cached FedWatch snapshot. Returns whether the refresh actually succeeded."""
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
     snapshot = _fetch_with_retries(pd.Timestamp.now().normalize())
     if snapshot is None:
-        return
+        return False
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(filepath, index=False)
@@ -199,6 +199,7 @@ def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> None:
         f"{snapshot['meeting_date'].min().date()} -> "
         f"{snapshot['meeting_date'].max().date()}"
     )
+    return True
 
 
 def latest_fedwatch(

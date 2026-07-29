@@ -35,7 +35,7 @@ def _format_meeting(label: str, meeting: pd.Series) -> str:
 
 
 def score() -> SubSignal:
-    """Return the FedWatch sub-signal for the one-year meeting."""
+    """Return the FedWatch sub-signal for the nearest upcoming meeting."""
     df = latest_fedwatch().sort_values("meeting_date").reset_index(drop=True)
 
     meetings = {
@@ -44,7 +44,7 @@ def score() -> SubSignal:
         "1y": _meeting(df, "one_year"),
     }
 
-    ease, no_change, hike = _probabilities(meetings["1y"])
+    ease, no_change, hike = _probabilities(meetings["nearest"])
 
     if hike > max(ease, no_change):
         state = "hiking"

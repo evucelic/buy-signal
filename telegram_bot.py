@@ -240,16 +240,18 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
             _state.last_result = result
 
     # Daily report: fires once at DAILY_REPORT_HOUR_CT (CT wall clock), regardless of pass/fail.
+    # The report hour can fall outside tick()'s active window (e.g. it coincides with the VIX
+    # window's end), leaving `result` None even though nothing is actually wrong -- compute a
+    # fresh signal just for the report in that case rather than skipping it.
     now_ct = datetime.now(timezone.utc).astimezone(runner.CT)
     with _lock:
         already_sent_today = _state.last_report_date == now_ct.date()
-        if now_ct.hour == config.DAILY_REPORT_HOUR_CT and not already_sent_today:
+        due = now_ct.hour == config.DAILY_REPORT_HOUR_CT and not already_sent_today
+        if due:
             _state.last_report_date = now_ct.date()
-            should_send = result is not None
-        else:
-            should_send = False
-    if should_send:
-        _send(f"📅 <b>End of day</b>\n\n{_format_signal(result)}")
+    if due:
+        report_result = result if result is not None else compute_signal()
+        _send(f"📅 <b>End of day</b>\n\n{_format_signal(report_result)}")
 
     if result is None:
         return
@@ -294,8 +296,11 @@ def _handle_message(text: str) -> str | None:
         return _format_single(_SIGNAL_COMMANDS[text])
     if text == "/refresh":
         with buy_signal.SIGNAL_LOCK:
-            runner.refresh_macro(force=True)
-        return _format_signal(compute_signal(allow_refresh=True))
+            failed = runner.refresh_macro(force=True)
+        reply = _format_signal(compute_signal(allow_refresh=True))
+        if failed:
+            reply = f"⚠️ refresh failed for: {_esc(', '.join(failed))} (see logs)\n\n{reply}"
+        return reply
     if text == "/status":
         return _format_status()
     if text in ("/start", "/help"):

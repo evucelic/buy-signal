@@ -96,14 +96,14 @@ def _fetch_with_retries() -> pd.DataFrame | None:
     return None
 
 
-def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> None:
-    """Refresh the cached FINRA margin-statistics snapshot."""
+def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> bool:
+    """Refresh the cached FINRA margin-statistics snapshot. Returns whether it actually succeeded."""
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
     history = _fetch_with_retries()
     if history is None:
-        return
+        return False
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     history.to_csv(filepath, index=False)
@@ -114,6 +114,7 @@ def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> None:
         f"Margin debt cache updated: {len(history)} months, latest "
         f"{latest['month'].date()} = {latest['debit_balances']:,.0f} ({tier}: {message})"
     )
+    return True
 
 
 def margin_history(filepath: Path | str = MARGIN_DEBT_CSV) -> pd.DataFrame:
