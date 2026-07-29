@@ -215,7 +215,7 @@ def test_handle_tick_daily_report_does_not_fire_outside_report_hour(monkeypatch,
     assert not any("End of day" in s for s in sent)
 
 
-def test_handle_tick_daily_report_skipped_when_tick_failed(monkeypatch):
+def test_handle_tick_daily_report_skipped_when_tick_failed_and_no_cache(monkeypatch):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
@@ -224,6 +224,38 @@ def test_handle_tick_daily_report_skipped_when_tick_failed(monkeypatch):
     tb.handle_tick(None, RuntimeError("boom"))
 
     assert not any("End of day" in s for s in sent)
+
+
+def test_handle_tick_daily_report_uses_cache_and_flags_error_when_tick_failed(
+    monkeypatch, make_subsignal, make_buy_signal
+):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
+    _freeze_ct_hour(monkeypatch, 20)
+    tb._state.last_result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
+
+    tb.handle_tick(None, RuntimeError("boom"))
+
+    daily_reports = [s for s in sent if "End of day" in s]
+    assert len(daily_reports) == 1
+    assert "latest tick failed" in daily_reports[0]
+    assert "boom" in daily_reports[0]
+
+
+def test_handle_tick_daily_report_computes_fresh_when_tick_was_idle(monkeypatch, make_subsignal, make_buy_signal):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
+    _freeze_ct_hour(monkeypatch, 20)
+    fresh = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
+    monkeypatch.setattr(tb, "compute_signal", lambda: fresh)
+
+    tb.handle_tick(None, None)
+
+    daily_reports = [s for s in sent if "End of day" in s]
+    assert len(daily_reports) == 1
+    assert "latest tick failed" not in daily_reports[0]
 
 
 def test_handle_tick_records_last_tick_and_error(make_buy_signal):

@@ -242,16 +242,26 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
     # Daily report: fires once at DAILY_REPORT_HOUR_CT (CT wall clock), regardless of pass/fail.
     # The report hour can fall outside tick()'s active window (e.g. it coincides with the VIX
     # window's end), leaving `result` None even though nothing is actually wrong -- compute a
-    # fresh signal just for the report in that case rather than skipping it.
+    # fresh signal just for the report in that case. If the tick itself errored, fall back to
+    # the last cached result (a live compute right now would likely fail too) and flag the error
+    # in the message instead of silently skipping the report.
     now_ct = datetime.now(timezone.utc).astimezone(runner.CT)
     with _lock:
         already_sent_today = _state.last_report_date == now_ct.date()
         due = now_ct.hour == config.DAILY_REPORT_HOUR_CT and not already_sent_today
         if due:
             _state.last_report_date = now_ct.date()
+        cached_result = _state.last_result
     if due:
-        report_result = result if result is not None else compute_signal()
-        _send(f"📅 <b>End of day</b>\n\n{_format_signal(report_result)}")
+        if result is not None:
+            report_result = result
+        elif error is None:
+            report_result = compute_signal()
+        else:
+            report_result = cached_result
+        if report_result is not None:
+            prefix = f"⚠️ latest tick failed ({_esc(str(error))}); showing last cached data\n\n" if error is not None else ""
+            _send(f"📅 <b>End of day</b>\n\n{prefix}{_format_signal(report_result)}")
 
     if result is None:
         return
