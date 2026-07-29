@@ -4,7 +4,15 @@ services:
     container_name: cfbypass
     ports:
       - "8000:8000"   # host-published for local bare-metal testing; not internet-reachable
-    restart: unless-stopped   # unless the security group also opens 8000 (it shouldn't)
+    environment:
+      - WORKERS=1
+    shm_size: 2g
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+    restart: unless-stopped
 
   bot:
     build: .
