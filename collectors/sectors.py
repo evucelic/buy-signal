@@ -1,7 +1,7 @@
 """Rank industries by market cap and their forward-earnings outlook (#4/#5); cache to CSV.
 
 Industry market cap = sector.overview['market_cap'] * the industry's weight within
-that sector — ranks all ~145 industries from ~11 sector-level requests instead of
+that sector; ranks all ~145 industries from ~11 sector-level requests instead of
 one request per industry.
 """
 
@@ -84,7 +84,7 @@ def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
 
 
 def should_refresh(filepath: Path = SECTORS_CSV) -> bool:
-    """Skip if already refreshed today — industry rankings/earnings estimates move slowly."""
+    """Skip if already refreshed today: industry rankings/earnings estimates move slowly."""
     return not refreshed_today(filepath)
 
 

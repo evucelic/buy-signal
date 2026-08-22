@@ -12,7 +12,7 @@ import telegram_bot as tb
 
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch):
-    """telegram_bot's module-level _state is mutable global state — reset it every test.
+    """telegram_bot's module-level _state is mutable global state: reset it every test.
 
     Also disables the daily report by default (DAILY_REPORT_HOUR_CT -> an hour that never
     matches) so handle_tick() tests aren't flaky depending on the real wall-clock hour when
@@ -387,7 +387,7 @@ def _fake_opportunity():
     )
     return az.Opportunity(segments=segments, rate=rate, small_cap_band="candidate",
                           verdict="small caps: valuation + rate conditions both met (candidate)",
-                          notes=["MSCI World Small Cap as proxy for AVWS"], history_obs=1)
+                          notes=["z-scores need 12 monthly MSCI observations, have 1"], history_obs=1)
 
 
 @pytest.fixture
@@ -408,11 +408,9 @@ def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
     assert whattobuy_env == [b"\x89PNG-fake"]
     assert "What to buy" in reply
     assert "20.0" in reply and "15.0" in reply  # actual P/Es in the table
-    assert "25% fwd-P/E discount" in reply
-    assert "candidate" in reply
-    assert "FedWatch: nearest 2026-09-16: ease 78%" in reply
-    assert "Expected easing: 1/3 horizons" in reply
-    assert "AVWS" in reply
+    assert "Small-cap band: candidate" in reply
+    assert "FedWatch: 1/3 easing (ease → no change → no change, rate support: yes, need ≥1)" in reply
+    assert "z-scores" in reply  # notes render as bullets
 
 
 def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, make_subsignal, make_buy_signal):

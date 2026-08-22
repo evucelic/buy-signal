@@ -1,11 +1,11 @@
 """Equity Opportunity Analyzer (#8): if buying equities, which broad segment looks attractive.
 
-Fully independent of the buy signal (signals/) — that one answers WHEN to buy, this one
+Fully independent of the buy signal (signals/): that one answers WHEN to buy, this one
 answers WHAT. Compares broad segments (US large caps / world small cap / Europe, plus the
 value-weighted small-cap variant closest to AVWS) on actual valuations: trailing and true
 forward P/E from MSCI index pages (one provider, one methodology, monthly cadence),
 cheapness z-scores against our own accumulated snapshot history, plus the expected US rate
-path as a small-cap conditional modifier (CME FedWatch expectations — forward-looking,
+path as a small-cap conditional modifier (CME FedWatch expectations, forward-looking,
 like everything else here). Informational only: facts plus a transparent rules verdict,
 no portfolio instructions.
 """
@@ -80,7 +80,7 @@ def _cheapness_z(series: pd.Series, current: float) -> float | None:
 
 
 def _monthly_series(history: pd.DataFrame, segment: str) -> pd.DataFrame:
-    """One (asof, fwd_pe) row per unique MSCI as-of date — daily snapshots repeat the same
+    """One (asof, fwd_pe) row per unique MSCI as-of date: daily snapshots repeat the same
     monthly value, which would understate the std if fed to the z-score raw.
     """
     rows = history[history["segment"] == segment].dropna(subset=["fwd_pe"])
@@ -109,11 +109,11 @@ def _verdict(band: str | None, rate: RateView) -> str:
     if band == "candidate":
         if rate.rate_support:
             return "small caps: valuation + rate conditions both met (candidate)"
-        return "small caps cheap, but no rate support yet — macro headwind; S&P 500 default"
+        return "small caps cheap, but no rate support yet (macro headwind); S&P 500 default"
     # investigate: >30% discounted
     if rate.rate_support:
-        return "small caps deeply discounted + rate support — strong candidate, investigate earnings/credit stress"
-    return "small caps deeply discounted but no rate support — investigate before acting"
+        return "small caps deeply discounted + rate support: strong candidate, investigate earnings/credit stress"
+    return "small caps deeply discounted but no rate support; investigate before acting"
 
 
 def _rate_view() -> RateView:
@@ -151,13 +151,13 @@ def _rate_view() -> RateView:
 
 
 def analyze() -> Opportunity:
-    notes = [spec["proxy_note"] for spec in OPPORTUNITY_SEGMENTS.values() if spec["proxy_note"]]
+    notes = []
 
     try:
         history = valuations_history()
     except Exception:
         history = pd.DataFrame(columns=["date", "segment", "fwd_pe", "trailing_pe", "asof"])
-        notes.append("no valuations cache yet — /refresh to fetch")
+        notes.append("no valuations cache yet, run /refresh to fetch")
 
     segments = []
     for name, spec in OPPORTUNITY_SEGMENTS.items():
@@ -190,13 +190,13 @@ def analyze() -> Opportunity:
     obs = len(_monthly_series(history, "sp500"))
     if obs < VALUATION_Z_MIN_OBS:
         notes.append(
-            f"z-scores need {VALUATION_Z_MIN_OBS} monthly MSCI observations, have {obs} — "
-            "shown as n/a until enough history accumulates"
+            f"z-scores need {VALUATION_Z_MIN_OBS} monthly MSCI observations, have {obs} "
+            "(shown as n/a until enough history accumulates)"
         )
 
     rate = _rate_view()
     if not rate.horizons:
-        notes.append("FedWatch expectations unavailable — /refresh to fetch")
+        notes.append("FedWatch expectations unavailable, run /refresh to fetch")
 
     small = by_name["world_small"]
     band = _discount_band(small.discount_vs_spx) if small.discount_vs_spx is not None else None
@@ -213,7 +213,7 @@ def analyze() -> Opportunity:
 
 # --- chart -------------------------------------------------------------------
 # Light-mode palette from the validated reference set (dataviz skill): categorical
-# slots 1-4, text tokens for all ink — marks carry color, text never does.
+# slots 1-4, text tokens for all ink; marks carry color, text never does.
 _SURFACE = "#fcfcfb"
 _INK = "#0b0b0b"
 _INK_SECONDARY = "#52514e"
@@ -281,7 +281,7 @@ def render_chart(opportunity: Opportunity, history: pd.DataFrame | None = None) 
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_color(_BASELINE)
-    ax.set_title("Segment valuations — P/E", color=_INK, fontsize=12, loc="left", pad=12)
+    ax.set_title("Segment valuations: P/E", color=_INK, fontsize=12, loc="left", pad=12)
     ax.legend(frameon=False, labelcolor=_INK_SECONDARY, fontsize=9, loc="upper right")
     ax.margins(y=0.15)
 
@@ -317,7 +317,7 @@ def render_chart(opportunity: Opportunity, history: pd.DataFrame | None = None) 
         for spine in ("top", "right", "left"):
             ax2.spines[spine].set_visible(False)
         ax2.spines["bottom"].set_color(_BASELINE)
-        ax2.set_title("Forward P/E — accumulated daily snapshots", color=_INK, fontsize=11, loc="left", pad=10)
+        ax2.set_title("Forward P/E, accumulated daily snapshots", color=_INK, fontsize=11, loc="left", pad=10)
         ax2.margins(x=0.12)
 
     fig.tight_layout()

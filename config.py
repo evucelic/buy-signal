@@ -37,7 +37,7 @@ SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape re
 # CME FedWatch's page is JS-heavy and has been observed taking close to (and sometimes past)
 # 60s to finish rendering in production; give it real headroom instead of timing out mid-load.
 FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
-# Recent desktop-Chrome UAs only — must match the real browser or detection worsens.
+# Recent desktop-Chrome UAs only: must match the real browser or detection worsens.
 USER_AGENTS = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -91,22 +91,18 @@ OPPORTUNITY_SEGMENTS = {
     "sp500": {
         "label": "MSCI USA",
         "msci_code": "984000",
-        "proxy_note": "MSCI USA as stand-in for the S&P 500",
     },
     "world_small": {
         "label": "World Small Cap",
         "msci_code": "106230",  # broad index: drives the small-cap decision matrix
-        "proxy_note": "MSCI World Small Cap (broad) drives the small-cap matrix",
     },
     "world_small_value": {
         "label": "World SC Value",
-        "msci_code": "139549",  # MSCI World Small Cap Value Weighted — closest index to AVWS
-        "proxy_note": "World SC Value (MSCI Value Weighted) is the closest index to AVWS; informational only",
+        "msci_code": "139549",  # MSCI World Small Cap Value Weighted, closest index to AVWS
     },
     "europe": {
         "label": "Europe",
         "msci_code": "990500",
-        "proxy_note": "MSCI Europe as proxy for FTSE Developed Europe",
     },
 }
 MSCI_INDEX_URL = "https://www.msci.com/indexes/index/{code}"

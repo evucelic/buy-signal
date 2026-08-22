@@ -1,11 +1,11 @@
 """Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
 
-One tick() per call — hourly, the highest frequency any signal needs (VIX and market_dip
+One tick() per call: hourly, the highest frequency any signal needs (VIX and market_dip
 refresh every tick). `python runner.py` does a single tick, for an external scheduler (cron,
 GitHub Actions, /loop); `python runner.py --loop` runs tick() forever itself, sleeping until
 the next wall-clock hour between calls. Sessions come from the exchange schedule, so holidays/
 early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
-session just track VIX, recomputing macro only on a band crossing — except margin_debt, which
+session just track VIX, recomputing macro only on a band crossing, except margin_debt, which
 is checked every tick once its monthly checkpoint is due (see below), regardless of VIX/session.
 Each macro collector has its own once-a-day grace period (see should_refresh() in
 collectors/fed_rate.py, sectors.py, margin_debt.py), so a VIX band crossing that persists for
@@ -15,7 +15,7 @@ data_freshness() in collectors/margin_debt.py), so once that checkpoint is reach
 month's data hasn't shown up yet, tick() forces a margin_debt check every hour regardless of
 VIX/session state, to catch the release as soon as possible; it goes quiet again for the rest
 of the month once caught. VIX moves on its own clock, independent of the
-NYSE session — see vix_active_window() (roughly 02:00-20:00 CT) — so tick() stays live outside
+NYSE session (see vix_active_window(), roughly 02:00-20:00 CT), so tick() stays live outside
 market hours whenever VIX might still be moving, even though the other signals (which don't
 move outside NYSE hours) end up recomputed as a harmless no-op in that window.
 """
@@ -141,7 +141,7 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
 def tick(now: datetime | None = None):
     """One scheduled cycle. Returns the alert result, or None when nothing needs checking.
 
-    Skipped only when the NYSE session is CLOSED and VIX isn't in its active window either —
+    Skipped only when the NYSE session is CLOSED and VIX isn't in its active window either:
     VIX moves outside NYSE hours, so tick() stays live for that on its own clock.
     """
     from collectors import margin_debt
@@ -149,7 +149,7 @@ def tick(now: datetime | None = None):
     now = _now_et(now)
     session = market_session(now)
     if session == CLOSED and not vix_active_window(now):
-        print(f"[{_stamp(now)}] Market closed, VIX quiet — idle.")
+        print(f"[{_stamp(now)}] Market closed, VIX quiet; idle.")
         return None
 
     result = compute_signal()

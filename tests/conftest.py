@@ -1,7 +1,7 @@
 """Shared pytest fixtures and setup.
 
 Sets fake Telegram credentials before anything imports telegram_bot (its module-level
-os.environ[...] reads would otherwise KeyError, or worse, silently pick up a real .env —
+os.environ[...] reads would otherwise KeyError, or worse, silently pick up a real .env;
 python-dotenv's load_dotenv() defaults to override=False, so pre-set fake values here win).
 """
 

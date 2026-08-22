@@ -207,7 +207,7 @@ def latest_fedwatch(
 
 
 def should_refresh(filepath: Path | str = FEDWATCH_CSV) -> bool:
-    """Skip if already refreshed today — CME FedWatch doesn't need more than daily tracking."""
+    """Skip if already refreshed today: CME FedWatch doesn't need more than daily tracking."""
     return not refreshed_today(filepath)
 
 

@@ -1,6 +1,6 @@
 """Long-polling Telegram bot: per-signal + aggregate commands, plus threshold-crossing pushes.
 
-Plain synchronous requests calls to the Bot API, matching the rest of the codebase's style —
+Plain synchronous requests calls to the Bot API, matching the rest of the codebase's style:
 no async framework needed for a handful of commands and a push. Runs in a background thread
 started by start(); the caller (bot.py) drives the actual tick loop (runner.run_forever()) and
 feeds it results via handle_tick().
@@ -43,7 +43,7 @@ _SIGNAL_COMMANDS = {
     "/curve": yield_curve_signal.score,
 }
 
-# Presentation only — signal logic/state strings (signals/*.py) are untouched by any of this.
+# Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
 _ALERT_LABELS = {
     "none": ("⚪", "No buy signal"),
     "soft": ("🟡", "Soft signal"),
@@ -96,16 +96,16 @@ _COMMANDS = [
 
 _HELP_TEXT = (
     "Commands:\n"
-    "/signal — full current buy signal\n"
-    "/vix — VIX level\n"
-    "/fedrate — Fed rate trajectory\n"
-    "/margin — FINRA margin debt\n"
-    "/dip — SPY/NASDAQ/DOW % change\n"
-    "/sector — leading industries earnings outlook\n"
-    "/curve — 10y-3m yield curve spread (advisory)\n"
-    "/whattobuy — segment valuations (S&P 500 / world small cap / Europe)\n"
-    "/refresh — force a fresh fetch of all data (bypass cache)\n"
-    "/status — runner uptime and health"
+    "/signal: full current buy signal\n"
+    "/vix: VIX level\n"
+    "/fedrate: Fed rate trajectory\n"
+    "/margin: FINRA margin debt\n"
+    "/dip: SPY/NASDAQ/DOW % change\n"
+    "/sector: leading industries earnings outlook\n"
+    "/curve: 10y-3m yield curve spread (advisory)\n"
+    "/whattobuy: segment valuations (S&P 500 / world small cap / Europe)\n"
+    "/refresh: force a fresh fetch of all data (bypass cache)\n"
+    "/status: runner uptime and health"
 )
 
 # Cache files backing each signal, for the "data as of" freshness table appended to every
@@ -195,7 +195,7 @@ def _format_subsignal(s: SubSignal) -> str:
     icon, display_name = _SIGNAL_META.get(s.name, ("•", s.name))
     mark = "ℹ️" if s.advisory else ("✅" if s.passes else "❌")
     state_label = _STATE_LABELS.get((s.name, s.state), s.state)
-    header = f"{mark} {icon} <b>{_esc(display_name)}</b> — {_esc(state_label)}"
+    header = f"{mark} {icon} <b>{_esc(display_name)}</b>: {_esc(state_label)}"
     body = f"<pre>{_esc(s.table)}</pre>" if s.table else _bullets(s.detail)
     return f"{header}\n{body}"
 
@@ -232,40 +232,45 @@ def _fmt(value: float | None, spec: str = ".1f") -> str:
     return "n/a" if value is None else format(value, spec)
 
 
+# Short row labels for the monospace table only (chart legends/notes keep the full config label).
+_TABLE_LABELS = {
+    "sp500": "S&P 500",
+    "world_small": "Small Cap",
+    "world_small_value": "SC Value",
+    "europe": "Europe",
+}
+
+_RATE_STATE_LABELS = {"no_change": "no change"}  # everything else already reads fine as-is
+
+
 def _format_opportunity(opp: analyzer.Opportunity) -> str:
     """Everything-in-one-place valuation facts; no interpretation beyond the matrix verdict."""
     rows = [
-        [s.label, _fmt(s.fwd_pe), _fmt(s.trailing_pe), _fmt(s.ratio_vs_spx, ".2f"), _fmt(s.fwd_z, "+.1f")]
+        [
+            _TABLE_LABELS.get(s.name, s.label),
+            _fmt(s.fwd_pe),
+            _fmt(s.trailing_pe),
+            _fmt(s.ratio_vs_spx, ".2f"),
+            _fmt(s.fwd_z, "+.1f"),
+            _fmt(s.rel_z, "+.1f"),
+        ]
         for s in opp.segments
     ]
-    table = "<pre>" + _esc(format_table(["Segment", "Fwd P/E", "Trail", "vs USA", "z(fwd)"], rows)) + "</pre>"
+    table = "<pre>" + _esc(format_table(["Segment", "Fwd", "Trail", "vsUS", "z", "relZ"], rows)) + "</pre>"
 
-    small = next(s for s in opp.segments if s.name == "world_small")
-    europe = next(s for s in opp.segments if s.name == "europe")
     lines = []
-    if small.discount_vs_spx is not None:
-        lines.append(
-            f"Small cap: {small.discount_vs_spx:.0%} fwd-P/E discount vs MSCI USA — {opp.small_cap_band} band"
-            + (f", rel z {small.rel_z:+.1f}" if small.rel_z is not None else "")
-        )
-    small_value = next((s for s in opp.segments if s.name == "world_small_value"), None)
-    if small_value is not None and small_value.discount_vs_spx is not None:
-        lines.append(f"SC Value (closest to AVWS): {small_value.discount_vs_spx:.0%} fwd-P/E discount vs MSCI USA")
+    if opp.small_cap_band is not None:
+        lines.append(f"Small-cap band: {opp.small_cap_band}")
+
     rate = opp.rate
     if rate.horizons:
-        outlook = " | ".join(
-            f"{h.label} {h.meeting_date}: {h.state} {max(h.ease, h.no_change, h.hike):.0%}" for h in rate.horizons
-        )
-        lines.append(f"FedWatch: {outlook}")
+        sequence = " → ".join(_RATE_STATE_LABELS.get(h.state, h.state) for h in rate.horizons)
+        support = "yes" if rate.rate_support else "no"
         lines.append(
-            f"Expected easing: {rate.consecutive_easing}/{len(rate.horizons)} horizons from nearest "
-            f"(support: {'yes' if rate.rate_support else 'no'}, need ≥{config.SMALL_CAP_EASING_OBS})"
+            f"FedWatch: {rate.consecutive_easing}/{len(rate.horizons)} easing "
+            f"({sequence}, rate support: {support}, need ≥{config.SMALL_CAP_EASING_OBS})"
         )
-    if europe.ratio_vs_spx is not None:
-        lines.append(
-            f"Europe: {europe.ratio_vs_spx:.2f}x MSCI USA fwd P/E | own-history z: {_fmt(europe.fwd_z, '+.1f')}"
-            + (f", rel z {europe.rel_z:+.1f}" if europe.rel_z is not None else "")
-        )
+
     lines.append(f"Verdict: {opp.verdict}")
     if opp.buy_signal_state is not None:
         label = _ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
@@ -282,7 +287,7 @@ def _format_opportunity(opp: analyzer.Opportunity) -> str:
         footer = ""
     notes = "\n".join(f"• {_esc(note)}" for note in opp.notes)
 
-    blocks = ["🧭 <b>What to buy — segment valuations</b>", table, facts]
+    blocks = ["🧭 <b>What to buy: segment valuations</b>", table, facts]
     if footer:
         blocks.append(footer)
     if notes:
@@ -363,7 +368,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
         reasons = _trigger_reasons(result)
         _send(f"🔔 <b>Signal active</b> ({_esc(reasons)})\n\n{_format_signal(result)}")
     elif was_alerting and not alerting:
-        _send("Signal cleared — back to normal.")
+        _send("Signal cleared, back to normal.")
 
 
 def _format_single(score_fn) -> str:

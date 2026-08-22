@@ -1,7 +1,7 @@
 """Tests for collectors/*.py: cache read/write/merge logic and freshness gating, fully offline.
 
 Selenium/live-network scraping (collectors/fed_rate.py's browser-driving code) isn't
-meaningfully unit-testable and is scoped out — only its pure-logic helpers are covered here.
+meaningfully unit-testable and is scoped out: only its pure-logic helpers are covered here.
 """
 
 import os
@@ -205,12 +205,15 @@ def test_get_latest_market_changes_raises_when_no_cache_and_download_fails(tmp_p
     [
         (0, 5, "fresh"),
         (1, 5, "fresh"),
-        (1, 25, "refresh_due_soon"),
-        (1, 21, "refresh_due_soon"),  # exactly MARGIN_REFRESH_WINDOW_DAY, inclusive per `>=`
-        (1, 20, "fresh"),  # one day before the checkpoint
+        (1, 25, "fresh"),  # one-month lag is the normal caught-up state, checkpoint or not
+        (1, 21, "fresh"),
+        (1, 20, "fresh"),
         (2, 5, "fresh"),
-        (2, 25, "stale"),
+        (2, 21, "refresh_due_soon"),  # exactly MARGIN_REFRESH_WINDOW_DAY, inclusive per `>=`
+        (2, 25, "refresh_due_soon"),
+        (2, 20, "fresh"),  # one day before the checkpoint
         (3, 5, "stale"),
+        (3, 25, "stale"),
     ],
 )
 def test_data_freshness_tiers(age_months, day, expected_tier):

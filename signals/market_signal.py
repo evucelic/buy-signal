@@ -21,7 +21,7 @@ def score(allow_refresh: bool = True) -> SubSignal:
     """Map SPY's daily change to a dip signal; NASDAQ/DOW are diagnostic only.
 
     allow_refresh=False serves the cached values without fetching (e.g. the market's closed,
-    so nothing new to find) — falls back to a live fetch if there's no cache yet.
+    so nothing new to find); falls back to a live fetch if there's no cache yet.
     """
     changes = get_latest_market_changes() if allow_refresh else (latest_changes() or get_latest_market_changes())
     daily = changes[MARKET_PRIMARY_INDEX]["daily"]

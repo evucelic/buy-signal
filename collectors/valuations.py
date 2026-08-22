@@ -1,6 +1,6 @@
 """Collect segment valuation snapshots (trailing + forward P/E) from MSCI; accumulate in CSV.
 
-Both ratios come from MSCI index pages — one provider, one methodology, and "P/E Fwd" is a
+Both ratios come from MSCI index pages: one provider, one methodology, and "P/E Fwd" is a
 true next-year consensus forward P/E (verified against the labeled values on msci.com). The
 site sits behind a JS challenge that blocks plain requests, so pages are rendered with
 headless Selenium (same infrastructure fed_rate.py already uses daily in production). MSCI

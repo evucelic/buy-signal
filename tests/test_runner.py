@@ -131,7 +131,7 @@ def test_tick_regular_no_refresh_when_vix_not_passing():
 
 
 def test_tick_regular_refreshes_when_margin_debt_checkpoint_due_even_if_vix_not_passing():
-    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint —
+    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint:
     this is the bug that let a real FINRA release go uncaught until manually refreshed.
     """
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)

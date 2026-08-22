@@ -254,12 +254,6 @@ def test_analyze_repeated_daily_snapshots_of_same_month_count_once(monkeypatch):
     assert next(s for s in opp.segments if s.name == "sp500").fwd_z is None
 
 
-def test_analyze_includes_proxy_notes():
-    opp = _analyze_with(_one_day_history())
-    assert any("AVWS" in n for n in opp.notes)
-    assert any("FTSE Developed Europe" in n for n in opp.notes)
-
-
 # --- chart ---------------------------------------------------------------
 
 
