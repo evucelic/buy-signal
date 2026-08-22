@@ -124,10 +124,22 @@ def test_tick_regular_refreshes_only_if_vix_passes():
 def test_tick_regular_no_refresh_when_vix_not_passing():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "collectors.margin_debt.should_refresh", return_value=False
+    ), patch("runner.refresh_macro") as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_not_called()
+
+
+def test_tick_regular_refreshes_when_margin_debt_checkpoint_due_even_if_vix_not_passing():
+    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint —
+    this is the bug that let a real FINRA release go uncaught until manually refreshed.
+    """
+    dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch("runner.refresh_macro") as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
 
 
 def test_refresh_macro_gating():
@@ -244,8 +256,8 @@ def test_tick_runs_when_closed_but_vix_window_active():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     assert runner.market_session(dt) == runner.CLOSED
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "collectors.margin_debt.should_refresh", return_value=False
+    ), patch("runner.refresh_macro") as mock_refresh:
         result = runner.tick(dt)
     assert result is not None
     mock_compute.assert_called_once()
@@ -266,6 +278,15 @@ def test_tick_refreshes_during_closed_vix_window_if_vix_passes():
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
         "runner.refresh_macro"
     ) as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
+
+
+def test_tick_refreshes_during_closed_vix_window_when_margin_debt_checkpoint_due():
+    dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch("runner.refresh_macro") as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
