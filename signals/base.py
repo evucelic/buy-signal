@@ -13,6 +13,7 @@ class SubSignal:
     detail: str           # human-readable reason
     passes: bool = False
     table: str | None = None  # optional monospace-ready rendering of detail, for multi-row data
+    advisory: bool = False    # informational side signal: shown alongside, never gates the checklist
 
 
 def format_table(headers: list[str], rows: list[list[str]]) -> str:

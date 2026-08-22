@@ -101,6 +101,23 @@ def test_format_subsignal_uses_no_change_label(make_subsignal):
     assert "No change" in tb._format_subsignal(s)
 
 
+def test_format_subsignal_advisory_uses_info_mark_not_pass_fail(make_subsignal):
+    s = make_subsignal("yield_curve", "inverted", "x", passes=False, advisory=True)
+    formatted = tb._format_subsignal(s)
+    assert formatted.startswith("ℹ️")
+    assert "✅" not in formatted and "❌" not in formatted
+    assert "Inverted" in formatted
+
+
+def test_format_signal_header_count_excludes_advisory(make_subsignal, make_buy_signal):
+    subs = [
+        make_subsignal("vix", "strong", "x", passes=True),
+        make_subsignal("yield_curve", "inverted", "x", passes=False, advisory=True),
+    ]
+    result = make_buy_signal(subs, state="strong")
+    assert "(1/1 conditions met)" in tb._format_signal(result)
+
+
 def test_humanize_age_no_cache():
     assert tb._humanize_age(None) == "no cache"
 
@@ -339,6 +356,13 @@ def test_handle_message_margin(monkeypatch, make_subsignal):
 def test_handle_message_sector(monkeypatch, make_subsignal):
     monkeypatch.setitem(tb._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
     assert "Leading Industries" in tb._handle_message("/sector")
+
+
+def test_handle_message_curve(monkeypatch, make_subsignal):
+    monkeypatch.setitem(
+        tb._SIGNAL_COMMANDS, "/curve", lambda: make_subsignal("yield_curve", "flat", "x", advisory=True)
+    )
+    assert "Yield Curve" in tb._handle_message("/curve")
 
 
 def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):

@@ -5,10 +5,16 @@ refresh every tick). `python runner.py` does a single tick, for an external sche
 GitHub Actions, /loop); `python runner.py --loop` runs tick() forever itself, sleeping until
 the next wall-clock hour between calls. Sessions come from the exchange schedule, so holidays/
 early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
-session just track VIX, recomputing macro only on a band crossing. Each macro collector has
-its own once-a-day grace period (see should_refresh() in collectors/fed_rate.py, sectors.py,
-margin_debt.py), so a VIX band crossing that persists for several hourly ticks in a row only
-triggers one real refresh, not one per tick. VIX moves on its own clock, independent of the
+session just track VIX, recomputing macro only on a band crossing — except margin_debt, which
+is checked every tick once its monthly checkpoint is due (see below), regardless of VIX/session.
+Each macro collector has its own once-a-day grace period (see should_refresh() in
+collectors/fed_rate.py, sectors.py, margin_debt.py), so a VIX band crossing that persists for
+several hourly ticks in a row only triggers one real refresh, not one per tick. margin_debt is
+the exception: FINRA updates monthly around the third week (see MARGIN_REFRESH_WINDOW_DAY /
+data_freshness() in collectors/margin_debt.py), so once that checkpoint is reached and the new
+month's data hasn't shown up yet, tick() forces a margin_debt check every hour regardless of
+VIX/session state, to catch the release as soon as possible; it goes quiet again for the rest
+of the month once caught. VIX moves on its own clock, independent of the
 NYSE session — see vix_active_window() (roughly 02:00-20:00 CT) — so tick() stays live outside
 market hours whenever VIX might still be moving, even though the other signals (which don't
 move outside NYSE hours) end up recomputed as a harmless no-op in that window.
@@ -91,13 +97,13 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
 
 
 def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
-    """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today.
+    """Refresh the slow macro indicators (#2-#5, #7); each skips itself if already refreshed today.
 
     force=True bypasses each collector's own should_refresh() gate (used by the Telegram
     /refresh command). Returns (name, error_message) for every collector that was attempted
     but failed, so callers can surface the actual reason instead of a silently stale cache.
     """
-    from collectors import fed_rate, margin_debt, sectors
+    from collectors import fed_rate, margin_debt, sectors, yield_curve
 
     failed = []
 
@@ -110,6 +116,11 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
         error = sectors.update_sector_data()
         if error:
             failed.append(("sector", error))
+
+    if force or yield_curve.should_refresh():
+        error = yield_curve.update_yield_curve_data()
+        if error:
+            failed.append(("yield_curve", error))
 
     if force or margin_debt.should_refresh():
         if not _cf_bypass_ready():
@@ -128,6 +139,8 @@ def tick(now: datetime | None = None):
     Skipped only when the NYSE session is CLOSED and VIX isn't in its active window either —
     VIX moves outside NYSE hours, so tick() stays live for that on its own clock.
     """
+    from collectors import margin_debt
+
     now = _now_et(now)
     session = market_session(now)
     if session == CLOSED and not vix_active_window(now):
@@ -136,7 +149,8 @@ def tick(now: datetime | None = None):
 
     result = compute_signal()
     current_vix = next((signal for signal in result.subsignals if signal.name == "vix"), None)
-    if current_vix is not None and (session in (PRE_MARKET, AFTER_HOURS) or current_vix.passes):
+    vix_driven_refresh = current_vix is not None and (session in (PRE_MARKET, AFTER_HOURS) or current_vix.passes)
+    if vix_driven_refresh or margin_debt.should_refresh():
         refresh_macro()
 
     report(result, session, now)
@@ -150,7 +164,7 @@ def _stamp(now_et: datetime) -> str:
 def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
     print(f"[{_stamp(now_et)}] session={session}")
-    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
+    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{result.required_count}; score {result.score:+.2f})")
     print(f"  Rule: {result.detail}")
     if result.missing_signals:
         print(f"  Missing: {', '.join(result.missing_signals)}")
