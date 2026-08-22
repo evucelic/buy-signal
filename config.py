@@ -13,6 +13,7 @@ MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
+VALUATIONS_CSV = DATA_DIR / "valuations.csv"
 
 # --- Tickers -----------------------------------------------------------------
 VIX_TICKER = "^VIX"
@@ -36,7 +37,7 @@ SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape re
 # CME FedWatch's page is JS-heavy and has been observed taking close to (and sometimes past)
 # 60s to finish rendering in production; give it real headroom instead of timing out mid-load.
 FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
-# Recent desktop-Chrome UAs only — must match the real browser or detection worsens.
+# Recent desktop-Chrome UAs only: must match the real browser or detection worsens.
 USER_AGENTS = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -79,6 +80,37 @@ FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # no API
 YIELD_CURVE_SERIES = "T10Y3M"
 YIELD_CURVE_STEEP = 1.0            # monthly avg spread (pp) at/above this = supportive regime
 YIELD_CURVE_DEEP_INVERSION = -1.0  # two consecutive monthly avgs at/below this = deep inversion
+
+# --- Equity opportunity analyzer (#8): which segment looks attractive ---------
+# Segments compared on valuations. Trailing AND forward P/E both come from MSCI index
+# pages (one provider, one methodology; true next-year consensus "P/E Fwd"), scraped with
+# Selenium since the site sits behind a JS challenge that blocks plain requests. MSCI
+# updates these monthly (factsheet cadence). Rate support is forward-looking: CME FedWatch
+# expectations (fedwatch.csv), not historical Fed moves.
+OPPORTUNITY_SEGMENTS = {
+    "sp500": {
+        "label": "MSCI USA",
+        "msci_code": "984000",
+    },
+    "world_small": {
+        "label": "World Small Cap",
+        "msci_code": "106230",  # broad index: drives the small-cap decision matrix
+    },
+    "world_small_value": {
+        "label": "World SC Value",
+        "msci_code": "139549",  # MSCI World Small Cap Value Weighted, closest index to AVWS
+    },
+    "europe": {
+        "label": "Europe",
+        "msci_code": "990500",
+    },
+}
+MSCI_INDEX_URL = "https://www.msci.com/indexes/index/{code}"
+MSCI_PAGE_LOAD_TIMEOUT_SEC = 60
+MSCI_RENDER_WAIT_SEC = 15            # JS challenge + SPA render time before reading the page
+SMALL_CAP_DISCOUNT_BANDS = (0.10, 0.20, 0.30)  # fwd-P/E discount vs MSCI USA: little / mild / candidate / investigate
+SMALL_CAP_EASING_OBS = 1             # FedWatch horizons (from nearest) expected to ease, for small-cap rate support
+VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed before z-scores are shown
 
 # --- Runner cadence -----------------------------------------------------------
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence

@@ -164,7 +164,7 @@ def test_rate_all_zero_probabilities_is_flat():
 
 
 def test_rate_no_table_uses_detail_string():
-    # fed_rate doesn't get a table (5 columns with a 10-char date field doesn't fit on mobile) —
+    # fed_rate doesn't get a table (5 columns with a 10-char date field doesn't fit on mobile):
     # detail carries the same info as a bullet-friendly ' | '-joined string instead.
     with patch("signals.rate_signal.latest_fedwatch", return_value=_meetings_df(0.0, 0.3, 0.7)):
         s = rate_signal.score()
@@ -223,19 +223,41 @@ def test_margin_mixed_trend_over_longer_window_is_not_deleveraging(monkeypatch):
     # MARGIN_DELEVERAGE_MONTHS + 1 = 2 months by default, but this proves the "all must decrease"
     # rule holds even with a longer decrease-then-increase run
     monkeypatch.setattr("signals.margin_signal.MARGIN_DELEVERAGE_MONTHS", 2)
-    with patch(
-        "signals.margin_signal.margin_history", return_value=_margin_history([1000, 900, 950])
-    ), patch("signals.margin_signal.data_freshness", return_value=("fresh", "ok")):
+    with patch("signals.margin_signal.margin_history", return_value=_margin_history([1000, 900, 950])), patch(
+        "signals.margin_signal.data_freshness", return_value=("fresh", "ok")
+    ):
         s = margin_signal.score()
         assert s.passes is False
 
 
-def test_margin_detail_includes_freshness():
+def test_margin_detail_omits_flag_when_fresh():
+    # fresh is the routine case -- no extra bullet, and no raw date/month text either (that's
+    # already visible in the "data as of" freshness table at the bottom of the Telegram reply).
+    with patch("signals.margin_signal.margin_history", return_value=_margin_history([1000, 900])), patch(
+        "signals.margin_signal.data_freshness", return_value=("fresh", "latest month 2026-07 is current")
+    ):
+        s = margin_signal.score()
+        assert "|" not in s.detail
+        assert "2026-07" not in s.detail
+
+
+def test_margin_detail_flags_refresh_due_soon_tersely():
+    with patch("signals.margin_signal.margin_history", return_value=_margin_history([1000, 900])), patch(
+        "signals.margin_signal.data_freshness",
+        return_value=("refresh_due_soon", "latest month 2026-07 is 2 months old and the release checkpoint has passed"),
+    ):
+        s = margin_signal.score()
+        assert "refresh due soon" in s.detail
+        assert "2026-07" not in s.detail  # terse flag only, no raw freshness message
+
+
+def test_margin_detail_flags_stale():
     with patch("signals.margin_signal.margin_history", return_value=_margin_history([1000, 900])), patch(
         "signals.margin_signal.data_freshness", return_value=("stale", "way overdue")
     ):
         s = margin_signal.score()
-        assert "way overdue" in s.detail
+        assert "stale" in s.detail
+        assert "way overdue" not in s.detail
 
 
 # --- market_signal ---------------------------------------------------------------

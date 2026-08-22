@@ -74,7 +74,7 @@ def latest_changes(filepath: Path = MARKET_CSV) -> dict[str, dict[str, float]] |
     df = pd.read_csv(filepath, index_col=0)
     df.index = pd.to_datetime(df.index, utc=True)
     # Index bars only cover regular NYSE hours (13:30-20:00 UTC), so a UTC calendar date is
-    # always the same as the ET trading date — grouping by it needs no timezone conversion.
+    # always the same as the ET trading date; grouping by it needs no timezone conversion.
     # Today's (possibly partial) date is its own last row, so its "close" is the live price.
     daily = df.groupby(df.index.date).last()
 

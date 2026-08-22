@@ -45,7 +45,7 @@ def compute_signal(vix: float | None = None, allow_refresh: bool = True) -> BuyS
     """Score the available signals and combine them with checklist rules.
 
     allow_refresh=False tells VIX/market_dip (the two that refetch every call) to prefer
-    their cache instead — for on-demand checks while the market's closed and there's nothing
+    their cache instead, for on-demand checks while the market's closed and there's nothing
     new to find.
     """
     with SIGNAL_LOCK:

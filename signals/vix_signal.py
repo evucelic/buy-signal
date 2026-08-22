@@ -15,7 +15,7 @@ def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
     High VIX = fear = potential buying opportunity (esp. on a dip).
 
     allow_refresh=False serves the cached value without fetching (e.g. the market's closed,
-    so nothing new to find) — falls back to a live fetch if there's no cache yet.
+    so nothing new to find); falls back to a live fetch if there's no cache yet.
     """
     if vix is None:
         vix = get_latest_vix() if allow_refresh else (load_latest_cached_vix() or get_latest_vix())
