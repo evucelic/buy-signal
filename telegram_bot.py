@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 import config
 import runner
 from collectors import freshness
-from signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal
+from signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from signals.base import SubSignal, format_table
 from signals.buy_signal import BuySignal, compute_signal
 
@@ -39,6 +39,7 @@ _SIGNAL_COMMANDS = {
     "/fedrate": rate_signal.score,
     "/margin": margin_signal.score,
     "/sector": sector_signal.score,
+    "/curve": yield_curve_signal.score,
 }
 
 # Presentation only — signal logic/state strings (signals/*.py) are untouched by any of this.
@@ -54,6 +55,7 @@ _SIGNAL_META = {
     "margin_debt": ("💳", "Margin Debt"),
     "market_dip": ("📊", "Market Dip"),
     "sector": ("🏭", "Leading Industries"),
+    "yield_curve": ("〽️", "Yield Curve"),
 }
 
 _STATE_LABELS = {
@@ -71,6 +73,10 @@ _STATE_LABELS = {
     ("market_dip", "growth"): "📈 Growth",
     ("sector", "growing"): "📈 Growing",
     ("sector", "flat"): "➡️ Flat",
+    ("yield_curve", "steep"): "📈 Steep (supportive)",
+    ("yield_curve", "flat"): "➡️ Flat/normal",
+    ("yield_curve", "inverted"): "⚠️ Inverted",
+    ("yield_curve", "deep_inversion"): "🚨 Deep inversion",
 }
 
 _COMMANDS = [
@@ -80,6 +86,7 @@ _COMMANDS = [
     {"command": "margin", "description": "FINRA margin debt (deleveraging)"},
     {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
+    {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
     {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
     {"command": "status", "description": "Runner uptime and health"},
     {"command": "help", "description": "List available commands"},
@@ -93,6 +100,7 @@ _HELP_TEXT = (
     "/margin — FINRA margin debt\n"
     "/dip — SPY/NASDAQ/DOW % change\n"
     "/sector — leading industries earnings outlook\n"
+    "/curve — 10y-3m yield curve spread (advisory)\n"
     "/refresh — force a fresh fetch of all data (bypass cache)\n"
     "/status — runner uptime and health"
 )
@@ -105,6 +113,7 @@ _FRESHNESS_FILES = {
     "fed_rate": config.FEDWATCH_CSV,
     "margin_debt": config.MARGIN_DEBT_CSV,
     "sector": config.SECTORS_CSV,
+    "yield_curve": config.YIELD_CURVE_CSV,
 }
 
 
@@ -167,7 +176,7 @@ def _bullets(detail: str) -> str:
 
 def _format_subsignal(s: SubSignal) -> str:
     icon, display_name = _SIGNAL_META.get(s.name, ("•", s.name))
-    mark = "✅" if s.passes else "❌"
+    mark = "ℹ️" if s.advisory else ("✅" if s.passes else "❌")
     state_label = _STATE_LABELS.get((s.name, s.state), s.state)
     header = f"{mark} {icon} <b>{_esc(display_name)}</b> — {_esc(state_label)}"
     body = f"<pre>{_esc(s.table)}</pre>" if s.table else _bullets(s.detail)
@@ -194,7 +203,7 @@ def _format_freshness() -> str:
 
 def _format_signal(result: BuySignal) -> str:
     emoji, label = _ALERT_LABELS.get(result.state, ("", result.state.upper()))
-    header = f"{emoji} <b>{_esc(label)}</b> ({result.passing_count}/{len(result.subsignals)} conditions met)"
+    header = f"{emoji} <b>{_esc(label)}</b> ({result.passing_count}/{result.required_count} conditions met)"
     blocks = [_format_subsignal(s) for s in result.subsignals]
     if result.missing_signals:
         blocks.append(f"⚠️ missing: {_esc(', '.join(result.missing_signals))}")

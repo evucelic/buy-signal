@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
+from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from signals.base import NONE, SOFT, STRONG
 from signals.buy_signal import SIGNAL_LOCK, _alert_state, compute_signal
 
@@ -396,6 +396,85 @@ def test_format_industry_trend_icon_zero_is_not_growth():
     assert "📉" in sector_signal._format_industry(row)
 
 
+# --- yield_curve_signal ---------------------------------------------------------------
+
+
+def _spread_df(months):
+    """Daily spread history: three rows per month at a constant value, e.g. {"2026-07": 0.5}.
+    The last month acts as the current (partial) month, excluded from classification.
+    """
+    rows = []
+    for month, value in months.items():
+        start = pd.Timestamp(f"{month}-01")
+        rows.extend({"date": start + pd.Timedelta(days=day), "spread": value} for day in range(3))
+    return pd.DataFrame(rows)
+
+
+def _curve(months):
+    with patch("signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(months)):
+        return yield_curve_signal.score()
+
+
+def test_yield_curve_steep_at_exact_threshold():
+    s = _curve({"2026-07": 1.0, "2026-08": 0.5})
+    assert s.state == "steep" and s.passes is True
+
+
+def test_yield_curve_just_below_steep_is_flat():
+    s = _curve({"2026-07": 0.99, "2026-08": 0.5})
+    assert s.state == "flat" and s.passes is True
+
+
+def test_yield_curve_exactly_zero_is_flat_not_inverted():
+    s = _curve({"2026-07": 0.0, "2026-08": 0.5})
+    assert s.state == "flat"
+
+
+def test_yield_curve_negative_month_is_inverted():
+    s = _curve({"2026-07": -0.2, "2026-08": 0.5})
+    assert s.state == "inverted" and s.passes is False
+
+
+def test_yield_curve_two_deep_months_is_deep_inversion():
+    s = _curve({"2026-06": -1.0, "2026-07": -1.0, "2026-08": -1.2})
+    assert s.state == "deep_inversion" and s.passes is False
+
+
+def test_yield_curve_one_deep_month_is_only_inverted():
+    s = _curve({"2026-06": -0.3, "2026-07": -1.5, "2026-08": -1.5})
+    assert s.state == "inverted"
+
+
+def test_yield_curve_partial_current_month_excluded_from_classification():
+    # Current month is deeply negative, but the last complete month is positive -> still flat.
+    s = _curve({"2026-07": 0.5, "2026-08": -2.0})
+    assert s.state == "flat"
+
+
+def test_yield_curve_is_advisory():
+    s = _curve({"2026-07": 0.5, "2026-08": 0.5})
+    assert s.advisory is True
+    assert s.name == "yield_curve"
+
+
+def test_yield_curve_table_marks_current_partial_month():
+    s = _curve({"2026-07": 0.5, "2026-08": 0.8})
+    assert "2026-08*" in s.table
+    assert "2026-07 " in s.table  # complete month, no asterisk
+
+
+def test_yield_curve_detail_has_latest_spread_and_month_avg():
+    s = _curve({"2026-07": 0.5, "2026-08": 0.86})
+    assert "+0.86pp" in s.detail
+    assert "last full month avg +0.50pp" in s.detail
+
+
+def test_yield_curve_single_partial_month_defaults_to_flat():
+    # No complete month yet (fresh series edge case): no classification basis, stay neutral.
+    s = _curve({"2026-08": -2.0})
+    assert s.state == "flat"
+
+
 # --- buy_signal ---------------------------------------------------------------
 
 
@@ -422,6 +501,42 @@ def test_alert_state_none_when_empty():
     assert state == "none"
 
 
+def test_compute_signal_advisory_failure_does_not_break_strong(make_subsignal):
+    ok = lambda *a, **k: make_subsignal("x", passes=True)
+    inverted_curve = lambda *a, **k: make_subsignal("yield_curve", "inverted", passes=False, advisory=True)
+    with patch("signals.buy_signal.vix_signal.score", side_effect=ok), patch(
+        "signals.buy_signal.rate_signal.score", side_effect=ok
+    ), patch("signals.buy_signal.margin_signal.score", side_effect=ok), patch(
+        "signals.buy_signal.market_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.sector_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=inverted_curve
+    ):
+        result = compute_signal()
+    assert result.state == "strong"
+    assert result.passing_count == 5
+    assert result.required_count == 5
+    assert len(result.subsignals) == 6  # advisory still shown
+    assert result.score == 1.0
+
+
+def test_compute_signal_missing_advisory_does_not_downgrade_to_soft(make_subsignal):
+    ok = lambda *a, **k: make_subsignal("x", passes=True)
+    with patch("signals.buy_signal.vix_signal.score", side_effect=ok), patch(
+        "signals.buy_signal.rate_signal.score", side_effect=ok
+    ), patch("signals.buy_signal.margin_signal.score", side_effect=ok), patch(
+        "signals.buy_signal.market_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.sector_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=RuntimeError("no cache")
+    ):
+        result = compute_signal()
+    assert result.state == "strong"  # a missing required signal would make this "soft"
+    assert result.missing_signals == ["yield_curve"]  # still visible in the missing line
+
+
 def test_compute_signal_catches_one_failing_signal(make_subsignal):
     ok = lambda *a, **k: make_subsignal("x", passes=True)
     with patch("signals.buy_signal.vix_signal.score", side_effect=RuntimeError("boom")), patch(
@@ -430,10 +545,12 @@ def test_compute_signal_catches_one_failing_signal(make_subsignal):
         "signals.buy_signal.market_signal.score", side_effect=ok
     ), patch(
         "signals.buy_signal.sector_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=ok
     ):
         result = compute_signal()
     assert result.missing_signals == ["vix"]
-    assert len(result.subsignals) == 4
+    assert len(result.subsignals) == 5
 
 
 def test_compute_signal_threads_allow_refresh(make_subsignal):
@@ -444,6 +561,8 @@ def test_compute_signal_threads_allow_refresh(make_subsignal):
         "signals.buy_signal.margin_signal.score", side_effect=ok
     ), patch(
         "signals.buy_signal.sector_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=ok
     ):
         mock_vix.return_value = make_subsignal("vix", passes=True)
         mock_market.return_value = make_subsignal("market_dip", passes=True)
@@ -452,17 +571,19 @@ def test_compute_signal_threads_allow_refresh(make_subsignal):
     mock_market.assert_called_once_with(allow_refresh=False)
 
 
-def test_compute_signal_all_five_signals_fail():
+def test_compute_signal_all_six_signals_fail():
     with patch("signals.buy_signal.vix_signal.score", side_effect=RuntimeError("boom")), patch(
         "signals.buy_signal.rate_signal.score", side_effect=RuntimeError("boom")
     ), patch("signals.buy_signal.margin_signal.score", side_effect=RuntimeError("boom")), patch(
         "signals.buy_signal.market_signal.score", side_effect=RuntimeError("boom")
     ), patch(
         "signals.buy_signal.sector_signal.score", side_effect=RuntimeError("boom")
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=RuntimeError("boom")
     ):
         result = compute_signal()
     assert result.subsignals == []
-    assert sorted(result.missing_signals) == ["fed_rate", "margin_debt", "market_dip", "sector", "vix"]
+    assert sorted(result.missing_signals) == ["fed_rate", "margin_debt", "market_dip", "sector", "vix", "yield_curve"]
     assert result.state == "none"
 
 
@@ -482,6 +603,8 @@ def test_signal_lock_held_during_compute(make_subsignal):
         "signals.buy_signal.market_signal.score", side_effect=ok
     ), patch(
         "signals.buy_signal.sector_signal.score", side_effect=ok
+    ), patch(
+        "signals.buy_signal.yield_curve_signal.score", side_effect=ok
     ):
         compute_signal()
     assert lock_state == [False]  # re-acquiring non-blocking failed -> lock was already held

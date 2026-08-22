@@ -97,13 +97,13 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
 
 
 def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
-    """Refresh the slow macro indicators (#2-#5); each skips itself if already refreshed today.
+    """Refresh the slow macro indicators (#2-#5, #7); each skips itself if already refreshed today.
 
     force=True bypasses each collector's own should_refresh() gate (used by the Telegram
     /refresh command). Returns (name, error_message) for every collector that was attempted
     but failed, so callers can surface the actual reason instead of a silently stale cache.
     """
-    from collectors import fed_rate, margin_debt, sectors
+    from collectors import fed_rate, margin_debt, sectors, yield_curve
 
     failed = []
 
@@ -116,6 +116,11 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
         error = sectors.update_sector_data()
         if error:
             failed.append(("sector", error))
+
+    if force or yield_curve.should_refresh():
+        error = yield_curve.update_yield_curve_data()
+        if error:
+            failed.append(("yield_curve", error))
 
     if force or margin_debt.should_refresh():
         if not _cf_bypass_ready():
@@ -159,7 +164,7 @@ def _stamp(now_et: datetime) -> str:
 def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
     print(f"[{_stamp(now_et)}] session={session}")
-    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
+    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{result.required_count}; score {result.score:+.2f})")
     print(f"  Rule: {result.detail}")
     if result.missing_signals:
         print(f"  Missing: {', '.join(result.missing_signals)}")

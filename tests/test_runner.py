@@ -153,17 +153,24 @@ def test_refresh_macro_gating():
         "runner._cf_bypass_ready", return_value=True
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
-    ) as mock_margin_update:
+    ) as mock_margin_update, patch(
+        "collectors.yield_curve.should_refresh", return_value=True
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data"
+    ) as mock_curve_update:
         runner.refresh_macro()
     mock_fed_update.assert_called_once()
     mock_sector_update.assert_not_called()
     mock_margin_update.assert_called_once()
+    mock_curve_update.assert_called_once()
 
 
 def test_refresh_macro_skips_margin_when_cfbypass_unreachable():
     with patch("collectors.fed_rate.should_refresh", return_value=False), patch(
         "collectors.sectors.should_refresh", return_value=False
-    ), patch("collectors.margin_debt.should_refresh", return_value=True), patch(
+    ), patch("collectors.yield_curve.should_refresh", return_value=False), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch(
         "runner._cf_bypass_ready", return_value=False
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
@@ -305,11 +312,16 @@ def test_refresh_macro_force_bypasses_should_refresh_gates():
         "runner._cf_bypass_ready", return_value=True
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
-    ) as mock_margin_update:
+    ) as mock_margin_update, patch(
+        "collectors.yield_curve.should_refresh", return_value=False
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data"
+    ) as mock_curve_update:
         runner.refresh_macro(force=True)
     mock_fed_update.assert_called_once()
     mock_sector_update.assert_called_once()
     mock_margin_update.assert_called_once()
+    mock_curve_update.assert_called_once()
 
 
 def test_refresh_macro_returns_name_and_error_for_each_failed_collector():
@@ -317,17 +329,22 @@ def test_refresh_macro_returns_name_and_error_for_each_failed_collector():
         "collectors.sectors.update_sector_data", return_value=None
     ), patch("runner._cf_bypass_ready", return_value=True), patch(
         "collectors.margin_debt.update_margin_debt_data", return_value="TimeoutError: slow"
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data", return_value="HTTPError: 503"
     ):
         failed = runner.refresh_macro(force=True)
     assert ("fed_rate", "ConnectionError: boom") in failed
     assert ("margin_debt", "TimeoutError: slow") in failed
+    assert ("yield_curve", "HTTPError: 503") in failed
     assert not any(name == "sector" for name, _ in failed)
 
 
 def test_refresh_macro_reports_margin_debt_when_cfbypass_unreachable():
     with patch("collectors.fed_rate.update_fed_rate_data", return_value=None), patch(
         "collectors.sectors.update_sector_data", return_value=None
-    ), patch("runner._cf_bypass_ready", return_value=False):
+    ), patch("collectors.yield_curve.update_yield_curve_data", return_value=None), patch(
+        "runner._cf_bypass_ready", return_value=False
+    ):
         failed = runner.refresh_macro(force=True)
     assert len(failed) == 1
     name, error = failed[0]
