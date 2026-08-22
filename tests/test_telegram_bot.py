@@ -365,6 +365,83 @@ def test_handle_message_curve(monkeypatch, make_subsignal):
     assert "Yield Curve" in tb._handle_message("/curve")
 
 
+def _fake_opportunity():
+    import analyzer as az
+
+    segments = [
+        az.SegmentView("sp500", "MSCI USA", fwd_pe=20.0, asof="July 31, 2026", trailing_pe=25.0,
+                       ratio_vs_spx=1.0, discount_vs_spx=0.0),
+        az.SegmentView("world_small", "World Small Cap", fwd_pe=15.0, trailing_pe=19.0,
+                       ratio_vs_spx=0.75, discount_vs_spx=0.25),
+        az.SegmentView("europe", "Europe", fwd_pe=16.0, trailing_pe=18.0,
+                       ratio_vs_spx=0.80, discount_vs_spx=0.20),
+    ]
+    rate = az.RateView(
+        horizons=[
+            az.HorizonView("nearest", "2026-09-16", 0.78, 0.18, 0.04, "ease"),
+            az.HorizonView("6m", "2027-01-27", 0.30, 0.60, 0.10, "no_change"),
+            az.HorizonView("1y", "2027-07-28", 0.25, 0.65, 0.10, "no_change"),
+        ],
+        consecutive_easing=1,
+        rate_support=True,
+    )
+    return az.Opportunity(segments=segments, rate=rate, small_cap_band="candidate",
+                          verdict="small caps: valuation + rate conditions both met (candidate)",
+                          notes=["MSCI World Small Cap as proxy for AVWS"], history_obs=1)
+
+
+@pytest.fixture
+def whattobuy_env(monkeypatch):
+    """Offline /whattobuy: collectors fresh, analyzer canned, photo captured."""
+    from collectors import valuations
+
+    monkeypatch.setattr(valuations, "should_refresh", lambda: False)
+    monkeypatch.setattr(tb.analyzer, "analyze", lambda: _fake_opportunity())
+    photos = []
+    monkeypatch.setattr(tb, "_send_photo", lambda png, caption: photos.append(png))
+    monkeypatch.setattr(tb.analyzer, "render_chart", lambda opp: b"\x89PNG-fake")
+    return photos
+
+
+def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
+    reply = tb._handle_message("/whattobuy")
+    assert whattobuy_env == [b"\x89PNG-fake"]
+    assert "What to buy" in reply
+    assert "20.0" in reply and "15.0" in reply  # actual P/Es in the table
+    assert "25% fwd-P/E discount" in reply
+    assert "candidate" in reply
+    assert "FedWatch: nearest 2026-09-16: ease 78%" in reply
+    assert "Expected easing: 1/3 horizons" in reply
+    assert "AVWS" in reply
+
+
+def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, make_subsignal, make_buy_signal):
+    with tb._lock:
+        tb._state.last_result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
+    reply = tb._handle_message("/whattobuy")
+    assert "Buy signal (context): No buy signal" in reply
+
+
+def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, monkeypatch):
+    def boom(opp):
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(tb.analyzer, "render_chart", boom)
+    reply = tb._handle_message("/whattobuy")
+    assert whattobuy_env == []  # no photo sent
+    assert "What to buy" in reply  # text still delivered
+    assert "chart rendering failed" in reply
+
+
+def test_handle_message_whattobuy_surfaces_refresh_errors(whattobuy_env, monkeypatch):
+    from collectors import valuations
+
+    monkeypatch.setattr(valuations, "should_refresh", lambda: True)
+    monkeypatch.setattr(valuations, "update_valuations_data", lambda: "ValueError: FY1 not found")
+    reply = tb._handle_message("/whattobuy")
+    assert "Refresh failed" in reply and "FY1 not found" in reply
+
+
 def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):
     calls = []
     monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False: calls.append(force) or [])

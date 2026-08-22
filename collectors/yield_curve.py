@@ -1,56 +1,16 @@
-"""Collect the US Treasury 10y-3m yield spread (FRED T10Y3M); cache to CSV.
-
-FRED's fredgraph.csv endpoint serves the full daily history without an API key. Market
-holidays come through as blank observations (NaN after read_csv), so they're dropped.
-"""
+"""Collect the US Treasury 10y-3m yield spread (FRED T10Y3M); cache to CSV."""
 
 from __future__ import annotations
 
 import random
 import time
-from io import StringIO
 from pathlib import Path
 
 import pandas as pd
-import requests
 
+from collectors.fred import fetch_series_with_retries
 from collectors.freshness import refreshed_today
-from config import (
-    FETCH_JITTER_SEC,
-    FRED_GRAPH_CSV_URL,
-    SCRAPE_BACKOFF_SEC,
-    SCRAPE_RETRIES,
-    YIELD_CURVE_CSV,
-    YIELD_CURVE_SERIES,
-)
-
-
-def _fetch_history() -> pd.DataFrame:
-    """Download and parse the full T10Y3M daily history, ascending by date."""
-    resp = requests.get(FRED_GRAPH_CSV_URL, params={"id": YIELD_CURVE_SERIES}, timeout=60)
-    resp.raise_for_status()
-    df = pd.read_csv(StringIO(resp.text), parse_dates=["observation_date"])
-    df = df.rename(columns={"observation_date": "date", YIELD_CURVE_SERIES: "spread"})
-    return df.dropna(subset=["spread"]).sort_values("date").reset_index(drop=True)
-
-
-def _fetch_with_retries() -> tuple[pd.DataFrame | None, str | None]:
-    """Fetch the spread history with retry/backoff. Returns (data, error_message)."""
-    last_error = None
-    for attempt in range(SCRAPE_RETRIES):
-        try:
-            return _fetch_history(), None
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-            if attempt + 1 == SCRAPE_RETRIES:
-                print(f"Yield curve fetch failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
-                return None, last_error
-
-            delay = SCRAPE_BACKOFF_SEC * 2**attempt + random.uniform(0, 1)
-            print(f"Yield curve attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
-            time.sleep(delay)
-
-    return None, last_error
+from config import FETCH_JITTER_SEC, YIELD_CURVE_CSV, YIELD_CURVE_SERIES
 
 
 def update_yield_curve_data(filepath: Path | str = YIELD_CURVE_CSV) -> str | None:
@@ -58,10 +18,11 @@ def update_yield_curve_data(filepath: Path | str = YIELD_CURVE_CSV) -> str | Non
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
-    history, error = _fetch_with_retries()
+    history, error = fetch_series_with_retries(YIELD_CURVE_SERIES, "Yield curve")
     if history is None:
         return error or "unknown error"
 
+    history = history.rename(columns={"value": "spread"})
     filepath.parent.mkdir(parents=True, exist_ok=True)
     history.to_csv(filepath, index=False)
 

@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 import requests
 from dotenv import load_dotenv
 
+import analyzer
 import config
 import runner
 from collectors import freshness
@@ -87,6 +88,7 @@ _COMMANDS = [
     {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
     {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
+    {"command": "whattobuy", "description": "Segment valuations: S&P 500 vs world small cap vs Europe"},
     {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
     {"command": "status", "description": "Runner uptime and health"},
     {"command": "help", "description": "List available commands"},
@@ -101,6 +103,7 @@ _HELP_TEXT = (
     "/dip — SPY/NASDAQ/DOW % change\n"
     "/sector — leading industries earnings outlook\n"
     "/curve — 10y-3m yield curve spread (advisory)\n"
+    "/whattobuy — segment valuations (S&P 500 / world small cap / Europe)\n"
     "/refresh — force a fresh fetch of all data (bypass cache)\n"
     "/status — runner uptime and health"
 )
@@ -114,6 +117,7 @@ _FRESHNESS_FILES = {
     "margin_debt": config.MARGIN_DEBT_CSV,
     "sector": config.SECTORS_CSV,
     "yield_curve": config.YIELD_CURVE_CSV,
+    "valuations": config.VALUATIONS_CSV,
 }
 
 
@@ -146,6 +150,19 @@ def _send(text: str) -> None:
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
         print(f"Telegram send failed ({type(exc).__name__}: {exc})")
+
+
+def _send_photo(png: bytes, caption: str) -> None:
+    try:
+        resp = requests.post(
+            f"{API}/sendPhoto",
+            data={"chat_id": CHAT_ID, "caption": caption},
+            files={"photo": ("chart.png", png, "image/png")},
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        print(f"Telegram sendPhoto failed ({type(exc).__name__}: {exc})")
 
 
 def _is_alerting(result: BuySignal) -> bool:
@@ -209,6 +226,68 @@ def _format_signal(result: BuySignal) -> str:
         blocks.append(f"⚠️ missing: {_esc(', '.join(result.missing_signals))}")
     blocks.append(f"🕓 <b>Data as of</b>\n{_format_freshness()}")
     return "\n\n".join([header, *blocks])
+
+
+def _fmt(value: float | None, spec: str = ".1f") -> str:
+    return "n/a" if value is None else format(value, spec)
+
+
+def _format_opportunity(opp: analyzer.Opportunity) -> str:
+    """Everything-in-one-place valuation facts; no interpretation beyond the matrix verdict."""
+    rows = [
+        [s.label, _fmt(s.fwd_pe), _fmt(s.trailing_pe), _fmt(s.ratio_vs_spx, ".2f"), _fmt(s.fwd_z, "+.1f")]
+        for s in opp.segments
+    ]
+    table = "<pre>" + _esc(format_table(["Segment", "Fwd P/E", "Trail", "vs USA", "z(fwd)"], rows)) + "</pre>"
+
+    small = next(s for s in opp.segments if s.name == "world_small")
+    europe = next(s for s in opp.segments if s.name == "europe")
+    lines = []
+    if small.discount_vs_spx is not None:
+        lines.append(
+            f"Small cap: {small.discount_vs_spx:.0%} fwd-P/E discount vs MSCI USA — {opp.small_cap_band} band"
+            + (f", rel z {small.rel_z:+.1f}" if small.rel_z is not None else "")
+        )
+    small_value = next((s for s in opp.segments if s.name == "world_small_value"), None)
+    if small_value is not None and small_value.discount_vs_spx is not None:
+        lines.append(f"SC Value (closest to AVWS): {small_value.discount_vs_spx:.0%} fwd-P/E discount vs MSCI USA")
+    rate = opp.rate
+    if rate.horizons:
+        outlook = " | ".join(
+            f"{h.label} {h.meeting_date}: {h.state} {max(h.ease, h.no_change, h.hike):.0%}" for h in rate.horizons
+        )
+        lines.append(f"FedWatch: {outlook}")
+        lines.append(
+            f"Expected easing: {rate.consecutive_easing}/{len(rate.horizons)} horizons from nearest "
+            f"(support: {'yes' if rate.rate_support else 'no'}, need ≥{config.SMALL_CAP_EASING_OBS})"
+        )
+    if europe.ratio_vs_spx is not None:
+        lines.append(
+            f"Europe: {europe.ratio_vs_spx:.2f}x MSCI USA fwd P/E | own-history z: {_fmt(europe.fwd_z, '+.1f')}"
+            + (f", rel z {europe.rel_z:+.1f}" if europe.rel_z is not None else "")
+        )
+    lines.append(f"Verdict: {opp.verdict}")
+    if opp.buy_signal_state is not None:
+        label = _ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
+        lines.append(f"Buy signal (context): {label}")
+    facts = "\n".join(f"• {_esc(line)}" for line in lines)
+
+    asofs = {s.asof for s in opp.segments if s.asof}
+    if len(asofs) == 1:
+        footer = f"🕓 MSCI data as of {_esc(asofs.pop())} (updates monthly)"
+    elif asofs:
+        per_segment = ", ".join(f"{s.label} {s.asof}" for s in opp.segments if s.asof)
+        footer = f"🕓 MSCI data as of: {_esc(per_segment)} (updates monthly)"
+    else:
+        footer = ""
+    notes = "\n".join(f"• {_esc(note)}" for note in opp.notes)
+
+    blocks = ["🧭 <b>What to buy — segment valuations</b>", table, facts]
+    if footer:
+        blocks.append(footer)
+    if notes:
+        blocks.append(f"⚠️ <b>Notes</b>\n{notes}")
+    return "\n\n".join(blocks)
 
 
 def _format_status() -> str:
@@ -313,6 +392,28 @@ def _handle_message(text: str) -> str | None:
         return _format_single(lambda: market_signal.score(allow_refresh=market_open))
     if text in _SIGNAL_COMMANDS:
         return _format_single(_SIGNAL_COMMANDS[text])
+    if text == "/whattobuy":
+        from collectors import valuations
+
+        failed = []
+        with buy_signal.SIGNAL_LOCK:
+            if valuations.should_refresh():
+                error = valuations.update_valuations_data()
+                if error:
+                    failed.append(("valuations", error))
+            opp = analyzer.analyze()
+        with _lock:
+            last_result = _state.last_result
+        opp.buy_signal_state = last_result.state if last_result is not None else None
+        try:
+            _send_photo(analyzer.render_chart(opp), "Segment valuations")
+        except Exception as exc:
+            opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
+        reply = _format_opportunity(opp)
+        if failed:
+            lines = "\n".join(f"• {_esc(name)}: {_esc(error)}" for name, error in failed)
+            reply = f"⚠️ <b>Refresh failed</b>\n{lines}\n\n{reply}"
+        return reply
     if text == "/refresh":
         with buy_signal.SIGNAL_LOCK:
             failed = runner.refresh_macro(force=True)

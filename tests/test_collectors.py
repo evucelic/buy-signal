@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 import requests
 
-from collectors import fed_rate, margin_debt, sectors, yield_curve
+from collectors import fed_rate, fred, margin_debt, sectors, valuations, yield_curve
 from collectors import market as market_mod
 from collectors import vix as vix_mod
 from collectors.freshness import last_modified, refreshed_today
@@ -374,7 +374,7 @@ def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
     assert error == "ConnectionError: boom"
 
 
-# --- collectors/yield_curve.py ---------------------------------------------------------------
+# --- collectors/fred.py + yield_curve.py ---------------------------------------------------------------
 
 _FRED_CSV = (
     "observation_date,T10Y3M\n"
@@ -391,18 +391,18 @@ def _mock_fred_response():
     return resp
 
 
-def test_fetch_history_parses_and_drops_holiday_blanks():
-    with patch("collectors.yield_curve.requests.get", return_value=_mock_fred_response()):
-        df = yield_curve._fetch_history()
-    assert list(df.columns) == ["date", "spread"]
+def test_fred_fetch_series_parses_and_drops_holiday_blanks():
+    with patch("collectors.fred.requests.get", return_value=_mock_fred_response()):
+        df = fred.fetch_series("T10Y3M")
+    assert list(df.columns) == ["date", "value"]
     assert len(df) == 3  # blank 08-19 row dropped
-    assert df["spread"].iloc[-1] == pytest.approx(0.86)
+    assert df["value"].iloc[-1] == pytest.approx(0.86)
     assert df["date"].is_monotonic_increasing
 
 
 def test_update_yield_curve_data_writes_cache(tmp_path):
     path = tmp_path / "yieldcurve.csv"
-    with patch("collectors.yield_curve.requests.get", return_value=_mock_fred_response()), patch(
+    with patch("collectors.fred.requests.get", return_value=_mock_fred_response()), patch(
         "collectors.yield_curve.time.sleep"
     ):
         error = yield_curve.update_yield_curve_data(path)
@@ -414,9 +414,9 @@ def test_update_yield_curve_data_writes_cache(tmp_path):
 
 def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):
     path = tmp_path / "yieldcurve.csv"
-    with patch("collectors.yield_curve._fetch_with_retries", return_value=(None, "ConnectionError: boom")), patch(
-        "collectors.yield_curve.time.sleep"
-    ):
+    with patch(
+        "collectors.yield_curve.fetch_series_with_retries", return_value=(None, "ConnectionError: boom")
+    ), patch("collectors.yield_curve.time.sleep"):
         error = yield_curve.update_yield_curve_data(path)
     assert not path.exists()
     assert error == "ConnectionError: boom"
@@ -430,3 +430,82 @@ def test_yield_curve_should_refresh_false_when_refreshed_today(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("date,spread\n2026-08-21,0.86\n")  # fresh mtime = now
     assert yield_curve.should_refresh(path) is False
+
+
+# --- collectors/valuations.py (non-Selenium logic only, like fed_rate) -----------------------
+
+# Body text as Selenium reads it off a rendered MSCI index page (abridged).
+_MSCI_BODY = (
+    "MSCI World Small Cap Index\n"
+    "Performance as of August 21, 2026\n"
+    "Key facts\n"
+    "Div Yld (%)\n1.94\n"
+    "P/E\n26.68\n"
+    "P/E Fwd\n16.29\n"
+    "P/BV\n2.11\n"
+    "Number of constituents\n3,877\n"
+)
+
+
+def test_parse_metrics_extracts_both_ratios_and_asof():
+    trailing, fwd, asof = valuations._parse_metrics(_MSCI_BODY)
+    assert trailing == pytest.approx(26.68)
+    assert fwd == pytest.approx(16.29)
+    assert asof == "August 21, 2026"
+
+
+def test_parse_metrics_handles_thousands_separators():
+    body = _MSCI_BODY.replace("26.68", "1,026.68")
+    trailing, _, _ = valuations._parse_metrics(body)
+    assert trailing == pytest.approx(1026.68)
+
+
+def test_parse_metrics_raises_on_challenge_page():
+    with pytest.raises(ValueError):
+        valuations._parse_metrics("Challenge Validation\nPlease wait...")
+
+
+def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
+    path = tmp_path / "valuations.csv"
+    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+        "collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
+    ), patch("collectors.valuations.time.sleep"):
+        assert valuations.update_valuations_data(path) is None
+        assert valuations.update_valuations_data(path) is None  # same day again -> deduped
+    history = valuations.valuations_history(path)
+    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS)  # one row per segment, not two
+    assert set(history["segment"]) == set(valuations.OPPORTUNITY_SEGMENTS)
+    assert (history["asof"] == "July 31, 2026").all()
+
+
+def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
+    path = tmp_path / "valuations.csv"
+    small_code = valuations.OPPORTUNITY_SEGMENTS["world_small"]["msci_code"]
+
+    def flaky_metrics(driver, msci_code):
+        if msci_code == small_code:
+            raise ValueError("P/E metrics not found on page")
+        return 20.0, 15.0, "July 31, 2026"
+
+    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+        "collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
+    ), patch("collectors.valuations.time.sleep"):
+        error = valuations.update_valuations_data(path)
+    assert "world_small" in error and "not found" in error
+    history = valuations.valuations_history(path)
+    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS) - 1  # others still written
+    assert "world_small" not in set(history["segment"])
+
+
+def test_update_valuations_webdriver_failure_returns_error(tmp_path):
+    path = tmp_path / "valuations.csv"
+    with patch("collectors.valuations._build_driver", side_effect=RuntimeError("no chrome")), patch(
+        "collectors.valuations.time.sleep"
+    ):
+        error = valuations.update_valuations_data(path)
+    assert "webdriver" in error and "no chrome" in error
+    assert not path.exists()
+
+
+def test_valuations_should_refresh_missing_file(tmp_path):
+    assert valuations.should_refresh(tmp_path / "nope.csv") is True

@@ -103,7 +103,7 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
     /refresh command). Returns (name, error_message) for every collector that was attempted
     but failed, so callers can surface the actual reason instead of a silently stale cache.
     """
-    from collectors import fed_rate, margin_debt, sectors, yield_curve
+    from collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
 
     failed = []
 
@@ -121,6 +121,11 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
         error = yield_curve.update_yield_curve_data()
         if error:
             failed.append(("yield_curve", error))
+
+    if force or valuations.should_refresh():
+        error = valuations.update_valuations_data()
+        if error:
+            failed.append(("valuations", error))
 
     if force or margin_debt.should_refresh():
         if not _cf_bypass_ready():
