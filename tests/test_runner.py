@@ -124,10 +124,22 @@ def test_tick_regular_refreshes_only_if_vix_passes():
 def test_tick_regular_no_refresh_when_vix_not_passing():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "collectors.margin_debt.should_refresh", return_value=False
+    ), patch("runner.refresh_macro") as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_not_called()
+
+
+def test_tick_regular_refreshes_when_margin_debt_checkpoint_due_even_if_vix_not_passing():
+    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint —
+    this is the bug that let a real FINRA release go uncaught until manually refreshed.
+    """
+    dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch("runner.refresh_macro") as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
 
 
 def test_refresh_macro_gating():
@@ -141,17 +153,24 @@ def test_refresh_macro_gating():
         "runner._cf_bypass_ready", return_value=True
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
-    ) as mock_margin_update:
+    ) as mock_margin_update, patch(
+        "collectors.yield_curve.should_refresh", return_value=True
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data"
+    ) as mock_curve_update:
         runner.refresh_macro()
     mock_fed_update.assert_called_once()
     mock_sector_update.assert_not_called()
     mock_margin_update.assert_called_once()
+    mock_curve_update.assert_called_once()
 
 
 def test_refresh_macro_skips_margin_when_cfbypass_unreachable():
     with patch("collectors.fed_rate.should_refresh", return_value=False), patch(
         "collectors.sectors.should_refresh", return_value=False
-    ), patch("collectors.margin_debt.should_refresh", return_value=True), patch(
+    ), patch("collectors.yield_curve.should_refresh", return_value=False), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch(
         "runner._cf_bypass_ready", return_value=False
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
@@ -244,8 +263,8 @@ def test_tick_runs_when_closed_but_vix_window_active():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     assert runner.market_session(dt) == runner.CLOSED
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "collectors.margin_debt.should_refresh", return_value=False
+    ), patch("runner.refresh_macro") as mock_refresh:
         result = runner.tick(dt)
     assert result is not None
     mock_compute.assert_called_once()
@@ -270,6 +289,15 @@ def test_tick_refreshes_during_closed_vix_window_if_vix_passes():
     mock_refresh.assert_called_once()
 
 
+def test_tick_refreshes_during_closed_vix_window_when_margin_debt_checkpoint_due():
+    dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "collectors.margin_debt.should_refresh", return_value=True
+    ), patch("runner.refresh_macro") as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
+
+
 # --- refresh_macro(force=True) ---------------------------------------------------------
 
 
@@ -284,11 +312,16 @@ def test_refresh_macro_force_bypasses_should_refresh_gates():
         "runner._cf_bypass_ready", return_value=True
     ), patch(
         "collectors.margin_debt.update_margin_debt_data"
-    ) as mock_margin_update:
+    ) as mock_margin_update, patch(
+        "collectors.yield_curve.should_refresh", return_value=False
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data"
+    ) as mock_curve_update:
         runner.refresh_macro(force=True)
     mock_fed_update.assert_called_once()
     mock_sector_update.assert_called_once()
     mock_margin_update.assert_called_once()
+    mock_curve_update.assert_called_once()
 
 
 def test_refresh_macro_returns_name_and_error_for_each_failed_collector():
@@ -296,17 +329,22 @@ def test_refresh_macro_returns_name_and_error_for_each_failed_collector():
         "collectors.sectors.update_sector_data", return_value=None
     ), patch("runner._cf_bypass_ready", return_value=True), patch(
         "collectors.margin_debt.update_margin_debt_data", return_value="TimeoutError: slow"
+    ), patch(
+        "collectors.yield_curve.update_yield_curve_data", return_value="HTTPError: 503"
     ):
         failed = runner.refresh_macro(force=True)
     assert ("fed_rate", "ConnectionError: boom") in failed
     assert ("margin_debt", "TimeoutError: slow") in failed
+    assert ("yield_curve", "HTTPError: 503") in failed
     assert not any(name == "sector" for name, _ in failed)
 
 
 def test_refresh_macro_reports_margin_debt_when_cfbypass_unreachable():
     with patch("collectors.fed_rate.update_fed_rate_data", return_value=None), patch(
         "collectors.sectors.update_sector_data", return_value=None
-    ), patch("runner._cf_bypass_ready", return_value=False):
+    ), patch("collectors.yield_curve.update_yield_curve_data", return_value=None), patch(
+        "runner._cf_bypass_ready", return_value=False
+    ):
         failed = runner.refresh_macro(force=True)
     assert len(failed) == 1
     name, error = failed[0]

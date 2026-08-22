@@ -12,6 +12,7 @@ FEDWATCH_CSV = DATA_DIR / "fedwatch.csv"
 MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
+YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 
 # --- Tickers -----------------------------------------------------------------
 VIX_TICKER = "^VIX"
@@ -72,6 +73,12 @@ MARKET_GROWTH_THRESHOLD = 0.0055    # +0.55% or better daily change counts as gr
 SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
 SECTOR_GROWTH_QUORUM = 3      # at least this many of the top N must have positive forward earnings growth
 SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for earnings growth
+
+# --- Yield curve (#7): 10y-3m Treasury spread, advisory-only recession context ---
+FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # no API key needed
+YIELD_CURVE_SERIES = "T10Y3M"
+YIELD_CURVE_STEEP = 1.0            # monthly avg spread (pp) at/above this = supportive regime
+YIELD_CURVE_DEEP_INVERSION = -1.0  # two consecutive monthly avgs at/below this = deep inversion
 
 # --- Runner cadence -----------------------------------------------------------
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence

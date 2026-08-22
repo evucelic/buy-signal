@@ -7,14 +7,14 @@ meaningfully unit-testable and is scoped out — only its pure-logic helpers are
 import os
 from datetime import datetime, timedelta
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import openpyxl
 import pandas as pd
 import pytest
 import requests
 
-from collectors import fed_rate, margin_debt, sectors
+from collectors import fed_rate, margin_debt, sectors, yield_curve
 from collectors import market as market_mod
 from collectors import vix as vix_mod
 from collectors.freshness import last_modified, refreshed_today
@@ -372,3 +372,61 @@ def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
         error = fed_rate.update_fed_rate_data(path)
     assert not path.exists()
     assert error == "ConnectionError: boom"
+
+
+# --- collectors/yield_curve.py ---------------------------------------------------------------
+
+_FRED_CSV = (
+    "observation_date,T10Y3M\n"
+    "2026-08-18,0.85\n"
+    "2026-08-19,\n"          # market holiday: blank observation
+    "2026-08-20,0.82\n"
+    "2026-08-21,0.86\n"
+)
+
+
+def _mock_fred_response():
+    resp = MagicMock()
+    resp.text = _FRED_CSV
+    return resp
+
+
+def test_fetch_history_parses_and_drops_holiday_blanks():
+    with patch("collectors.yield_curve.requests.get", return_value=_mock_fred_response()):
+        df = yield_curve._fetch_history()
+    assert list(df.columns) == ["date", "spread"]
+    assert len(df) == 3  # blank 08-19 row dropped
+    assert df["spread"].iloc[-1] == pytest.approx(0.86)
+    assert df["date"].is_monotonic_increasing
+
+
+def test_update_yield_curve_data_writes_cache(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    with patch("collectors.yield_curve.requests.get", return_value=_mock_fred_response()), patch(
+        "collectors.yield_curve.time.sleep"
+    ):
+        error = yield_curve.update_yield_curve_data(path)
+    assert error is None
+    history = yield_curve.yield_curve_history(path)
+    assert len(history) == 3
+    assert history["spread"].iloc[-1] == pytest.approx(0.86)
+
+
+def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    with patch("collectors.yield_curve._fetch_with_retries", return_value=(None, "ConnectionError: boom")), patch(
+        "collectors.yield_curve.time.sleep"
+    ):
+        error = yield_curve.update_yield_curve_data(path)
+    assert not path.exists()
+    assert error == "ConnectionError: boom"
+
+
+def test_yield_curve_should_refresh_missing_file(tmp_path):
+    assert yield_curve.should_refresh(tmp_path / "nope.csv") is True
+
+
+def test_yield_curve_should_refresh_false_when_refreshed_today(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("date,spread\n2026-08-21,0.86\n")  # fresh mtime = now
+    assert yield_curve.should_refresh(path) is False

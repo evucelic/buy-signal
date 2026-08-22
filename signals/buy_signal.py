@@ -5,13 +5,17 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal
+from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from signals.base import SubSignal
 
 # compute_signal() (and any individual signal's score()) drives collectors that read-modify-
 # write shared CSV caches; serialize concurrent callers (e.g. the background tick loop and an
 # on-demand Telegram command) so they don't race on the same file.
 SIGNAL_LOCK = threading.Lock()
+
+# Advisory signals are context only: they never gate the checklist, and one going missing
+# must not downgrade strong -> soft the way a missing required signal does.
+_ADVISORY_SIGNALS = {"yield_curve"}
 
 
 @dataclass
@@ -23,9 +27,14 @@ class BuySignal:
     missing_signals: list[str] = field(default_factory=list)
     detail: str = ""
 
+    @property
+    def required_count(self) -> int:
+        """Checklist size: advisory subsignals are shown but don't count as conditions."""
+        return sum(1 for signal in self.subsignals if not signal.advisory)
 
-def _alert_state(subsignals: list[SubSignal], missing_signals: list[str]) -> tuple[str, str]:
-    if not subsignals or any(not signal.passes for signal in subsignals):
+
+def _alert_state(required: list[SubSignal], missing_signals: list[str]) -> tuple[str, str]:
+    if not required or any(not signal.passes for signal in required):
         return "none", "NONE: one or more required signals failed."
     if missing_signals:
         return "soft", "SOFT: required signals passed, but some signals are missing."
@@ -77,9 +86,17 @@ def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
         missing_signals.append("sector")
         print(f"signal skipped (sector: {type(exc).__name__}: {exc})")
 
-    passing_count = sum(1 for signal in subsignals if signal.passes)
-    score = passing_count / len(subsignals) if subsignals else 0.0
-    state, summary = _alert_state(subsignals, missing_signals)
+    try:
+        subsignals.append(yield_curve_signal.score())
+    except Exception as exc:
+        missing_signals.append("yield_curve")
+        print(f"signal skipped (yield_curve: {type(exc).__name__}: {exc})")
+
+    required = [signal for signal in subsignals if not signal.advisory]
+    required_missing = [name for name in missing_signals if name not in _ADVISORY_SIGNALS]
+    passing_count = sum(1 for signal in required if signal.passes)
+    score = passing_count / len(required) if required else 0.0
+    state, summary = _alert_state(required, required_missing)
 
     return BuySignal(
         score=score,
@@ -93,7 +110,7 @@ def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
 
 if __name__ == "__main__":
     result = compute_signal()
-    print(f"Alert: {result.state.upper()}  (passing {result.passing_count}/{len(result.subsignals)}; score {result.score:+.2f})")
+    print(f"Alert: {result.state.upper()}  (passing {result.passing_count}/{result.required_count}; score {result.score:+.2f})")
     print(f"Rule: {result.detail}")
     if result.missing_signals:
         print(f"Missing: {', '.join(result.missing_signals)}")
