@@ -19,7 +19,7 @@ if __name__ == "__main__":
     telegram_bot.notify_started()
     try:
         # Seed fed_rate/sectors/margin_debt on startup instead of waiting for the next
-        # pre-market/after-hours tick — matters most on a fresh deploy with empty data/, but
+        # pre-market/after-hours tick; matters most on a fresh deploy with empty data/, but
         # cheap on every restart since each collector's should_refresh() skips it if already fresh.
         refresh_macro()
     except Exception as exc:

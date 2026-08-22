@@ -1,6 +1,6 @@
 """Long-polling Telegram bot: per-signal + aggregate commands, plus threshold-crossing pushes.
 
-Plain synchronous requests calls to the Bot API, matching the rest of the codebase's style —
+Plain synchronous requests calls to the Bot API, matching the rest of the codebase's style:
 no async framework needed for a handful of commands and a push. Runs in a background thread
 started by start(); the caller (bot.py) drives the actual tick loop (runner.run_forever()) and
 feeds it results via handle_tick().
@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 import requests
 from dotenv import load_dotenv
 
+import analyzer
 import config
 import runner
 from collectors import freshness
@@ -42,7 +43,7 @@ _SIGNAL_COMMANDS = {
     "/curve": yield_curve_signal.score,
 }
 
-# Presentation only — signal logic/state strings (signals/*.py) are untouched by any of this.
+# Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
 _ALERT_LABELS = {
     "none": ("⚪", "No buy signal"),
     "soft": ("🟡", "Soft signal"),
@@ -87,6 +88,7 @@ _COMMANDS = [
     {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
     {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
+    {"command": "whattobuy", "description": "Segment valuations: S&P 500 vs world small cap vs Europe"},
     {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
     {"command": "status", "description": "Runner uptime and health"},
     {"command": "help", "description": "List available commands"},
@@ -94,15 +96,16 @@ _COMMANDS = [
 
 _HELP_TEXT = (
     "Commands:\n"
-    "/signal — full current buy signal\n"
-    "/vix — VIX level\n"
-    "/fedrate — Fed rate trajectory\n"
-    "/margin — FINRA margin debt\n"
-    "/dip — SPY/NASDAQ/DOW % change\n"
-    "/sector — leading industries earnings outlook\n"
-    "/curve — 10y-3m yield curve spread (advisory)\n"
-    "/refresh — force a fresh fetch of all data (bypass cache)\n"
-    "/status — runner uptime and health"
+    "/signal: full current buy signal\n"
+    "/vix: VIX level\n"
+    "/fedrate: Fed rate trajectory\n"
+    "/margin: FINRA margin debt\n"
+    "/dip: SPY/NASDAQ/DOW % change\n"
+    "/sector: leading industries earnings outlook\n"
+    "/curve: 10y-3m yield curve spread (advisory)\n"
+    "/whattobuy: segment valuations (S&P 500 / world small cap / Europe)\n"
+    "/refresh: force a fresh fetch of all data (bypass cache)\n"
+    "/status: runner uptime and health"
 )
 
 # Cache files backing each signal, for the "data as of" freshness table appended to every
@@ -114,6 +117,7 @@ _FRESHNESS_FILES = {
     "margin_debt": config.MARGIN_DEBT_CSV,
     "sector": config.SECTORS_CSV,
     "yield_curve": config.YIELD_CURVE_CSV,
+    "valuations": config.VALUATIONS_CSV,
 }
 
 
@@ -148,6 +152,19 @@ def _send(text: str) -> None:
         print(f"Telegram send failed ({type(exc).__name__}: {exc})")
 
 
+def _send_photo(png: bytes, caption: str) -> None:
+    try:
+        resp = requests.post(
+            f"{API}/sendPhoto",
+            data={"chat_id": CHAT_ID, "caption": caption},
+            files={"photo": ("chart.png", png, "image/png")},
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        print(f"Telegram sendPhoto failed ({type(exc).__name__}: {exc})")
+
+
 def _is_alerting(result: BuySignal) -> bool:
     by_name = {s.name: s for s in result.subsignals}
     vix = by_name.get("vix")
@@ -178,7 +195,7 @@ def _format_subsignal(s: SubSignal) -> str:
     icon, display_name = _SIGNAL_META.get(s.name, ("•", s.name))
     mark = "ℹ️" if s.advisory else ("✅" if s.passes else "❌")
     state_label = _STATE_LABELS.get((s.name, s.state), s.state)
-    header = f"{mark} {icon} <b>{_esc(display_name)}</b> — {_esc(state_label)}"
+    header = f"{mark} {icon} <b>{_esc(display_name)}</b>: {_esc(state_label)}"
     body = f"<pre>{_esc(s.table)}</pre>" if s.table else _bullets(s.detail)
     return f"{header}\n{body}"
 
@@ -209,6 +226,73 @@ def _format_signal(result: BuySignal) -> str:
         blocks.append(f"⚠️ missing: {_esc(', '.join(result.missing_signals))}")
     blocks.append(f"🕓 <b>Data as of</b>\n{_format_freshness()}")
     return "\n\n".join([header, *blocks])
+
+
+def _fmt(value: float | None, spec: str = ".1f") -> str:
+    return "n/a" if value is None else format(value, spec)
+
+
+# Short row labels for the monospace table only (chart legends/notes keep the full config label).
+_TABLE_LABELS = {
+    "sp500": "S&P 500",
+    "world_small": "Small Cap",
+    "world_small_value": "SC Value",
+    "europe": "Europe",
+}
+
+_RATE_STATE_LABELS = {"no_change": "no change"}  # everything else already reads fine as-is
+
+
+def _format_opportunity(opp: analyzer.Opportunity) -> str:
+    """Everything-in-one-place valuation facts; no interpretation beyond the matrix verdict."""
+    rows = [
+        [
+            _TABLE_LABELS.get(s.name, s.label),
+            _fmt(s.fwd_pe),
+            _fmt(s.trailing_pe),
+            _fmt(s.ratio_vs_spx, ".2f"),
+            _fmt(s.fwd_z, "+.1f"),
+            _fmt(s.rel_z, "+.1f"),
+        ]
+        for s in opp.segments
+    ]
+    table = "<pre>" + _esc(format_table(["Segment", "Fwd", "Trail", "vsUS", "z", "relZ"], rows)) + "</pre>"
+
+    lines = []
+    if opp.small_cap_band is not None:
+        lines.append(f"Small-cap band: {opp.small_cap_band}")
+
+    rate = opp.rate
+    if rate.horizons:
+        sequence = " → ".join(_RATE_STATE_LABELS.get(h.state, h.state) for h in rate.horizons)
+        support = "yes" if rate.rate_support else "no"
+        lines.append(
+            f"FedWatch: {rate.consecutive_easing}/{len(rate.horizons)} easing "
+            f"({sequence}, rate support: {support}, need ≥{config.SMALL_CAP_EASING_OBS})"
+        )
+
+    lines.append(f"Verdict: {opp.verdict}")
+    if opp.buy_signal_state is not None:
+        label = _ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
+        lines.append(f"Buy signal (context): {label}")
+    facts = "\n".join(f"• {_esc(line)}" for line in lines)
+
+    asofs = {s.asof for s in opp.segments if s.asof}
+    if len(asofs) == 1:
+        footer = f"🕓 MSCI data as of {_esc(asofs.pop())} (updates monthly)"
+    elif asofs:
+        per_segment = ", ".join(f"{s.label} {s.asof}" for s in opp.segments if s.asof)
+        footer = f"🕓 MSCI data as of: {_esc(per_segment)} (updates monthly)"
+    else:
+        footer = ""
+    notes = "\n".join(f"• {_esc(note)}" for note in opp.notes)
+
+    blocks = ["🧭 <b>What to buy: segment valuations</b>", table, facts]
+    if footer:
+        blocks.append(footer)
+    if notes:
+        blocks.append(f"⚠️ <b>Notes</b>\n{notes}")
+    return "\n\n".join(blocks)
 
 
 def _format_status() -> str:
@@ -284,7 +368,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
         reasons = _trigger_reasons(result)
         _send(f"🔔 <b>Signal active</b> ({_esc(reasons)})\n\n{_format_signal(result)}")
     elif was_alerting and not alerting:
-        _send("Signal cleared — back to normal.")
+        _send("Signal cleared, back to normal.")
 
 
 def _format_single(score_fn) -> str:
@@ -313,6 +397,28 @@ def _handle_message(text: str) -> str | None:
         return _format_single(lambda: market_signal.score(allow_refresh=market_open))
     if text in _SIGNAL_COMMANDS:
         return _format_single(_SIGNAL_COMMANDS[text])
+    if text == "/whattobuy":
+        from collectors import valuations
+
+        failed = []
+        with buy_signal.SIGNAL_LOCK:
+            if valuations.should_refresh():
+                error = valuations.update_valuations_data()
+                if error:
+                    failed.append(("valuations", error))
+            opp = analyzer.analyze()
+        with _lock:
+            last_result = _state.last_result
+        opp.buy_signal_state = last_result.state if last_result is not None else None
+        try:
+            _send_photo(analyzer.render_chart(opp), "Segment valuations")
+        except Exception as exc:
+            opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
+        reply = _format_opportunity(opp)
+        if failed:
+            lines = "\n".join(f"• {_esc(name)}: {_esc(error)}" for name, error in failed)
+            reply = f"⚠️ <b>Refresh failed</b>\n{lines}\n\n{reply}"
+        return reply
     if text == "/refresh":
         with buy_signal.SIGNAL_LOCK:
             failed = runner.refresh_macro(force=True)

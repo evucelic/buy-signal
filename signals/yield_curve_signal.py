@@ -1,4 +1,4 @@
-"""Score indicator #7: 10y-3m Treasury yield curve — advisory macro-risk context.
+"""Score indicator #7: 10y-3m Treasury yield curve, advisory macro-risk context.
 
 Advisory only: an inverted curve is an early recession warning that can lead the market by
 many months, so it rides alongside the checklist (advisory=True) without gating it. Regimes

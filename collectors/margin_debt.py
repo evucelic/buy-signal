@@ -126,12 +126,15 @@ def data_freshness(
 ) -> tuple[str, str]:
     """Classify how current the latest cached month is, relative to `today`.
 
-    FINRA publishes month M's data around the third week of month M+1, but that
-    can slip toward month-end. "fresh" = within the normal one-month lag and not
-    yet past the point a newer release would be expected; "refresh_due_soon" =
-    normal lag, but late enough in the month that a newer release may already be
-    out; "stale" = clearly overdue (2+ months behind once past the checkpoint, or
-    3+ months behind regardless of day).
+    FINRA publishes month M's data around the third week of month M+1, so a
+    one-month lag is the normal, fully-caught-up state: once we hold that
+    release there's nothing newer to find until next month's checkpoint, no
+    matter how late in the month it gets. "fresh" = at most one month behind
+    (the normal lag, checkpoint reached or not), or two months behind before
+    the checkpoint day (the next release simply isn't due yet); "refresh_due_soon"
+    = two months behind and past the checkpoint day, i.e. this month's expected
+    release hasn't shown up yet, worth checking often; "stale" = three or more
+    months behind, which looks like a broken scraper rather than a slow release.
     """
     today = pd.Timestamp(today) if today is not None else pd.Timestamp.now()
     latest = history["month"].iloc[-1]
@@ -141,11 +144,11 @@ def data_freshness(
     label = latest.strftime("%Y-%m")
 
     if age_months <= 1:
-        if past_checkpoint:
-            return "refresh_due_soon", f"latest month {label} may be superseded any day; worth re-checking"
         return "fresh", f"latest month {label} is current"
 
-    if age_months == 2 and not past_checkpoint:
+    if age_months == 2:
+        if past_checkpoint:
+            return "refresh_due_soon", f"latest month {label} is 2 months old and the release checkpoint has passed; worth re-checking"
         return "fresh", f"latest month {label} is current"
 
     return "stale", f"latest month {label} is {age_months} months old; FINRA release looks overdue, check the scraper"
