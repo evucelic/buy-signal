@@ -78,8 +78,20 @@ SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for 
 # --- Yield curve (#7): 10y-3m Treasury spread, advisory-only recession context ---
 FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # no API key needed
 YIELD_CURVE_SERIES = "T10Y3M"
-YIELD_CURVE_STEEP = 1.0            # monthly avg spread (pp) at/above this = supportive regime
-YIELD_CURVE_DEEP_INVERSION = -1.0  # two consecutive monthly avgs at/below this = deep inversion
+YIELD_CURVE_STEEP = 1.0            # bucket avg spread (pp) at/above this = supportive regime
+YIELD_CURVE_DEEP_INVERSION = -1.0  # two consecutive bucket avgs at/below this = deep inversion
+# Policy spread (2y Treasury minus effective fed funds), cached alongside the curve. FRED's
+# ready-made T2YFF series is gone, so it's computed from the two legs. Negative = the bond
+# market is pricing in cuts; context only, it says nothing about whether they'll be good ones.
+TWO_YEAR_SERIES = "DGS2"
+FED_FUNDS_SERIES = "DFF"
+# Both spreads are read in fixed 3-week buckets: 92% agreement with calendar-month averages
+# since 1982, without the up to two months of lag a "last complete month" rule carries.
+YIELD_CURVE_BUCKET_DAYS = 21
+# Consecutive complete buckets below fed funds before calling cuts priced in. The daily spread
+# crossed zero 406 times since 1982 and only 7 episodes lasted; two buckets cuts that to 14
+# fires in 44 years, still landing a median 26 days before each sustained episode began.
+POLICY_SPREAD_NEG_BUCKETS = 2
 
 # --- Equity opportunity analyzer (#8): which segment looks attractive ---------
 # Segments compared on valuations. Trailing AND forward P/E both come from MSCI index

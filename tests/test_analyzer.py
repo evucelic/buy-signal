@@ -150,22 +150,26 @@ def test_verdict_insufficient_data():
 
 def test_verdict_no_discount_no_support_defaults_to_sp500():
     verdict = analyzer._verdict("little", _rate(False))
-    assert "S&P 500 default" in verdict and "watch" not in verdict
+    assert "S&P 500 default" in verdict
+    assert "watch" not in verdict
 
 
 def test_verdict_no_discount_with_support_watches_small_caps():
     verdict = analyzer._verdict("mild", _rate(True))
-    assert "S&P 500 default" in verdict and "watch" in verdict
+    assert "S&P 500 default" in verdict
+    assert "watch" in verdict
 
 
 def test_verdict_candidate_without_support_keeps_sp500_default():
     verdict = analyzer._verdict("candidate", _rate(False))
-    assert "no rate support" in verdict and "S&P 500 default" in verdict
+    assert "no rate support" in verdict
+    assert "S&P 500 default" in verdict
 
 
 def test_verdict_candidate_with_support_prefers_small_caps():
     verdict = analyzer._verdict("candidate", _rate(True))
-    assert verdict.startswith("small caps") and "conditions both met" in verdict
+    assert verdict.startswith("small caps")
+    assert "conditions both met" in verdict
 
 
 def test_verdict_investigate_with_support_warns_about_stress():
@@ -238,7 +242,8 @@ def test_analyze_z_scores_appear_with_enough_history(monkeypatch):
     small = next(s for s in opp.segments if s.name == "world_small")
     assert spx.fwd_z == pytest.approx(-1.0)   # 22 vs mean 21, std 1 -> more expensive than norm
     assert small.fwd_z == pytest.approx(1.0)  # 14 vs mean 15, std 1 -> cheaper than norm
-    assert small.rel_z is not None and small.rel_z > 0  # ratio compressed -> relatively cheap
+    assert small.rel_z is not None
+    assert small.rel_z > 0
     assert not any("z-scores" in n for n in opp.notes)
 
 

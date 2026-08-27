@@ -21,6 +21,8 @@ move outside NYSE hours) end up recomputed as a harmless no-op in that window.
 """
 
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from time import monotonic, sleep, time as wall_time
 from zoneinfo import ZoneInfo
@@ -96,6 +98,44 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
     return False
 
 
+def _no_precondition() -> str | None:
+    return None
+
+
+def _cf_bypass_precondition() -> str | None:
+    if _cf_bypass_ready():
+        return None
+    return f"cfbypass service unreachable at {CF_BYPASS_URL}"
+
+
+@dataclass(frozen=True)
+class MacroCollector:
+    """One refreshable macro cache: its gate, its refresh, and any precondition to refreshing."""
+
+    name: str
+    should_refresh: Callable[[], bool]
+    update: Callable[[], str | None]
+    precondition: Callable[[], str | None] = field(default=_no_precondition)
+
+
+def _macro_collectors() -> list[MacroCollector]:
+    """The macro caches refresh_macro() drives, in refresh order."""
+    from collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
+
+    return [
+        MacroCollector("fed_rate", fed_rate.should_refresh, fed_rate.update_fed_rate_data),
+        MacroCollector("sector", sectors.should_refresh, sectors.update_sector_data),
+        MacroCollector("yield_curve", yield_curve.should_refresh, yield_curve.update_yield_curve_data),
+        MacroCollector("valuations", valuations.should_refresh, valuations.update_valuations_data),
+        MacroCollector(
+            "margin_debt",
+            margin_debt.should_refresh,
+            margin_debt.update_margin_debt_data,
+            _cf_bypass_precondition,
+        ),
+    ]
+
+
 def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
     """Refresh the slow macro indicators (#2-#5, #7); each skips itself if already refreshed today.
 
@@ -103,38 +143,13 @@ def refresh_macro(force: bool = False) -> list[tuple[str, str]]:
     /refresh command). Returns (name, error_message) for every collector that was attempted
     but failed, so callers can surface the actual reason instead of a silently stale cache.
     """
-    from collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
-
     failed = []
-
-    if force or fed_rate.should_refresh():
-        error = fed_rate.update_fed_rate_data()
+    for collector in _macro_collectors():
+        if not (force or collector.should_refresh()):
+            continue
+        error = collector.precondition() or collector.update()
         if error:
-            failed.append(("fed_rate", error))
-
-    if force or sectors.should_refresh():
-        error = sectors.update_sector_data()
-        if error:
-            failed.append(("sector", error))
-
-    if force or yield_curve.should_refresh():
-        error = yield_curve.update_yield_curve_data()
-        if error:
-            failed.append(("yield_curve", error))
-
-    if force or valuations.should_refresh():
-        error = valuations.update_valuations_data()
-        if error:
-            failed.append(("valuations", error))
-
-    if force or margin_debt.should_refresh():
-        if not _cf_bypass_ready():
-            failed.append(("margin_debt", f"cfbypass service unreachable at {CF_BYPASS_URL}"))
-        else:
-            error = margin_debt.update_margin_debt_data()
-            if error:
-                failed.append(("margin_debt", error))
-
+            failed.append((collector.name, error))
     return failed
 
 
