@@ -18,8 +18,12 @@ from signals.buy_signal import BuySignal
 
 @pytest.fixture
 def make_subsignal():
-    def _make(name, state="none", detail="", passes=False, table=None, score=0.0, advisory=False):
-        return SubSignal(name, score, state, detail, passes=passes, table=table, advisory=advisory)
+    def _make(
+        name, state="none", detail="", passes=False, table=None, score=0.0, advisory=False, footer=None
+    ):
+        return SubSignal(
+            name, score, state, detail, passes=passes, table=table, advisory=advisory, footer=footer
+        )
 
     return _make
 

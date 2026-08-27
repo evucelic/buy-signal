@@ -79,6 +79,21 @@ def test_format_subsignal_uses_bullets_when_no_table(make_subsignal):
     assert "•" in tb._format_subsignal(s)
 
 
+def test_format_subsignal_renders_footer_under_the_table(make_subsignal):
+    s = make_subsignal("yield_curve", "flat", "d", table="col1\nval1", footer="🔻 Cuts priced in")
+    assert tb._format_subsignal(s).endswith("</pre>\n🔻 Cuts priced in")
+
+
+def test_format_subsignal_escapes_the_footer(make_subsignal):
+    s = make_subsignal("yield_curve", "flat", "d", table="col1", footer="2y < FFR & falling")
+    assert "2y &lt; FFR &amp; falling" in tb._format_subsignal(s)
+
+
+def test_format_subsignal_omits_footer_when_absent(make_subsignal):
+    s = make_subsignal("yield_curve", "flat", "d", table="col1\nval1")
+    assert tb._format_subsignal(s).endswith("</pre>")
+
+
 def test_format_signal_escapes_real_ampersand_case(make_subsignal, make_buy_signal):
     # the real production case: sector detail strings can contain a literal '&'
     s = make_subsignal("sector", "growing", "Aerospace & Defense: +1%", passes=True)

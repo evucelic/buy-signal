@@ -421,80 +421,141 @@ def test_format_industry_trend_icon_zero_is_not_growth():
 # --- yield_curve_signal ---------------------------------------------------------------
 
 
-def _spread_df(months):
-    """Daily spread history: three rows per month at a constant value, e.g. {"2026-07": 0.5}.
-    The last month acts as the current (partial) month, excluded from classification.
+def _spread_df(spreads, policy=None, start="2026-01-01"):
+    """Daily history holding one constant value per 3-week bucket, e.g. [0.5, -0.2].
+
+    Buckets resample from the first date, so each list entry fills exactly one. The last
+    entry acts as the bucket still filling, which every classification excludes.
+    `policy` adds the 2y-FFR column the same way; omitted, it mimics a pre-policy cache.
     """
+    begin = pd.Timestamp(start)
     rows = []
-    for month, value in months.items():
-        start = pd.Timestamp(f"{month}-01")
-        rows.extend({"date": start + pd.Timedelta(days=day), "spread": value} for day in range(3))
+    for index, value in enumerate(spreads):
+        for day in range(21):
+            row = {"date": begin + pd.Timedelta(days=index * 21 + day), "spread": value}
+            if policy is not None:
+                row["policy_spread"] = policy[index]
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
-def _curve(months):
-    with patch("signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(months)):
+def _curve(spreads, policy=None):
+    with patch(
+        "signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(spreads, policy)
+    ):
         return yield_curve_signal.score()
 
 
 def test_yield_curve_steep_at_exact_threshold():
-    s = _curve({"2026-07": 1.0, "2026-08": 0.5})
+    s = _curve([1.0, 0.5])
     assert s.state == "steep" and s.passes is True
 
 
 def test_yield_curve_just_below_steep_is_flat():
-    s = _curve({"2026-07": 0.99, "2026-08": 0.5})
+    s = _curve([0.99, 0.5])
     assert s.state == "flat" and s.passes is True
 
 
 def test_yield_curve_exactly_zero_is_flat_not_inverted():
-    s = _curve({"2026-07": 0.0, "2026-08": 0.5})
+    s = _curve([0.0, 0.5])
     assert s.state == "flat"
 
 
-def test_yield_curve_negative_month_is_inverted():
-    s = _curve({"2026-07": -0.2, "2026-08": 0.5})
+def test_yield_curve_negative_bucket_is_inverted():
+    s = _curve([-0.2, 0.5])
     assert s.state == "inverted" and s.passes is False
 
 
-def test_yield_curve_two_deep_months_is_deep_inversion():
-    s = _curve({"2026-06": -1.0, "2026-07": -1.0, "2026-08": -1.2})
+def test_yield_curve_two_deep_buckets_is_deep_inversion():
+    s = _curve([-1.0, -1.0, -1.2])
     assert s.state == "deep_inversion" and s.passes is False
 
 
-def test_yield_curve_one_deep_month_is_only_inverted():
-    s = _curve({"2026-06": -0.3, "2026-07": -1.5, "2026-08": -1.5})
+def test_yield_curve_one_deep_bucket_is_only_inverted():
+    s = _curve([-0.3, -1.5, -1.5])
     assert s.state == "inverted"
 
 
-def test_yield_curve_partial_current_month_excluded_from_classification():
-    # Current month is deeply negative, but the last complete month is positive -> still flat.
-    s = _curve({"2026-07": 0.5, "2026-08": -2.0})
+def test_yield_curve_filling_bucket_excluded_from_classification():
+    # The newest bucket is deeply negative, but the last complete one is positive -> flat.
+    s = _curve([0.5, -2.0])
     assert s.state == "flat"
 
 
 def test_yield_curve_is_advisory():
-    s = _curve({"2026-07": 0.5, "2026-08": 0.5})
+    s = _curve([0.5, 0.5])
     assert s.advisory is True
     assert s.name == "yield_curve"
 
 
-def test_yield_curve_table_marks_current_partial_month():
-    s = _curve({"2026-07": 0.5, "2026-08": 0.8})
-    assert "2026-08*" in s.table
-    assert "2026-07 " in s.table  # complete month, no asterisk
+def test_yield_curve_table_marks_the_filling_bucket():
+    s = _curve([0.5, 0.8])
+    assert "2026-02-11*" in s.table  # still filling
+    assert "2026-01-21 " in s.table  # complete bucket, no asterisk
 
 
-def test_yield_curve_detail_has_latest_spread_and_month_avg():
-    s = _curve({"2026-07": 0.5, "2026-08": 0.86})
+def test_yield_curve_detail_has_latest_spread_and_bucket_avg():
+    s = _curve([0.5, 0.86])
     assert "+0.86pp" in s.detail
-    assert "last full month avg +0.50pp" in s.detail
+    assert "last full 3wk avg +0.50pp" in s.detail
 
 
-def test_yield_curve_single_partial_month_defaults_to_flat():
-    # No complete month yet (fresh series edge case): no classification basis, stay neutral.
-    s = _curve({"2026-08": -2.0})
+def test_yield_curve_single_filling_bucket_defaults_to_flat():
+    # No complete bucket yet (fresh series edge case): no basis to classify, stay neutral.
+    s = _curve([-2.0])
     assert s.state == "flat"
+
+
+def test_policy_spread_fires_after_two_complete_negative_buckets():
+    s = _curve([0.5, 0.5, 0.5], policy=[-0.2, -0.41, -0.5])
+    assert s.footer is not None
+    assert "Cuts priced in since 2026-01-01" in s.footer  # the first of the two negative buckets
+    assert "2y-FFR" in s.table and "-0.41pp" in s.table
+
+
+def test_policy_spread_silent_below_the_confirmation_threshold():
+    # One negative complete bucket is not enough: that is the noise the threshold filters.
+    s = _curve([0.5, 0.5, 0.5], policy=[0.3, -0.41, -0.5])
+    assert s.footer is None
+    assert "no cuts priced in" in s.detail
+
+
+def test_policy_spread_ignores_the_filling_bucket():
+    # Counting the still-filling bucket would reach the threshold; only complete ones count.
+    s = _curve([0.5, 0.5, 0.5, 0.5], policy=[0.3, 0.3, -0.41, -0.5])
+    assert s.footer is None
+
+
+def test_policy_spread_gap_breaks_the_run_instead_of_collapsing():
+    # Legs went down and the carried-over column stopped advancing: the two old negatives
+    # must not read as the current run.
+    history = _spread_df([0.5, 0.5, 0.5, 0.5, 0.5], policy=[-0.4, -0.5, 0.0, 0.0, 0.0])
+    stale = history["date"] >= pd.Timestamp("2026-01-01") + pd.Timedelta(days=42)
+    history.loc[stale, "policy_spread"] = float("nan")
+
+    with patch("signals.yield_curve_signal.yield_curve_history", return_value=history):
+        s = yield_curve_signal.score()
+
+    assert s.footer is None
+    assert "missing for the latest 3wk period" in s.detail
+
+
+def test_policy_spread_silent_when_positive():
+    s = _curve([0.5, 0.5, 0.5], policy=[0.3, 0.25, 0.2])
+    assert s.footer is None
+    assert "no cuts priced in" in s.detail
+
+
+def test_policy_spread_omitted_when_cache_predates_the_column():
+    s = _curve([0.5, 0.5])
+    assert s.footer is None
+    assert "2y-FFR" not in s.table
+    assert "2y-FFR" not in s.detail
+
+
+def test_policy_spread_does_not_change_the_curve_state():
+    # Advisory context only: a deeply negative policy spread leaves the regime untouched.
+    assert _curve([0.5, 0.5, 0.5], policy=[-2.0, -2.0, -2.0]).state == _curve([0.5, 0.5, 0.5]).state
 
 
 # --- buy_signal ---------------------------------------------------------------

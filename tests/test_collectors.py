@@ -388,9 +388,24 @@ _FRED_CSV = (
 )
 
 
+_FRED_SERIES_CSV = {
+    "T10Y3M": _FRED_CSV,
+    "DGS2": "observation_date,DGS2\n2026-08-18,3.90\n2026-08-20,3.88\n2026-08-21,3.92\n",
+    # Fed funds publishes a business day behind, so its last observation is missing here.
+    "DFF": "observation_date,DFF\n2026-08-18,4.33\n2026-08-20,4.33\n",
+}
+
+
 def _mock_fred_response():
     resp = MagicMock()
     resp.text = _FRED_CSV
+    return resp
+
+
+def _mock_fred_get(url, params=None, timeout=None):
+    """requests.get stand-in serving each FRED series id its own CSV."""
+    resp = MagicMock()
+    resp.text = _FRED_SERIES_CSV[params["id"]]
     return resp
 
 
@@ -405,7 +420,7 @@ def test_fred_fetch_series_parses_and_drops_holiday_blanks():
 
 def test_update_yield_curve_data_writes_cache(tmp_path):
     path = tmp_path / "yieldcurve.csv"
-    with patch("collectors.fred.requests.get", return_value=_mock_fred_response()), patch(
+    with patch("collectors.fred.requests.get", side_effect=_mock_fred_get), patch(
         "collectors.yield_curve.time.sleep"
     ):
         error = yield_curve.update_yield_curve_data(path)
@@ -413,6 +428,77 @@ def test_update_yield_curve_data_writes_cache(tmp_path):
     history = yield_curve.yield_curve_history(path)
     assert len(history) == 3
     assert history["spread"].iloc[-1] == pytest.approx(0.86)
+    # Fed funds lags a day, so the newest curve row has no policy spread yet.
+    assert pd.isna(history["policy_spread"].iloc[-1])
+    assert history["policy_spread"].dropna().iloc[-1] == pytest.approx(3.88 - 4.33)
+
+
+def _failing_policy_leg(series_id, label):
+    """fetch_series_with_retries stand-in: the curve fetches fine, the 2y leg is down."""
+    if series_id == "T10Y3M":
+        return pd.DataFrame({"date": [pd.Timestamp("2026-08-21")], "value": [0.86]}), None
+    return None, "HTTPError: 503"
+
+
+def test_update_yield_curve_data_caches_curve_when_policy_legs_fail(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    with patch(
+        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("collectors.yield_curve.time.sleep"):
+        error = yield_curve.update_yield_curve_data(path)
+
+    assert error == "policy spread: HTTPError: 503"  # reported as a partial failure...
+    history = yield_curve.yield_curve_history(path)
+    assert history["spread"].iloc[-1] == pytest.approx(0.86)  # ...but the curve still cached
+    assert "policy_spread" not in history.columns
+
+
+def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_return_nothing(tmp_path):
+    # Both legs parse but share no dates: an empty frame must not erase the cached column.
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("date,spread,policy_spread\n2026-08-21,0.80,-0.41\n")
+    empty = pd.DataFrame({"date": pd.to_datetime([]), "value": []})
+
+    def legs(series_id, label):
+        if series_id == "T10Y3M":
+            return pd.DataFrame({"date": [pd.Timestamp("2026-08-21")], "value": [0.86]}), None
+        return empty, None
+
+    with patch("collectors.yield_curve.fetch_series_with_retries", side_effect=legs), patch(
+        "collectors.yield_curve.time.sleep"
+    ):
+        yield_curve.update_yield_curve_data(path)
+
+    history = yield_curve.yield_curve_history(path)
+    assert history["policy_spread"].iloc[-1] == pytest.approx(-0.41)
+
+
+def test_update_yield_curve_data_survives_a_truncated_cache(tmp_path):
+    # A crash mid-write used to leave a zero-byte cache; reading it must not kill the tick.
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("")
+
+    with patch(
+        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("collectors.yield_curve.time.sleep"):
+        error = yield_curve.update_yield_curve_data(path)
+
+    assert error == "policy spread: HTTPError: 503"
+    assert yield_curve.yield_curve_history(path)["spread"].iloc[-1] == pytest.approx(0.86)
+
+
+def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_fail(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("date,spread,policy_spread\n2026-08-21,0.80,-0.41\n")
+
+    with patch(
+        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("collectors.yield_curve.time.sleep"):
+        yield_curve.update_yield_curve_data(path)
+
+    history = yield_curve.yield_curve_history(path)
+    assert history["spread"].iloc[-1] == pytest.approx(0.86)  # curve refreshed
+    assert history["policy_spread"].iloc[-1] == pytest.approx(-0.41)  # old column carried over
 
 
 def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):

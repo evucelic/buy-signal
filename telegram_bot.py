@@ -197,6 +197,8 @@ def _format_subsignal(s: SubSignal) -> str:
     state_label = _STATE_LABELS.get((s.name, s.state), s.state)
     header = f"{mark} {icon} <b>{_esc(display_name)}</b>: {_esc(state_label)}"
     body = f"<pre>{_esc(s.table)}</pre>" if s.table else _bullets(s.detail)
+    if s.footer:
+        body += f"\n{_esc(s.footer)}"
     return f"{header}\n{body}"
 
 

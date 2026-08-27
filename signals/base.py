@@ -14,6 +14,7 @@ class SubSignal:
     passes: bool = False
     table: str | None = None  # optional monospace-ready rendering of detail, for multi-row data
     advisory: bool = False    # informational side signal: shown alongside, never gates the checklist
+    footer: str | None = None # optional call-out rendered under the table
 
 
 def format_table(headers: list[str], rows: list[list[str]]) -> str:
