@@ -101,9 +101,17 @@ def yield_curve_history(filepath: Path | str = YIELD_CURVE_CSV) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
+def _cache_has_policy_spread(filepath: Path) -> bool:
+    try:
+        return "policy_spread" in pd.read_csv(filepath, nrows=0).columns
+    except Exception:
+        return False
+
+
 def should_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
-    """FRED updates the series once per business day; once-a-day is enough."""
-    return not refreshed_today(filepath)
+    """FRED updates once per business day, unless the cache lacks a column."""
+    filepath = Path(filepath)
+    return not refreshed_today(filepath) or not _cache_has_policy_spread(filepath)
 
 
 if __name__ == "__main__":

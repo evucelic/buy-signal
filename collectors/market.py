@@ -24,6 +24,10 @@ from config import (
 _RECENT_WINDOW = "5d"  # a few days to have some leeway with failing to fetch
 
 
+class InsufficientHistory(Exception):
+    """The cache holds fewer trading days than the longest configured lookback needs."""
+
+
 def _download_closes(period: str) -> pd.DataFrame | None:
     """Hourly closes for all INDEX_TICKERS as a UTC-indexed DataFrame, or None if empty."""
     time.sleep(random.uniform(*FETCH_JITTER_SEC))   # jitter so hourly pulls aren't periodic
@@ -81,6 +85,11 @@ def latest_changes(filepath: Path = MARKET_CSV) -> dict[str, dict[str, float]] |
     changes = {}
     for name in INDEX_TICKERS:
         closes = daily[name].dropna()
+        if len(closes) <= MARKET_MONTHLY_LOOKBACK_DAYS:
+            raise InsufficientHistory(
+                f"{name}: {len(closes)} trading days cached, "
+                f"{MARKET_MONTHLY_LOOKBACK_DAYS + 1} needed for the monthly change"
+            )
         latest = closes.iloc[-1]
         changes[name] = {
             "daily": latest / closes.iloc[-2] - 1,

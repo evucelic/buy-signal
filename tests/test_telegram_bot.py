@@ -2,7 +2,7 @@
 and bot.py's one testable function.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -12,12 +12,7 @@ import telegram_bot as tb
 
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch):
-    """telegram_bot's module-level _state is mutable global state: reset it every test.
-
-    Also disables the daily report by default (DAILY_REPORT_HOUR_CT -> an hour that never
-    matches) so handle_tick() tests aren't flaky depending on the real wall-clock hour when
-    the suite happens to run. Tests that specifically cover the daily report re-enable it.
-    """
+    """Reset telegram_bot's module-level _state, and disable the daily report by default."""
     tb._state = tb._State(start_time=datetime.now(timezone.utc))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", -1)
     yield
@@ -120,7 +115,8 @@ def test_format_subsignal_advisory_uses_info_mark_not_pass_fail(make_subsignal):
     s = make_subsignal("yield_curve", "inverted", "x", passes=False, advisory=True)
     formatted = tb._format_subsignal(s)
     assert formatted.startswith("ℹ️")
-    assert "✅" not in formatted and "❌" not in formatted
+    assert "✅" not in formatted
+    assert "❌" not in formatted
     assert "Inverted" in formatted
 
 
@@ -193,101 +189,142 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, make_subsignal, make_buy
     assert len(sent) == 0
 
     tb.handle_tick(alerting, None)
-    assert len(sent) == 1 and "Signal active" in sent[0]
+    assert len(sent) == 1
+    assert "Signal active" in sent[0]
 
     tb.handle_tick(alerting, None)
     assert len(sent) == 1  # no repeat while sustained
 
     tb.handle_tick(not_alerting, None)
-    assert len(sent) == 2 and "cleared" in sent[1].lower()
+    assert len(sent) == 2
+    assert "cleared" in sent[1].lower()
 
 
-# --- handle_tick: daily-report edge-triggering ---------------------------------------------------------
+# --- daily report: when it is due, and what it shows ---------------------------------------
 
 
-def _freeze_ct_hour(monkeypatch, hour):
-    """Freeze datetime.now(timezone.utc) so its CT-converted hour is `hour`."""
-    # 12:00 UTC is 06:00 CT (or 07:00 CST outside DST) -- offset from `hour` by the CT->UTC delta
-    # computed via a real CT time on a fixed summer (CDT) date, so the module's astimezone() call
-    # lands on the requested CT hour regardless of host timezone.
-    ct_dt = datetime(2026, 7, 24, hour, 0, tzinfo=tb.runner.CT)
-    utc_dt = ct_dt.astimezone(timezone.utc)
-
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return utc_dt.astimezone(tz) if tz else utc_dt
-
-    monkeypatch.setattr(tb, "datetime", _FrozenDatetime)
+def _ct(hour, day=24):
+    return datetime(2026, 7, day, hour, 0, tzinfo=tb.runner.CT)
 
 
-def test_handle_tick_daily_report_fires_once_at_report_hour(monkeypatch, make_subsignal, make_buy_signal):
+def test_report_is_due_at_the_report_hour_when_none_was_sent_today():
+    assert tb._report_due(_ct(20), last_report_date=None, report_hour=20) is True
+
+
+def test_report_is_not_due_an_hour_before_the_report_hour():
+    assert tb._report_due(_ct(19), last_report_date=None, report_hour=20) is False
+
+
+def test_report_is_not_due_an_hour_after_the_report_hour():
+    assert tb._report_due(_ct(21), last_report_date=None, report_hour=20) is False
+
+
+def test_report_is_not_due_again_on_a_date_already_reported():
+    assert tb._report_due(_ct(20), last_report_date=date(2026, 7, 24), report_hour=20) is False
+
+
+def test_report_is_due_again_the_next_day():
+    assert tb._report_due(_ct(20, day=25), last_report_date=date(2026, 7, 24), report_hour=20) is True
+
+
+def test_report_shows_this_ticks_result_when_the_tick_produced_one(make_buy_signal):
+    ticked = make_buy_signal([])
+    cached = make_buy_signal([])
+
+    chosen = tb._report_result(ticked, None, cached, compute=_never_computes)
+
+    assert chosen is ticked
+
+
+def test_report_computes_fresh_when_an_idle_tick_produced_nothing(make_buy_signal):
+    fresh = make_buy_signal([])
+    cached = make_buy_signal([])
+
+    chosen = tb._report_result(None, None, cached, compute=lambda: fresh)
+
+    assert chosen is fresh
+
+
+def test_report_falls_back_to_the_cache_when_the_tick_failed(make_buy_signal):
+    cached = make_buy_signal([])
+
+    chosen = tb._report_result(None, RuntimeError("boom"), cached, compute=_never_computes)
+
+    assert chosen is cached
+
+
+def test_report_has_nothing_to_show_when_the_tick_failed_with_no_cache():
+    assert tb._report_result(None, RuntimeError("boom"), None, compute=_never_computes) is None
+
+
+def _never_computes():
+    raise AssertionError("compute_signal() must not run for this case")
+
+
+# --- handle_tick: daily-report wiring ---------------------------------------------------------
+
+
+def test_handle_tick_sends_the_daily_report_once_per_day(monkeypatch, make_subsignal, make_buy_signal):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
-    _freeze_ct_hour(monkeypatch, 20)
-
     result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
-    tb.handle_tick(result, None)
-    tb.handle_tick(result, None)  # same hour/date again -- must not repeat
 
-    daily_reports = [s for s in sent if "End of day" in s]
-    assert len(daily_reports) == 1
+    tb.handle_tick(result, None, now=_ct(20))
+    tb.handle_tick(result, None, now=_ct(20))
+
+    assert len([s for s in sent if "End of day" in s]) == 1
 
 
-def test_handle_tick_daily_report_does_not_fire_outside_report_hour(monkeypatch, make_subsignal, make_buy_signal):
+def test_handle_tick_sends_no_daily_report_outside_the_report_hour(monkeypatch, make_subsignal, make_buy_signal):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
-    _freeze_ct_hour(monkeypatch, 19)
-
     result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
-    tb.handle_tick(result, None)
+
+    tb.handle_tick(result, None, now=_ct(19))
 
     assert not any("End of day" in s for s in sent)
 
 
-def test_handle_tick_daily_report_skipped_when_tick_failed_and_no_cache(monkeypatch):
+def test_handle_tick_sends_no_daily_report_when_the_tick_failed_with_no_cache(monkeypatch):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
-    _freeze_ct_hour(monkeypatch, 20)
 
-    tb.handle_tick(None, RuntimeError("boom"))
+    tb.handle_tick(None, RuntimeError("boom"), now=_ct(20))
 
     assert not any("End of day" in s for s in sent)
 
 
-def test_handle_tick_daily_report_uses_cache_and_flags_error_when_tick_failed(
+def test_handle_tick_flags_the_error_when_the_daily_report_falls_back_to_the_cache(
     monkeypatch, make_subsignal, make_buy_signal
 ):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
-    _freeze_ct_hour(monkeypatch, 20)
     tb._state.last_result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
 
-    tb.handle_tick(None, RuntimeError("boom"))
+    tb.handle_tick(None, RuntimeError("boom"), now=_ct(20))
 
-    daily_reports = [s for s in sent if "End of day" in s]
-    assert len(daily_reports) == 1
-    assert "latest tick failed" in daily_reports[0]
-    assert "boom" in daily_reports[0]
+    report = next(s for s in sent if "End of day" in s)
+    assert "latest tick failed" in report
+    assert "boom" in report
 
 
-def test_handle_tick_daily_report_computes_fresh_when_tick_was_idle(monkeypatch, make_subsignal, make_buy_signal):
+def test_handle_tick_daily_report_carries_no_error_flag_after_an_idle_tick(
+    monkeypatch, make_subsignal, make_buy_signal
+):
     sent = []
     monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", 20)
-    _freeze_ct_hour(monkeypatch, 20)
     fresh = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
     monkeypatch.setattr(tb, "compute_signal", lambda: fresh)
 
-    tb.handle_tick(None, None)
+    tb.handle_tick(None, None, now=_ct(20))
 
-    daily_reports = [s for s in sent if "End of day" in s]
-    assert len(daily_reports) == 1
-    assert "latest tick failed" not in daily_reports[0]
+    report = next(s for s in sent if "End of day" in s)
+    assert "latest tick failed" not in report
 
 
 def test_handle_tick_records_last_tick_and_error(make_buy_signal):
@@ -422,7 +459,8 @@ def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
     reply = tb._handle_message("/whattobuy")
     assert whattobuy_env == [b"\x89PNG-fake"]
     assert "What to buy" in reply
-    assert "20.0" in reply and "15.0" in reply  # actual P/Es in the table
+    assert "20.0" in reply
+    assert "15.0" in reply
     assert "Small-cap band: candidate" in reply
     assert "FedWatch: 1/3 easing (ease → no change → no change, rate support: yes, need ≥1)" in reply
     assert "z-scores" in reply  # notes render as bullets
@@ -452,7 +490,8 @@ def test_handle_message_whattobuy_surfaces_refresh_errors(whattobuy_env, monkeyp
     monkeypatch.setattr(valuations, "should_refresh", lambda: True)
     monkeypatch.setattr(valuations, "update_valuations_data", lambda: "ValueError: FY1 not found")
     reply = tb._handle_message("/whattobuy")
-    assert "Refresh failed" in reply and "FY1 not found" in reply
+    assert "Refresh failed" in reply
+    assert "FY1 not found" in reply
 
 
 def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):
@@ -529,3 +568,65 @@ def test_send_swallows_request_exception(monkeypatch, capsys):
 def test_handle_shutdown_signal_raises_keyboard_interrupt():
     with pytest.raises(KeyboardInterrupt):
         bot._handle_shutdown_signal(None, None)
+
+
+# --- the rendered message, in full ---------------------------------------------------------
+
+
+_GOLDEN_TABLE = (
+    "Thru         10y-3m   2y-FFR \n"
+    "-----------  -------  -------\n"
+    "2026-08-14   +0.79pp  +0.59pp\n"
+    "2026-08-27*  +0.82pp  +0.57pp"
+)
+
+_GOLDEN_MESSAGE = (
+    "🟢 <b>STRONG BUY SIGNAL</b> (1/1 conditions met)\n"
+    "\n"
+    "✅ 🌡️ <b>VIX</b>: 🔴 High fear\n"
+    "• VIX 31.2 &gt;= 30.0, high fear\n"
+    "• +4.1% vs prior close\n"
+    "\n"
+    "ℹ️ 〽️ <b>Yield Curve</b>: ➡️ Flat/normal\n"
+    "<pre>Thru         10y-3m   2y-FFR \n"
+    "-----------  -------  -------\n"
+    "2026-08-14   +0.79pp  +0.59pp\n"
+    "2026-08-27*  +0.82pp  +0.57pp</pre>\n"
+    "🔻 Cuts priced in since 2026-08-14. First cut historically 4-20mo out.\n"
+    "\n"
+    "⚠️ missing: sector\n"
+    "\n"
+    "🕓 <b>Data as of</b>\n"
+    "<pre>signal       updated \n"
+    "-----------  --------\n"
+    "vix          no cache\n"
+    "yield_curve  no cache</pre>"
+)
+
+
+def test_format_signal_renders_the_whole_message(monkeypatch, make_subsignal, make_buy_signal):
+    monkeypatch.setattr(
+        tb,
+        "_FRESHNESS_FILES",
+        {"vix": "/nonexistent/vix.csv", "yield_curve": "/nonexistent/yieldcurve.csv"},
+    )
+    vix = make_subsignal(
+        "vix",
+        state="strong",
+        detail="VIX 31.2 >= 30.0, high fear | +4.1% vs prior close",
+        passes=True,
+        score=31.2,
+    )
+    curve = make_subsignal(
+        "yield_curve",
+        state="flat",
+        detail="10y-3m spread +0.82pp (2026-08-27) | last full 3wk avg +0.79pp",
+        passes=True,
+        table=_GOLDEN_TABLE,
+        advisory=True,
+        footer="🔻 Cuts priced in since 2026-08-14. First cut historically 4-20mo out.",
+        score=0.82,
+    )
+    result = make_buy_signal([vix, curve], state="strong", missing_signals=["sector"])
+
+    assert tb._format_signal(result) == _GOLDEN_MESSAGE

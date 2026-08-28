@@ -18,6 +18,7 @@ from collectors import fed_rate, fred, margin_debt, sectors, valuations, yield_c
 from collectors import market as market_mod
 from collectors import vix as vix_mod
 from collectors.freshness import last_modified, refreshed_today
+from config import MARKET_MONTHLY_LOOKBACK_DAYS, MARKET_WEEKLY_LOOKBACK_DAYS
 
 # --- freshness ---------------------------------------------------------------
 
@@ -66,7 +67,7 @@ def test_refresh_vix_cache_first_run(tmp_path):
     assert len(df) == 3
 
 
-def test_refresh_vix_cache_merge_dedup(tmp_path):
+def test_refresh_vix_cache_keeps_the_newer_value_for_an_overlapping_timestamp(tmp_path):
     path = tmp_path / "vix.csv"
     idx1 = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
     pd.Series([20.0, 21.0], index=idx1, name="Close").to_csv(path)
@@ -75,8 +76,8 @@ def test_refresh_vix_cache_merge_dedup(tmp_path):
     with patch("collectors.vix._download_close", return_value=new_series):
         vix_mod.refresh_vix_cache(path)
     df = pd.read_csv(path, index_col=0)
-    assert len(df) == 3  # 01:00 overlapped, deduped
-    assert df["Close"].iloc[1] == 99.0  # overlapping timestamp took the newer value
+    assert len(df) == 3
+    assert df["Close"].iloc[1] == 99.0
 
 
 def test_refresh_vix_cache_no_data(tmp_path):
@@ -123,13 +124,13 @@ def test_vix_change_pct_needs_two_distinct_days(tmp_path):
     assert vix_mod.vix_change_pct(path) is None
 
 
-def test_vix_change_pct_two_days(tmp_path):
+def test_vix_change_pct_compares_the_last_bar_of_each_day(tmp_path):
     path = tmp_path / "vix.csv"
     idx = list(pd.date_range("2026-01-01 14:00", periods=2, freq="h", tz="UTC")) + list(
         pd.date_range("2026-01-02 14:00", periods=2, freq="h", tz="UTC")
     )
-    pd.Series([20.0, 22.0, 25.0, 27.5], index=pd.DatetimeIndex(idx), name="Close").to_csv(path)
-    assert vix_mod.vix_change_pct(path) == pytest.approx(27.5 / 22.0 - 1)
+    pd.Series([99.0, 20.0, 99.0, 25.0], index=pd.DatetimeIndex(idx), name="Close").to_csv(path)
+    assert vix_mod.vix_change_pct(path) == pytest.approx(0.25)
 
 
 def test_vix_change_pct_missing_file(tmp_path):
@@ -137,6 +138,38 @@ def test_vix_change_pct_missing_file(tmp_path):
 
 
 # --- collectors/market.py ---------------------------------------------------------------
+
+
+_IGNORED_CLOSE = 1.0
+
+
+def _spy_closes(latest, yesterday, a_week_ago, a_month_ago):
+    closes = [_IGNORED_CLOSE] * (MARKET_MONTHLY_LOOKBACK_DAYS + 1)
+    closes[-1] = latest
+    closes[-2] = yesterday
+    closes[-1 - MARKET_WEEKLY_LOOKBACK_DAYS] = a_week_ago
+    closes[-1 - MARKET_MONTHLY_LOOKBACK_DAYS] = a_month_ago
+    return closes
+
+
+def _market_cache(tmp_path, spy_closes, extra_same_day_close=None):
+    path = tmp_path / "market.csv"
+    index = pd.date_range("2026-01-01 14:00", periods=len(spy_closes), freq="D", tz="UTC")
+    closes = list(spy_closes)
+    if extra_same_day_close is not None:
+        index = index.append(pd.DatetimeIndex([index[-1] + pd.Timedelta(hours=1)]))
+        closes.append(extra_same_day_close)
+    filler = [100.0] * len(closes)
+    pd.DataFrame({"SPY": closes, "NASDAQ": filler, "DOW": filler}, index=index).to_csv(path)
+    return path
+
+
+def test_spy_closes_builder_places_each_lookback_at_its_own_offset():
+    closes = _spy_closes(latest=1.0, yesterday=2.0, a_week_ago=3.0, a_month_ago=4.0)
+    assert closes[-1] == 1.0
+    assert closes[-2] == 2.0
+    assert closes[-6] == 3.0
+    assert closes[-22] == 4.0
 
 
 def test_market_refresh_cache_first_run(tmp_path):
@@ -148,46 +181,49 @@ def test_market_refresh_cache_first_run(tmp_path):
     assert path.exists()
 
 
-def test_market_latest_changes_math(tmp_path):
-    path = tmp_path / "market.csv"
-    dates = pd.date_range("2026-01-01 14:00", periods=25, freq="D", tz="UTC")
-    df = pd.DataFrame(
-        {"SPY": [100 + i for i in range(25)], "NASDAQ": [200] * 25, "DOW": [300] * 25}, index=dates
+def test_market_daily_change_compares_the_latest_close_to_the_previous_day(tmp_path):
+    path = _market_cache(
+        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
     )
-    df.to_csv(path)
-    changes = market_mod.latest_changes(path)
-    spy = changes["SPY"]
-    assert spy["daily"] == pytest.approx(124 / 123 - 1)
-    assert spy["weekly"] == pytest.approx(124 / 119 - 1)
-    assert spy["monthly"] == pytest.approx(124 / 103 - 1)
+    assert market_mod.latest_changes(path)["SPY"]["daily"] == pytest.approx(0.10)
 
 
-def test_market_latest_changes_intraday(tmp_path):
-    path = tmp_path / "market.csv"
-    base = pd.date_range("2026-01-01 14:00", periods=24, freq="D", tz="UTC")
-    extra_bar = pd.to_datetime(["2026-01-24 15:00"], utc=True)  # 2nd bar on the last existing day
-    idx = base.append(extra_bar)
-    spy = [100 + i for i in range(24)] + [999]  # later same-day bar should win as "latest"
-    df = pd.DataFrame({"SPY": spy, "NASDAQ": [200] * 25, "DOW": [300] * 25}, index=idx)
-    df.to_csv(path)
-    changes = market_mod.latest_changes(path)
-    assert changes["SPY"]["daily"] == pytest.approx(999 / 122 - 1)
+def test_market_weekly_change_compares_the_latest_close_to_five_trading_days_back(tmp_path):
+    path = _market_cache(
+        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
+    )
+    assert market_mod.latest_changes(path)["SPY"]["weekly"] == pytest.approx(0.25)
+
+
+def test_market_monthly_change_compares_the_latest_close_to_twenty_one_trading_days_back(tmp_path):
+    path = _market_cache(
+        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
+    )
+    assert market_mod.latest_changes(path)["SPY"]["monthly"] == pytest.approx(1.20)
+
+
+def test_market_daily_change_uses_the_last_bar_of_the_day_not_the_first(tmp_path):
+    path = _market_cache(
+        tmp_path,
+        _spy_closes(latest=100.0, yesterday=100.0, a_week_ago=100.0, a_month_ago=100.0),
+        extra_same_day_close=150.0,
+    )
+    assert market_mod.latest_changes(path)["SPY"]["daily"] == pytest.approx(0.50)
 
 
 def test_market_latest_changes_missing_file(tmp_path):
     assert market_mod.latest_changes(tmp_path / "nope.csv") is None
 
 
-def test_market_latest_changes_insufficient_history_raises(tmp_path):
-    # Fewer distinct days than MARKET_MONTHLY_LOOKBACK_DAYS + 1 -- a real constraint of the
-    # current design (relied on by the first-run full-history backfill, not a scenario that
-    # should occur in practice, but this documents the actual behavior if it ever does).
-    path = tmp_path / "market.csv"
-    dates = pd.date_range("2026-01-01 14:00", periods=3, freq="D", tz="UTC")
-    df = pd.DataFrame({"SPY": [100, 101, 102], "NASDAQ": [200, 201, 202], "DOW": [300, 301, 302]}, index=dates)
-    df.to_csv(path)
-    with pytest.raises(IndexError):
+def test_market_latest_changes_raises_insufficient_history_below_the_monthly_lookback(tmp_path):
+    path = _market_cache(tmp_path, [100.0] * MARKET_MONTHLY_LOOKBACK_DAYS)
+    with pytest.raises(market_mod.InsufficientHistory):
         market_mod.latest_changes(path)
+
+
+def test_market_latest_changes_succeeds_at_exactly_the_monthly_lookback(tmp_path):
+    path = _market_cache(tmp_path, [100.0] * (MARKET_MONTHLY_LOOKBACK_DAYS + 1))
+    assert market_mod.latest_changes(path)["SPY"]["monthly"] == pytest.approx(0.0)
 
 
 def test_get_latest_market_changes_raises_when_no_cache_and_download_fails(tmp_path):
@@ -344,7 +380,8 @@ def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
     with patch("collectors.sectors._industry_market_caps", side_effect=RuntimeError("boom")):
         error = sectors.update_sector_data(path)
     assert not path.exists()
-    assert error is not None and "boom" in error
+    assert error is not None
+    assert "boom" in error
 
 
 def test_update_sector_data_success_returns_none(tmp_path):
@@ -413,7 +450,7 @@ def test_fred_fetch_series_parses_and_drops_holiday_blanks():
     with patch("collectors.fred.requests.get", return_value=_mock_fred_response()):
         df = fred.fetch_series("T10Y3M")
     assert list(df.columns) == ["date", "value"]
-    assert len(df) == 3  # blank 08-19 row dropped
+    assert len(df) == 3
     assert df["value"].iloc[-1] == pytest.approx(0.86)
     assert df["date"].is_monotonic_increasing
 
@@ -428,7 +465,6 @@ def test_update_yield_curve_data_writes_cache(tmp_path):
     history = yield_curve.yield_curve_history(path)
     assert len(history) == 3
     assert history["spread"].iloc[-1] == pytest.approx(0.86)
-    # Fed funds lags a day, so the newest curve row has no policy spread yet.
     assert pd.isna(history["policy_spread"].iloc[-1])
     assert history["policy_spread"].dropna().iloc[-1] == pytest.approx(3.88 - 4.33)
 
@@ -447,14 +483,13 @@ def test_update_yield_curve_data_caches_curve_when_policy_legs_fail(tmp_path):
     ), patch("collectors.yield_curve.time.sleep"):
         error = yield_curve.update_yield_curve_data(path)
 
-    assert error == "policy spread: HTTPError: 503"  # reported as a partial failure...
+    assert error == "policy spread: HTTPError: 503"
     history = yield_curve.yield_curve_history(path)
-    assert history["spread"].iloc[-1] == pytest.approx(0.86)  # ...but the curve still cached
+    assert history["spread"].iloc[-1] == pytest.approx(0.86)
     assert "policy_spread" not in history.columns
 
 
 def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_return_nothing(tmp_path):
-    # Both legs parse but share no dates: an empty frame must not erase the cached column.
     path = tmp_path / "yieldcurve.csv"
     path.write_text("date,spread,policy_spread\n2026-08-21,0.80,-0.41\n")
     empty = pd.DataFrame({"date": pd.to_datetime([]), "value": []})
@@ -474,7 +509,6 @@ def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_return_not
 
 
 def test_update_yield_curve_data_survives_a_truncated_cache(tmp_path):
-    # A crash mid-write used to leave a zero-byte cache; reading it must not kill the tick.
     path = tmp_path / "yieldcurve.csv"
     path.write_text("")
 
@@ -497,8 +531,8 @@ def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_fail(tmp_p
         yield_curve.update_yield_curve_data(path)
 
     history = yield_curve.yield_curve_history(path)
-    assert history["spread"].iloc[-1] == pytest.approx(0.86)  # curve refreshed
-    assert history["policy_spread"].iloc[-1] == pytest.approx(-0.41)  # old column carried over
+    assert history["spread"].iloc[-1] == pytest.approx(0.86)
+    assert history["policy_spread"].iloc[-1] == pytest.approx(-0.41)
 
 
 def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):
@@ -515,10 +549,22 @@ def test_yield_curve_should_refresh_missing_file(tmp_path):
     assert yield_curve.should_refresh(tmp_path / "nope.csv") is True
 
 
-def test_yield_curve_should_refresh_false_when_refreshed_today(tmp_path):
+def test_yield_curve_should_refresh_false_when_todays_cache_has_every_column(tmp_path):
     path = tmp_path / "yieldcurve.csv"
-    path.write_text("date,spread\n2026-08-21,0.86\n")  # fresh mtime = now
+    path.write_text("date,spread,policy_spread\n2026-08-21,0.86,-0.41\n")
     assert yield_curve.should_refresh(path) is False
+
+
+def test_yield_curve_should_refresh_when_todays_cache_predates_the_policy_column(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("date,spread\n2026-08-21,0.86\n")
+    assert yield_curve.should_refresh(path) is True
+
+
+def test_yield_curve_should_refresh_when_todays_cache_is_truncated(tmp_path):
+    path = tmp_path / "yieldcurve.csv"
+    path.write_text("")
+    assert yield_curve.should_refresh(path) is True
 
 
 # --- collectors/valuations.py (non-Selenium logic only, like fed_rate) -----------------------
@@ -560,9 +606,9 @@ def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
         "collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
     ), patch("collectors.valuations.time.sleep"):
         assert valuations.update_valuations_data(path) is None
-        assert valuations.update_valuations_data(path) is None  # same day again -> deduped
+        assert valuations.update_valuations_data(path) is None
     history = valuations.valuations_history(path)
-    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS)  # one row per segment, not two
+    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS)
     assert set(history["segment"]) == set(valuations.OPPORTUNITY_SEGMENTS)
     assert (history["asof"] == "July 31, 2026").all()
 
@@ -580,9 +626,10 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
         "collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
     ), patch("collectors.valuations.time.sleep"):
         error = valuations.update_valuations_data(path)
-    assert "world_small" in error and "not found" in error
+    assert "world_small" in error
+    assert "not found" in error
     history = valuations.valuations_history(path)
-    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS) - 1  # others still written
+    assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS) - 1
     assert "world_small" not in set(history["segment"])
 
 
@@ -592,7 +639,8 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
         "collectors.valuations.time.sleep"
     ):
         error = valuations.update_valuations_data(path)
-    assert "webdriver" in error and "no chrome" in error
+    assert "webdriver" in error
+    assert "no chrome" in error
     assert not path.exists()
 
 

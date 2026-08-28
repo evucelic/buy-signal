@@ -325,35 +325,48 @@ def notify_stopped() -> None:
     _send("🔴 Runner stopped")
 
 
-def handle_tick(result: BuySignal | None, error: Exception | None) -> None:
+def _report_due(now_ct: datetime, last_report_date: date | None, report_hour: int) -> bool:
+    """Whether the daily report is due: the report hour, and not already sent this CT date."""
+    return now_ct.hour == report_hour and last_report_date != now_ct.date()
+
+
+def _report_result(
+    result: BuySignal | None,
+    error: Exception | None,
+    cached: BuySignal | None,
+    compute,
+) -> BuySignal | None:
+    """Pick what the daily report shows: this tick's result, a fresh compute, or the cache.
+
+    The report hour can fall outside tick()'s active window, leaving `result` None with
+    nothing actually wrong, so an idle tick computes fresh. A failed tick falls back to the
+    cache instead, since a live compute right now would likely fail the same way.
+    """
+    if result is not None:
+        return result
+    if error is None:
+        return compute()
+    return cached
+
+
+def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime | None = None) -> None:
     """Called by runner.run_forever() after every tick attempt."""
+    now = now.astimezone(timezone.utc) if now else datetime.now(timezone.utc)
     with _lock:
-        _state.last_tick_at = datetime.now(timezone.utc)
+        _state.last_tick_at = now
         _state.last_ok = error is None
         _state.last_error = str(error) if error else None
         if result is not None:
             _state.last_result = result
 
-    # Daily report: fires once at DAILY_REPORT_HOUR_CT (CT wall clock), regardless of pass/fail.
-    # The report hour can fall outside tick()'s active window (e.g. it coincides with the VIX
-    # window's end), leaving `result` None even though nothing is actually wrong -- compute a
-    # fresh signal just for the report in that case. If the tick itself errored, fall back to
-    # the last cached result (a live compute right now would likely fail too) and flag the error
-    # in the message instead of silently skipping the report.
-    now_ct = datetime.now(timezone.utc).astimezone(runner.CT)
+    now_ct = now.astimezone(runner.CT)
     with _lock:
-        already_sent_today = _state.last_report_date == now_ct.date()
-        due = now_ct.hour == config.DAILY_REPORT_HOUR_CT and not already_sent_today
+        due = _report_due(now_ct, _state.last_report_date, config.DAILY_REPORT_HOUR_CT)
         if due:
             _state.last_report_date = now_ct.date()
         cached_result = _state.last_result
     if due:
-        if result is not None:
-            report_result = result
-        elif error is None:
-            report_result = compute_signal()
-        else:
-            report_result = cached_result
+        report_result = _report_result(result, error, cached_result, compute_signal)
         if report_result is not None:
             prefix = f"⚠️ latest tick failed ({_esc(str(error))}); showing last cached data\n\n" if error is not None else ""
             _send(f"📅 <b>End of day</b>\n\n{prefix}{_format_signal(report_result)}")

@@ -25,7 +25,7 @@ def score(allow_refresh: bool = True) -> SubSignal:
     """
     changes = get_latest_market_changes() if allow_refresh else (latest_changes() or get_latest_market_changes())
     daily = changes[MARKET_PRIMARY_INDEX]["daily"]
-    dip = daily <= MARKET_DIP_THRESHOLD
+    dip = bool(daily <= MARKET_DIP_THRESHOLD)
 
     if dip:
         state = "dip"
