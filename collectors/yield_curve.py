@@ -14,7 +14,6 @@ from pathlib import Path
 import pandas as pd
 
 from collectors.fred import fetch_series_with_retries
-from collectors.freshness import refreshed_today
 from config import (
     FED_FUNDS_SERIES,
     FETCH_JITTER_SEC,
@@ -108,10 +107,11 @@ def _cache_has_policy_spread(filepath: Path) -> bool:
         return False
 
 
-def should_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
-    """FRED updates once per business day, unless the cache lacks a column."""
-    filepath = Path(filepath)
-    return not refreshed_today(filepath) or not _cache_has_policy_spread(filepath)
+def demands_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
+    """Refresh regardless of when we last did: a cache written before the policy-spread column
+    existed can't render the signal, so the daily gate (refresh_journal.py) must not hold it.
+    """
+    return not _cache_has_policy_spread(Path(filepath))
 
 
 if __name__ == "__main__":

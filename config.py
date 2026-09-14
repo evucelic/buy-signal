@@ -1,6 +1,7 @@
 """Thresholds, tickers, data-source IDs, and file paths for all indicators."""
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # --- Paths -------------------------------------------------------------------
@@ -14,6 +15,7 @@ SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
+REFRESH_JOURNAL_JSON = DATA_DIR / "refresh_journal.json"  # how each macro collector is doing
 
 # --- Tickers -----------------------------------------------------------------
 VIX_TICKER = "^VIX"
@@ -125,5 +127,9 @@ SMALL_CAP_EASING_OBS = 1             # FedWatch horizons (from nearest) expected
 VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed before z-scores are shown
 
 # --- Runner cadence -----------------------------------------------------------
+# How long a failed collector is left alone before it's retried (see refresh_journal.py).
+# Two hours is two ticks: enough that a rate-limited source isn't hammered, short enough
+# that a transient failure still costs part of a day rather than all of it.
+REFRESH_RETRY_BACKOFF = timedelta(hours=2)
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
 DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central

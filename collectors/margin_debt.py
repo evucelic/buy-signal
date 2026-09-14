@@ -16,7 +16,6 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from collectors.freshness import refreshed_today
 from config import (
     CF_BYPASS_TIMEOUT_SEC,
     CF_BYPASS_URL,
@@ -154,11 +153,11 @@ def data_freshness(
     return "stale", f"latest month {label} is {age_months} months old; FINRA release looks overdue, check the scraper"
 
 
-def should_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp | None = None) -> bool:
-    """Whether a refresh attempt is worth making right now.
-
-    Margin debt only updates monthly, so skip almost the whole month (nothing new
-    to find) and skip repeat attempts already made today once one has run.
+def demands_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp | None = None) -> bool:
+    """Refresh more often than once a day: FINRA publishes month M around the third week of
+    M+1, so once that checkpoint passes with the release still missing, every tick is a chance
+    to catch it. The rest of the month there is nothing new to find, and the journal's daily
+    gate (refresh_journal.py) is the whole schedule.
     """
     filepath = Path(filepath)
     today = pd.Timestamp(today) if today is not None else pd.Timestamp.now()
@@ -166,11 +165,15 @@ def should_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp |
     if not filepath.exists():
         return True
 
-    if refreshed_today(filepath, today):
-        return False
+    try:
+        history = margin_history(filepath)
+    except Exception:
+        return True  # truncated by a kill mid-write: refetch repairs it, and never raise here
 
-    tier, _ = data_freshness(margin_history(filepath), today)
-    return tier != "fresh"
+    tier, _ = data_freshness(history, today)
+    # Only the missing-release case is worth more than the journal's daily gate. "stale" means
+    # the scraper looks broken, and hitting FINRA hourly forever wouldn't fix that.
+    return tier == "refresh_due_soon"
 
 
 if __name__ == "__main__":

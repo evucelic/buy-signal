@@ -297,6 +297,45 @@ def _format_opportunity(opp: analyzer.Opportunity) -> str:
     return "\n\n".join(blocks)
 
 
+_STATUS_ERROR_WIDTH = 40  # a stack-trace-shaped error still has to fit a phone screen
+
+
+def _format_collectors() -> str:
+    """Per-collector last attempt and result, straight from the refresh journal.
+
+    The freshness table only shows each cache's mtime, i.e. its last *successful* write, so
+    "never attempted" and "attempted hourly and failing" look identical there; this is the
+    view that tells them apart.
+    """
+    statuses = runner.macro_journal().statuses()
+    if not statuses:
+        return "no refresh attempted yet"
+
+    rows = [
+        [
+            status.name,
+            _humanize_age(status.attempted_at),
+            "ok" if status.ok else (status.error or "failed")[:_STATUS_ERROR_WIDTH],
+        ]
+        for status in statuses
+    ]
+    return "<pre>" + _esc(format_table(["collector", "last try", "result"], rows)) + "</pre>"
+
+
+def _stale_collector_notes(name: str, failed: list[tuple[str, str]]) -> list[str]:
+    """Why a command's numbers may be stale when it refreshed nothing and reported nothing.
+
+    A collector inside its retry backoff is skipped silently, which would otherwise render an
+    old snapshot as if it were current.
+    """
+    if any(collector == name for collector, _ in failed):
+        return []
+    status = next((s for s in runner.macro_journal().statuses() if s.name == name), None)
+    if status is None or status.ok:
+        return []
+    return [f"{name} refresh is failing ({status.error}); showing the last good data"]
+
+
 def _format_status() -> str:
     with _lock:
         uptime = datetime.now(timezone.utc) - _state.start_time
@@ -314,7 +353,7 @@ def _format_status() -> str:
         f"last tick   {last_tick} ({tick_status})",
         f"alert       {alert}",
     ]
-    return "<pre>" + _esc("\n".join(lines)) + "</pre>"
+    return "<pre>" + _esc("\n".join(lines)) + "</pre>" + f"\n\n🔄 <b>Collectors</b>\n{_format_collectors()}"
 
 
 def notify_started() -> None:
@@ -358,6 +397,11 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
         _state.last_error = str(error) if error else None
         if result is not None:
             _state.last_result = result
+
+    # The journal owns the dedup (once per collector per day), so there's no state here to
+    # keep in sync with it: whatever comes back has not been pushed yet.
+    for name, failure in runner.macro_journal().take_unreported_failures(now.astimezone(runner.ET)):
+        _send(f"⚠️ <b>Refresh failed</b>\n• {_esc(name)}: {_esc(failure)}")
 
     now_ct = now.astimezone(runner.CT)
     with _lock:
@@ -413,15 +457,10 @@ def _handle_message(text: str) -> str | None:
     if text in _SIGNAL_COMMANDS:
         return _format_single(_SIGNAL_COMMANDS[text])
     if text == "/whattobuy":
-        from collectors import valuations
-
-        failed = []
         with buy_signal.SIGNAL_LOCK:
-            if valuations.should_refresh():
-                error = valuations.update_valuations_data()
-                if error:
-                    failed.append(("valuations", error))
+            failed = runner.refresh_macro(only=("valuations",))
             opp = analyzer.analyze()
+        opp.notes.extend(_stale_collector_notes("valuations", failed))
         with _lock:
             last_result = _state.last_result
         opp.buy_signal_state = last_result.state if last_result is not None else None
@@ -437,6 +476,8 @@ def _handle_message(text: str) -> str | None:
     if text == "/refresh":
         with buy_signal.SIGNAL_LOCK:
             failed = runner.refresh_macro(force=True)
+        # Shown in this reply, so don't also push them from the next tick.
+        runner.macro_journal().take_unreported_failures(datetime.now(runner.ET))
         reply = _format_signal(compute_signal(allow_refresh=True))
         if failed:
             lines = "\n".join(f"• {_esc(name)}: {_esc(error)}" for name, error in failed)

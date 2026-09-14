@@ -21,7 +21,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
-from collectors.freshness import refreshed_today
 from config import (
     FETCH_JITTER_SEC,
     MSCI_INDEX_URL,
@@ -115,10 +114,6 @@ def valuations_history(filepath: Path | str = VALUATIONS_CSV) -> pd.DataFrame:
     df = pd.read_csv(filepath, parse_dates=["date"])
     return df.sort_values(["date", "segment"]).reset_index(drop=True)
 
-
-def should_refresh(filepath: Path | str = VALUATIONS_CSV) -> bool:
-    """One snapshot per day; MSCI only changes the values monthly anyway."""
-    return not refreshed_today(filepath)
 
 
 if __name__ == "__main__":

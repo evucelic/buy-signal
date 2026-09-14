@@ -1,12 +1,15 @@
-"""Tests for runner.py: session classification, tick's refresh-trigger conditions, and
-run_forever()'s failure resilience.
+"""Tests for runner.py: session classification, tick's refresh-trigger conditions, the
+per-collector isolation of a refresh pass, and run_forever()'s failure resilience.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
+
+import pytest
 from zoneinfo import ZoneInfo
 
 import runner
+from refresh_journal import RefreshJournal
 
 ET = ZoneInfo("America/New_York")
 
@@ -97,17 +100,43 @@ def test_tick_returns_none_and_skips_compute_when_closed():
 def test_tick_always_refreshes_in_pre_market():
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
+
+
+def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
+    """A VIX collector failure used to mean current_vix is None and no macro refresh at all,
+    pre-market included: the five macro caches then sat frozen until someone ran /refresh.
+    """
+    dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
+    from signals.buy_signal import BuySignal
+
+    vixless = BuySignal(score=0, state="none", passing_count=0, subsignals=[])
+    with patch("runner.compute_signal", return_value=vixless), patch(
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+        runner.tick(dt)
+    mock_refresh.assert_called_once()
+
+
+def test_tick_reports_a_refresh_failure_instead_of_discarding_it(capsys):
+    dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
+    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[("fed_rate", "SessionNotCreated")]):
+        runner.tick(dt)
+    printed = capsys.readouterr().out
+    assert "fed_rate" in printed
+    assert "SessionNotCreated" in printed
 
 
 def test_tick_always_refreshes_in_after_hours():
     dt = datetime(2026, 7, 24, 17, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -115,108 +144,178 @@ def test_tick_always_refreshes_in_after_hours():
 def test_tick_regular_refreshes_only_if_vix_passes():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
-def test_tick_regular_no_refresh_when_vix_not_passing():
+def test_tick_regular_no_refresh_when_vix_not_passing_and_nothing_is_due():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "collectors.margin_debt.should_refresh", return_value=False
+        "runner._any_due", return_value=False
     ), patch("runner.refresh_macro") as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_not_called()
 
 
-def test_tick_regular_refreshes_when_margin_debt_checkpoint_due_even_if_vix_not_passing():
-    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint:
-    this is the bug that let a real FINRA release go uncaught until manually refreshed.
+def test_tick_regular_refreshes_whatever_the_journal_says_is_due_even_if_vix_not_passing():
+    """A REGULAR session with a failing VIX must not black out margin_debt's monthly checkpoint
+    (the bug that let a real FINRA release go uncaught until manually refreshed), nor a
+    collector whose retry backoff has just elapsed.
     """
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "collectors.margin_debt.should_refresh", return_value=True
-    ), patch("runner.refresh_macro") as mock_refresh:
+        "runner._any_due", return_value=True
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
 class _FakeCollector:
-    def __init__(self, name, stale=True, error=None, blocked_by=None):
+    """Stands in for one entry of runner's registry: a name, an update, and its outcome."""
+
+    def __init__(self, name, demands=False, error=None, blocked_by=None, raises=None):
         self.name = name
-        self.stale = stale
+        self.demands = demands
         self.error = error
         self.blocked_by = blocked_by
+        self.raises = raises
         self.refreshed = False
 
-    def should_refresh(self):
-        return self.stale
+    def demands_refresh(self):
+        return self.demands
 
     def precondition(self):
         return self.blocked_by
 
     def update(self):
         self.refreshed = True
+        if self.raises is not None:
+            raise self.raises
         return self.error
 
 
-def _refresh(collectors, force=False):
+NOW = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
+
+
+@pytest.fixture
+def journal(tmp_path):
+    return RefreshJournal(tmp_path / "refresh_journal.json")
+
+
+def _refresh(collectors, journal, force=False, now=NOW):
     with patch("runner._macro_collectors", return_value=collectors):
-        failed = runner.refresh_macro(force=force)
+        failed = runner.refresh_macro(force=force, journal=journal, now=now)
     return [c.name for c in collectors if c.refreshed], failed
 
 
-def test_refresh_macro_refreshes_only_the_stale_collectors():
-    collectors = [_FakeCollector("fed_rate", stale=True), _FakeCollector("sector", stale=False)]
+def test_refresh_macro_refreshes_only_what_the_journal_says_is_due(journal):
+    journal.record("sector", ok=True, error=None, now=NOW)
+    collectors = [_FakeCollector("fed_rate"), _FakeCollector("sector")]
 
-    refreshed, _ = _refresh(collectors)
+    refreshed, _ = _refresh(collectors, journal, now=NOW + timedelta(hours=2))
 
     assert refreshed == ["fed_rate"]
 
 
-def test_refresh_macro_force_refreshes_collectors_that_are_not_stale():
-    collectors = [_FakeCollector("fed_rate", stale=False), _FakeCollector("sector", stale=False)]
+def test_refresh_macro_force_refreshes_collectors_that_are_not_due(journal):
+    journal.record("fed_rate", ok=True, error=None, now=NOW)
+    journal.record("sector", ok=True, error=None, now=NOW)
+    collectors = [_FakeCollector("fed_rate"), _FakeCollector("sector")]
 
-    refreshed, _ = _refresh(collectors, force=True)
+    refreshed, _ = _refresh(collectors, journal, force=True, now=NOW + timedelta(hours=2))
 
     assert refreshed == ["fed_rate", "sector"]
 
 
-def test_refresh_macro_reports_the_name_and_error_of_each_failure():
+def test_refresh_macro_can_be_narrowed_to_named_collectors(journal):
+    collectors = [_FakeCollector("fed_rate"), _FakeCollector("valuations")]
+
+    with patch("runner._macro_collectors", return_value=collectors):
+        runner.refresh_macro(journal=journal, now=NOW, only=("valuations",))
+
+    assert [c.name for c in collectors if c.refreshed] == ["valuations"]
+
+
+def test_refresh_macro_reports_the_name_and_error_of_each_failure(journal):
     collectors = [
         _FakeCollector("fed_rate", error="ConnectionError: boom"),
         _FakeCollector("sector"),
         _FakeCollector("yield_curve", error="HTTPError: 503"),
     ]
 
-    _, failed = _refresh(collectors)
+    _, failed = _refresh(collectors, journal)
 
     assert failed == [("fed_rate", "ConnectionError: boom"), ("yield_curve", "HTTPError: 503")]
 
 
-def test_refresh_macro_reports_nothing_when_every_collector_succeeds():
-    _, failed = _refresh([_FakeCollector("fed_rate"), _FakeCollector("sector")])
+def test_refresh_macro_reports_nothing_when_every_collector_succeeds(journal):
+    _, failed = _refresh([_FakeCollector("fed_rate"), _FakeCollector("sector")], journal)
 
     assert failed == []
 
 
-def test_refresh_macro_skips_the_update_of_a_collector_whose_precondition_fails():
+def test_refresh_macro_skips_the_update_of_a_collector_whose_precondition_fails(journal):
     blocked = _FakeCollector("margin_debt", blocked_by="cfbypass service unreachable")
     collectors = [_FakeCollector("fed_rate"), blocked]
 
-    refreshed, failed = _refresh(collectors)
+    refreshed, failed = _refresh(collectors, journal)
 
     assert refreshed == ["fed_rate"]
     assert failed == [("margin_debt", "cfbypass service unreachable")]
 
 
-def test_refresh_macro_does_not_check_the_precondition_of_a_fresh_collector():
-    blocked = _FakeCollector("margin_debt", stale=False, blocked_by="cfbypass service unreachable")
+def test_refresh_macro_does_not_check_the_precondition_of_a_collector_that_is_not_due(journal):
+    blocked = _FakeCollector("margin_debt", blocked_by="cfbypass service unreachable")
+    journal.record("margin_debt", ok=True, error=None, now=NOW)
 
-    _, failed = _refresh([blocked])
+    _, failed = _refresh([blocked], journal, now=NOW + timedelta(hours=2))
 
     assert failed == []
+
+
+def test_refresh_macro_keeps_going_when_a_collector_raises(journal):
+    """One collector blowing up used to end the pass, and the two Selenium collectors ran
+    first: a browser that wouldn't start cost every cache behind it its refresh.
+    """
+    collectors = [
+        _FakeCollector("fed_rate", raises=RuntimeError("chrome not reachable")),
+        _FakeCollector("sector"),
+        _FakeCollector("valuations"),
+    ]
+
+    refreshed, _ = _refresh(collectors, journal)
+
+    assert refreshed == ["fed_rate", "sector", "valuations"]
+
+
+def test_refresh_macro_records_a_raised_exception_as_that_collectors_error(journal):
+    collectors = [_FakeCollector("fed_rate", raises=RuntimeError("chrome not reachable"))]
+
+    _, failed = _refresh(collectors, journal)
+
+    assert failed == [("fed_rate", "RuntimeError: chrome not reachable")]
+    assert journal.take_unreported_failures(NOW) == [("fed_rate", "RuntimeError: chrome not reachable")]
+
+
+def test_refresh_macro_records_every_attempt_it_makes(journal):
+    collectors = [_FakeCollector("fed_rate"), _FakeCollector("sector", error="HTTPError: 503")]
+
+    _refresh(collectors, journal)
+
+    statuses = {s.name: s for s in journal.statuses()}
+    assert statuses["fed_rate"].ok is True
+    assert statuses["sector"].ok is False
+    assert statuses["sector"].attempted_at == NOW
+
+
+def test_refresh_macro_does_not_record_a_collector_it_skipped(journal):
+    journal.record("sector", ok=True, error=None, now=NOW)
+
+    _refresh([_FakeCollector("fed_rate")], journal, now=NOW + timedelta(hours=2))
+
+    assert [s.name for s in journal.statuses()] == ["sector", "fed_rate"]
 
 
 def test_cf_bypass_precondition_passes_when_the_service_is_reachable():
@@ -232,13 +331,16 @@ def test_cf_bypass_precondition_reports_the_url_when_the_service_is_unreachable(
     assert runner.CF_BYPASS_URL in error
 
 
-def test_macro_collectors_covers_every_macro_cache():
+def test_macro_collectors_covers_every_macro_cache_cheapest_first():
+    """Order is the cheap failure containment: the two Selenium collectors run last, so a
+    browser that won't start can't cost the three that don't need one.
+    """
     assert [c.name for c in runner._macro_collectors()] == [
-        "fed_rate",
-        "sector",
         "yield_curve",
-        "valuations",
+        "sector",
         "margin_debt",
+        "fed_rate",
+        "valuations",
     ]
 
 
@@ -326,7 +428,7 @@ def test_tick_runs_when_closed_but_vix_window_active():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     assert runner.market_session(dt) == runner.CLOSED
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
-        "collectors.margin_debt.should_refresh", return_value=False
+        "runner._any_due", return_value=False
     ), patch("runner.refresh_macro") as mock_refresh:
         result = runner.tick(dt)
     assert result is not None
@@ -346,17 +448,17 @@ def test_tick_idle_when_closed_and_vix_window_inactive():
 def test_tick_refreshes_during_closed_vix_window_if_vix_passes():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
-        "runner.refresh_macro"
-    ) as mock_refresh:
+        "runner._any_due", return_value=False
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
-def test_tick_refreshes_during_closed_vix_window_when_margin_debt_checkpoint_due():
+def test_tick_refreshes_during_closed_vix_window_when_a_collector_is_due():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "collectors.margin_debt.should_refresh", return_value=True
-    ), patch("runner.refresh_macro") as mock_refresh:
+        "runner._any_due", return_value=True
+    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -386,3 +488,12 @@ def test_run_forever_sleeps_until_next_hour_boundary(monkeypatch):
     with patch("runner.tick", return_value=None), patch("runner.sleep", side_effect=fake_sleep):
         runner.run_forever(interval_sec=3600)
     assert calls == [3600 - (1_700_003_600.0 % 3600)]
+
+
+def test_any_due_survives_a_domain_rule_that_raises():
+    """A refresh gate blowing up costs that collector an opinion, not the caller its tick."""
+    exploding = _FakeCollector("margin_debt")
+    exploding.demands_refresh = lambda: 1 / 0
+
+    with patch("runner._macro_collectors", return_value=[exploding]):
+        assert runner._any_due(NOW) is True

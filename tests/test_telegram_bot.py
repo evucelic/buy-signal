@@ -8,14 +8,19 @@ import pytest
 
 import bot
 import telegram_bot as tb
+from refresh_journal import RefreshJournal
 
 
 @pytest.fixture(autouse=True)
-def reset_state(monkeypatch):
-    """Reset telegram_bot's module-level _state, and disable the daily report by default."""
+def reset_state(monkeypatch, tmp_path):
+    """Reset telegram_bot's module-level _state, disable the daily report by default, and keep
+    the refresh journal on tmp_path so no test reads or writes the real one.
+    """
     tb._state = tb._State(start_time=datetime.now(timezone.utc))
     monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", -1)
-    yield
+    journal = RefreshJournal(tmp_path / "refresh_journal.json")
+    monkeypatch.setattr(tb.runner, "macro_journal", lambda: journal)
+    yield journal
 
 
 # --- _is_alerting / _trigger_reasons ---------------------------------------------------------
@@ -165,6 +170,28 @@ def test_format_status_ok_after_tick(make_buy_signal):
     tb._state.last_ok = True
     tb._state.last_result = make_buy_signal([])
     assert "(ok)" in tb._format_status()
+
+
+def test_format_status_lists_each_collectors_last_attempt(reset_state):
+    reset_state.record("yield_curve", ok=True, error=None, now=datetime.now(tb.runner.ET))
+    reset_state.record("margin_debt", ok=False, error="cfbypass unreachable", now=datetime.now(tb.runner.ET))
+
+    status = tb._format_status()
+
+    assert "collector" in status
+    assert "yield_curve" in status
+    assert "margin_debt" in status
+    assert "cfbypass unreachable" in status
+
+
+def test_format_status_says_so_when_nothing_has_been_attempted():
+    assert "no refresh attempted yet" in tb._format_status()
+
+
+def test_format_status_truncates_a_runaway_error(reset_state):
+    reset_state.record("fed_rate", ok=False, error="x" * 500, now=datetime.now(tb.runner.ET))
+
+    assert "x" * 200 not in tb._format_status()
 
 
 def test_format_status_failed_after_tick():
@@ -445,9 +472,7 @@ def _fake_opportunity():
 @pytest.fixture
 def whattobuy_env(monkeypatch):
     """Offline /whattobuy: collectors fresh, analyzer canned, photo captured."""
-    from collectors import valuations
-
-    monkeypatch.setattr(valuations, "should_refresh", lambda: False)
+    monkeypatch.setattr(tb.runner, "refresh_macro", lambda **kwargs: [])
     monkeypatch.setattr(tb.analyzer, "analyze", lambda: _fake_opportunity())
     photos = []
     monkeypatch.setattr(tb, "_send_photo", lambda png, caption: photos.append(png))
@@ -485,18 +510,27 @@ def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, 
 
 
 def test_handle_message_whattobuy_surfaces_refresh_errors(whattobuy_env, monkeypatch):
-    from collectors import valuations
-
-    monkeypatch.setattr(valuations, "should_refresh", lambda: True)
-    monkeypatch.setattr(valuations, "update_valuations_data", lambda: "ValueError: FY1 not found")
+    monkeypatch.setattr(
+        tb.runner, "refresh_macro", lambda **kwargs: [("valuations", "ValueError: FY1 not found")]
+    )
     reply = tb._handle_message("/whattobuy")
     assert "Refresh failed" in reply
     assert "FY1 not found" in reply
 
 
+def test_handle_message_whattobuy_refreshes_only_valuations(whattobuy_env, monkeypatch):
+    """Everything else on the /whattobuy path reads a cache; none of it is worth a scrape here."""
+    calls = []
+    monkeypatch.setattr(tb.runner, "refresh_macro", lambda **kwargs: calls.append(kwargs) or [])
+
+    tb._handle_message("/whattobuy")
+
+    assert calls == [{"only": ("valuations",)}]
+
+
 def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatch, make_buy_signal):
     calls = []
-    monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False: calls.append(force) or [])
+    monkeypatch.setattr(tb.runner, "refresh_macro", lambda force=False, **kw: calls.append(force) or [])
     fake = make_buy_signal([])
     monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: fake)
     reply = tb._handle_message("/refresh")
@@ -506,7 +540,7 @@ def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatc
 
 def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_signal):
     monkeypatch.setattr(
-        tb.runner, "refresh_macro", lambda force=False: [("fed_rate", "ConnectionError: boom")]
+        tb.runner, "refresh_macro", lambda force=False, **kw: [("fed_rate", "ConnectionError: boom")]
     )
     fake = make_buy_signal([])
     monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: fake)
@@ -514,6 +548,32 @@ def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_
     assert "Refresh failed" in reply
     assert "fed_rate" in reply
     assert "ConnectionError: boom" in reply
+
+
+def test_handle_tick_pushes_a_refresh_failure_once_a_day(monkeypatch, reset_state):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    now = datetime.now(timezone.utc)
+    reset_state.record("fed_rate", ok=False, error="SessionNotCreated", now=now.astimezone(tb.runner.ET))
+
+    tb.handle_tick(None, None, now)
+    tb.handle_tick(None, None, now)
+
+    assert len(sent) == 1
+    assert "Refresh failed" in sent[0]
+    assert "fed_rate" in sent[0]
+    assert "SessionNotCreated" in sent[0]
+
+
+def test_handle_tick_pushes_nothing_when_every_collector_succeeded(monkeypatch, reset_state):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    now = datetime.now(timezone.utc)
+    reset_state.record("fed_rate", ok=True, error=None, now=now.astimezone(tb.runner.ET))
+
+    tb.handle_tick(None, None, now)
+
+    assert sent == []
 
 
 def test_format_single_handles_exception():
@@ -630,3 +690,64 @@ def test_format_signal_renders_the_whole_message(monkeypatch, make_subsignal, ma
     result = make_buy_signal([vix, curve], state="strong", missing_signals=["sector"])
 
     assert tb._format_signal(result) == _GOLDEN_MESSAGE
+
+
+def test_handle_message_refresh_does_not_also_push_the_failures_it_just_showed(
+    monkeypatch, reset_state, make_buy_signal
+):
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    monkeypatch.setattr(tb, "compute_signal", lambda allow_refresh: make_buy_signal([]))
+
+    def failing_refresh(force=False, **kw):
+        reset_state.record("fed_rate", ok=False, error="boom", now=datetime.now(tb.runner.ET))
+        return [("fed_rate", "boom")]
+
+    monkeypatch.setattr(tb.runner, "refresh_macro", failing_refresh)
+
+    reply = tb._handle_message("/refresh")
+    tb.handle_tick(None, None, datetime.now(timezone.utc))
+
+    assert "Refresh failed" in reply
+    assert sent == []
+
+
+def test_handle_tick_refresh_failures_do_not_corrupt_the_daily_report(monkeypatch, reset_state, make_buy_signal):
+    """The failure loop must not rebind handle_tick's own `error`: a healthy tick that happens
+    to carry a refresh failure would then report itself as a failed tick.
+    """
+    sent = []
+    monkeypatch.setattr(tb, "_send", lambda text: sent.append(text))
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(tb.config, "DAILY_REPORT_HOUR_CT", now.astimezone(tb.runner.CT).hour)
+    reset_state.record("fed_rate", ok=False, error="boom", now=now.astimezone(tb.runner.ET))
+    fresh = make_buy_signal([])
+    monkeypatch.setattr(tb, "compute_signal", lambda: fresh)
+
+    tb.handle_tick(None, None, now)
+
+    report = next(text for text in sent if "End of day" in text)
+    assert "latest tick failed" not in report
+
+
+def test_whattobuy_says_so_when_valuations_is_failing_but_was_not_retried(whattobuy_env, reset_state):
+    """Inside the retry backoff nothing is attempted and nothing fails, so without this the
+    reply would render a stale snapshot with no warning at all.
+    """
+    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(tb.runner.ET))
+
+    reply = tb._handle_message("/whattobuy")
+
+    assert "valuations refresh is failing" in reply
+    assert "FY1 not found" in reply
+
+
+def test_whattobuy_does_not_double_report_a_failure_it_just_surfaced(whattobuy_env, monkeypatch, reset_state):
+    monkeypatch.setattr(
+        tb.runner, "refresh_macro", lambda **kw: [("valuations", "ValueError: FY1 not found")]
+    )
+    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(tb.runner.ET))
+
+    reply = tb._handle_message("/whattobuy")
+
+    assert reply.count("FY1 not found") == 1
