@@ -44,7 +44,7 @@ def make_opportunity():
     """A canned /whattobuy analysis: small caps at a 25% forward-P/E discount, cuts priced in."""
 
     def _make():
-        from buysignal import analyzer as az
+        from buysignal.analysis import opportunity as az
 
         segments = [
             az.SegmentView("sp500", "MSCI USA", fwd_pe=20.0, asof="July 31, 2026", trailing_pe=25.0,

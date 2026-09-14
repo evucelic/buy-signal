@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from buysignal import analyzer
+from buysignal.analysis import chart, opportunity
 from buysignal import config
 from buysignal.schedule import runner
 from buysignal.collectors import freshness
@@ -186,7 +186,7 @@ def _status_message() -> str:
 def _whattobuy() -> str:
     with buy_signal.SIGNAL_LOCK:
         failed = runner.refresh_macro(only=("valuations",))
-        opp = analyzer.analyze()
+        opp = opportunity.analyze()
     opp.notes.extend(
         render.stale_collector_notes("valuations", failed, runner.macro_journal().statuses())
     )
@@ -194,7 +194,7 @@ def _whattobuy() -> str:
         last_result = _state.last_result
     opp.buy_signal_state = last_result.state if last_result is not None else None
     try:
-        transport.send_photo(analyzer.render_chart(opp), "Segment valuations")
+        transport.send_photo(chart.render_chart(opp), "Segment valuations")
     except Exception as exc:
         opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
 

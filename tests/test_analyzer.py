@@ -1,38 +1,38 @@
-"""Tests for analyzer.py: discount bands, rate regime, z-scores, matrix verdicts, chart."""
+"""Tests for opportunity.py: discount bands, rate regime, z-scores, matrix verdicts, chart."""
 
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-from buysignal import analyzer
+from buysignal.analysis import chart, opportunity
 
 
 # --- discount bands ---------------------------------------------------------------
 
 
 def test_discount_band_below_little_threshold():
-    assert analyzer._discount_band(0.09) == "little"
+    assert opportunity._discount_band(0.09) == "little"
 
 
 def test_discount_band_exactly_at_mild_boundary():
-    assert analyzer._discount_band(0.10) == "mild"
+    assert opportunity._discount_band(0.10) == "mild"
 
 
 def test_discount_band_exactly_at_candidate_boundary():
-    assert analyzer._discount_band(0.20) == "candidate"
+    assert opportunity._discount_band(0.20) == "candidate"
 
 
 def test_discount_band_exactly_at_upper_candidate_boundary_still_candidate():
-    assert analyzer._discount_band(0.30) == "candidate"
+    assert opportunity._discount_band(0.30) == "candidate"
 
 
 def test_discount_band_above_candidate_is_investigate():
-    assert analyzer._discount_band(0.31) == "investigate"
+    assert opportunity._discount_band(0.31) == "investigate"
 
 
 def test_discount_band_negative_discount_is_little():
-    assert analyzer._discount_band(-0.05) == "little"  # small caps more expensive than SPX
+    assert opportunity._discount_band(-0.05) == "little"  # small caps more expensive than SPX
 
 
 # --- rate regime (FedWatch expectations) ---------------------------------------------------------------
@@ -58,7 +58,7 @@ def _fedwatch_df(nearest, six_month, one_year):
 def _rate_view_with(nearest, six_month=(0.2, 0.7, 0.1), one_year=(0.2, 0.7, 0.1)):
     # latest_fedwatch is imported lazily inside _rate_view, so patch it at its home module.
     with patch("buysignal.collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df(nearest, six_month, one_year)):
-        return analyzer._rate_view()
+        return opportunity._rate_view()
 
 
 def test_rate_view_counts_consecutive_easing_horizons_from_nearest():
@@ -74,13 +74,13 @@ def test_rate_view_gap_in_easing_resets_count():
 
 
 def test_rate_view_support_threshold_one_horizon(monkeypatch):
-    monkeypatch.setattr(analyzer, "SMALL_CAP_EASING_OBS", 1)
+    monkeypatch.setattr(opportunity, "SMALL_CAP_EASING_OBS", 1)
     assert _rate_view_with((0.8, 0.1, 0.1)).rate_support is True
     assert _rate_view_with((0.1, 0.8, 0.1)).rate_support is False
 
 
 def test_rate_view_support_threshold_two_horizons(monkeypatch):
-    monkeypatch.setattr(analyzer, "SMALL_CAP_EASING_OBS", 2)
+    monkeypatch.setattr(opportunity, "SMALL_CAP_EASING_OBS", 2)
     assert _rate_view_with((0.8, 0.1, 0.1), (0.2, 0.7, 0.1)).rate_support is False
     assert _rate_view_with((0.8, 0.1, 0.1), (0.6, 0.3, 0.1)).rate_support is True
 
@@ -97,7 +97,7 @@ def test_rate_view_tie_is_mixed():
 
 def test_rate_view_missing_cache_degrades_to_empty():
     with patch("buysignal.collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError):
-        view = analyzer._rate_view()
+        view = opportunity._rate_view()
     assert view.horizons == []
     assert view.consecutive_easing == 0
     assert view.rate_support is False
@@ -107,7 +107,7 @@ def test_rate_view_empty_fedwatch_frame_degrades_not_raises():
     # A present-but-empty cache must not raise out of analyze() (it would kill the bot's poll thread).
     empty = pd.DataFrame(columns=["horizon", "meeting_date", "prob_ease", "prob_no_change", "prob_hike"])
     with patch("buysignal.collectors.fed_rate.latest_fedwatch", return_value=empty):
-        view = analyzer._rate_view()
+        view = opportunity._rate_view()
     assert view.horizons == []
     assert view.rate_support is False
 
@@ -116,64 +116,64 @@ def test_rate_view_empty_fedwatch_frame_degrades_not_raises():
 
 
 def test_cheapness_z_insufficient_history_is_none(monkeypatch):
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
-    assert analyzer._cheapness_z(pd.Series([20.0, 21.0]), 20.0) is None
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
+    assert opportunity._cheapness_z(pd.Series([20.0, 21.0]), 20.0) is None
 
 
 def test_cheapness_z_at_exact_min_history(monkeypatch):
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
     series = pd.Series([10.0, 20.0, 30.0])  # mean 20, std 10
-    assert analyzer._cheapness_z(series, 10.0) == pytest.approx(1.0)  # cheaper -> positive
+    assert opportunity._cheapness_z(series, 10.0) == pytest.approx(1.0)  # cheaper -> positive
 
 
 def test_cheapness_z_expensive_is_negative(monkeypatch):
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
     series = pd.Series([10.0, 20.0, 30.0])
-    assert analyzer._cheapness_z(series, 30.0) == pytest.approx(-1.0)
+    assert opportunity._cheapness_z(series, 30.0) == pytest.approx(-1.0)
 
 
 def test_cheapness_z_zero_std_is_none(monkeypatch):
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
-    assert analyzer._cheapness_z(pd.Series([20.0, 20.0, 20.0]), 20.0) is None
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
+    assert opportunity._cheapness_z(pd.Series([20.0, 20.0, 20.0]), 20.0) is None
 
 
 # --- verdict matrix ---------------------------------------------------------------
 
 
 def _rate(support):
-    return analyzer.RateView(rate_support=support)
+    return opportunity.RateView(rate_support=support)
 
 
 def test_verdict_insufficient_data():
-    assert "insufficient" in analyzer._verdict(None, _rate(False))
+    assert "insufficient" in opportunity._verdict(None, _rate(False))
 
 
 def test_verdict_no_discount_no_support_defaults_to_sp500():
-    verdict = analyzer._verdict("little", _rate(False))
+    verdict = opportunity._verdict("little", _rate(False))
     assert "S&P 500 default" in verdict
     assert "watch" not in verdict
 
 
 def test_verdict_no_discount_with_support_watches_small_caps():
-    verdict = analyzer._verdict("mild", _rate(True))
+    verdict = opportunity._verdict("mild", _rate(True))
     assert "S&P 500 default" in verdict
     assert "watch" in verdict
 
 
 def test_verdict_candidate_without_support_keeps_sp500_default():
-    verdict = analyzer._verdict("candidate", _rate(False))
+    verdict = opportunity._verdict("candidate", _rate(False))
     assert "no rate support" in verdict
     assert "S&P 500 default" in verdict
 
 
 def test_verdict_candidate_with_support_prefers_small_caps():
-    verdict = analyzer._verdict("candidate", _rate(True))
+    verdict = opportunity._verdict("candidate", _rate(True))
     assert verdict.startswith("small caps")
     assert "conditions both met" in verdict
 
 
 def test_verdict_investigate_with_support_warns_about_stress():
-    verdict = analyzer._verdict("investigate", _rate(True))
+    verdict = opportunity._verdict("investigate", _rate(True))
     assert "investigate" in verdict
 
 
@@ -196,10 +196,10 @@ def _one_day_history(sp500=20.0, world_small=15.0, europe=16.0):
 
 
 def _analyze_with(history):
-    with patch("buysignal.analyzer.valuations_history", return_value=history), patch(
+    with patch("buysignal.analysis.opportunity.valuations_history", return_value=history), patch(
         "buysignal.collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df((0.8, 0.1, 0.1), (0.2, 0.7, 0.1), (0.2, 0.7, 0.1))
     ):
-        return analyzer.analyze()
+        return opportunity.analyze()
 
 
 def test_analyze_computes_ratios_and_discounts():
@@ -211,10 +211,10 @@ def test_analyze_computes_ratios_and_discounts():
 
 
 def test_analyze_missing_valuations_cache_degrades_with_note():
-    with patch("buysignal.analyzer.valuations_history", side_effect=FileNotFoundError), patch(
+    with patch("buysignal.analysis.opportunity.valuations_history", side_effect=FileNotFoundError), patch(
         "buysignal.collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError
     ):
-        opp = analyzer.analyze()
+        opp = opportunity.analyze()
     assert all(s.fwd_pe is None for s in opp.segments)
     assert opp.small_cap_band is None
     assert "insufficient" in opp.verdict
@@ -230,7 +230,7 @@ def test_analyze_notes_insufficient_z_history():
 
 
 def test_analyze_z_scores_appear_with_enough_history(monkeypatch):
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
     rows = []
     for i, (spx, small) in enumerate([(20.0, 16.0), (21.0, 15.0), (22.0, 14.0)]):
         day = pd.Timestamp("2026-06-20") + pd.Timedelta(days=i * 30)
@@ -249,7 +249,7 @@ def test_analyze_z_scores_appear_with_enough_history(monkeypatch):
 
 def test_analyze_repeated_daily_snapshots_of_same_month_count_once(monkeypatch):
     # MSCI only changes values monthly; 3 daily snapshots of one as-of must not fake 3 observations.
-    monkeypatch.setattr(analyzer, "VALUATION_Z_MIN_OBS", 3)
+    monkeypatch.setattr(opportunity, "VALUATION_Z_MIN_OBS", 3)
     rows = []
     for i in range(3):
         day = pd.Timestamp("2026-08-20") + pd.Timedelta(days=i)
@@ -264,7 +264,7 @@ def test_analyze_repeated_daily_snapshots_of_same_month_count_once(monkeypatch):
 
 def test_render_chart_bars_only_produces_png():
     opp = _analyze_with(_one_day_history())
-    png = analyzer.render_chart(opp, history=_one_day_history())
+    png = chart.render_chart(opp, history=_one_day_history())
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
@@ -276,5 +276,5 @@ def test_render_chart_with_history_panel_produces_png():
             rows.append([day, segment, pe, None, None])
     history = _valuations_df(rows)
     opp = _analyze_with(history)
-    png = analyzer.render_chart(opp, history=history)
+    png = chart.render_chart(opp, history=history)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"

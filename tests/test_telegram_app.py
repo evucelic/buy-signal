@@ -368,10 +368,10 @@ def test_single_signal_handles_exception():
 def whattobuy_env(monkeypatch, make_opportunity):
     """Offline /whattobuy: collectors fresh, analyzer canned, photo captured."""
     monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
-    monkeypatch.setattr(app.analyzer, "analyze", make_opportunity)
+    monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
     photos = []
     monkeypatch.setattr(app.transport, "send_photo", lambda png, caption: photos.append(png))
-    monkeypatch.setattr(app.analyzer, "render_chart", lambda opp: b"\x89PNG-fake")
+    monkeypatch.setattr(app.chart, "render_chart", lambda opp: b"\x89PNG-fake")
     return photos
 
 
@@ -397,7 +397,7 @@ def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, 
     def boom(opp):
         raise RuntimeError("no display")
 
-    monkeypatch.setattr(app.analyzer, "render_chart", boom)
+    monkeypatch.setattr(app.chart, "render_chart", boom)
     reply = app.handle_message("/whattobuy")
     assert whattobuy_env == []  # no photo sent
     assert "What to buy" in reply  # text still delivered
