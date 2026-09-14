@@ -1,0 +1,198 @@
+"""Collect CME FedWatch probabilities for three time horizons."""
+
+from __future__ import annotations
+
+import logging
+import random
+import time
+from pathlib import Path
+
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+from buysignal.collectors.chrome import chrome_session
+from buysignal.config import (
+    FEDWATCH_CSV,
+    FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
+    FEDWATCH_URL,
+    FETCH_JITTER_SEC,
+    SCRAPE_BACKOFF_SEC,
+    SCRAPE_RETRIES,
+)
+
+log = logging.getLogger(__name__)
+
+_HORIZONS = {
+    "nearest": pd.DateOffset(),
+    "six_month": pd.DateOffset(months=6),
+    "one_year": pd.DateOffset(years=1),
+}
+
+_TABLE_XPATH = (
+    "//table[contains(concat(' ', normalize-space(@class), ' '), ' grid-thm ')"
+    " and .//th[normalize-space()='Ease']"
+    " and .//th[normalize-space()='No Change']"
+    " and .//th[normalize-space()='Hike']]"
+)
+
+# Meeting-date tabs on the default "Current" view, e.g. id "...uccv_lvMeetings_ctrl3_lbMeeting".
+_MEETING_TAB_XPATH = "//a[contains(@id, '_lvMeetings_ctrl') and contains(@id, '_lbMeeting')]"
+
+_TAB_DATE_FORMAT = "%d %b%y"     # tab text, e.g. "29 Jul26"
+_CARD_DATE_FORMAT = "%d %b %Y"   # meeting-info card text once a tab is selected, e.g. "29 Jul 2026"
+
+
+def _percentage(text: str) -> float:
+    """Convert a percentage string to a decimal probability."""
+    return float(text.replace("%", "").strip()) / 100
+
+
+def _list_meeting_tabs(wait: WebDriverWait) -> list[tuple[str, pd.Timestamp]]:
+    """Return (element id, meeting date) for every meeting tab, in DOM order."""
+    tabs = wait.until(EC.presence_of_all_elements_located((By.XPATH, _MEETING_TAB_XPATH)))
+
+    meetings: list[tuple[str, pd.Timestamp]] = []
+    for tab in tabs:
+        tab_id = tab.get_attribute("id")
+        if not tab_id:
+            continue
+        try:
+            date = pd.to_datetime(tab.text.strip(), format=_TAB_DATE_FORMAT)
+        except ValueError:
+            continue
+        meetings.append((tab_id, date))
+
+    if not meetings:
+        raise ValueError("No FedWatch meeting tabs found.")
+    return meetings
+
+
+def _select_meeting_tabs(
+    tabs: list[tuple[str, pd.Timestamp]],
+    today: pd.Timestamp,
+) -> dict[str, tuple[str, pd.Timestamp]]:
+    """Pick the nearest, six-month, and one-year meeting tabs."""
+    return {
+        horizon: min(tabs, key=lambda tab: abs(tab[1] - (today + offset)))
+        for horizon, offset in _HORIZONS.items()
+    }
+
+
+def _scrape_meeting_probabilities(
+    driver: webdriver.Chrome,
+    wait: WebDriverWait,
+    tab_id: str,
+    date: pd.Timestamp,
+) -> dict:
+    """Click a meeting tab and scrape its Ease/No Change/Hike probabilities."""
+    driver.execute_script("arguments[0].click()", driver.find_element(By.ID, tab_id))
+
+    label = f"{date:{_CARD_DATE_FORMAT}}"
+    wait.until(
+        EC.presence_of_element_located(
+            (By.XPATH, f"//td[@class='center' and normalize-space()='{label}']")
+        )
+    )
+
+    table = driver.find_element(By.XPATH, _TABLE_XPATH)
+    values = table.find_elements(By.CSS_SELECTOR, "tr:last-child td.number")
+    if len(values) != 3:
+        raise ValueError(f"Unexpected probability row for {date.date()}: {len(values)} cells")
+
+    ease, no_change, hike = map(_percentage, (cell.text for cell in values))
+    return {
+        "meeting_date": date,
+        "prob_ease": ease,
+        "prob_no_change": no_change,
+        "prob_hike": hike,
+    }
+
+
+def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
+    """Scrape the nearest, six-month, and one-year meeting probabilities."""
+    with chrome_session(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC) as driver:
+        driver.get(FEDWATCH_URL)
+        wait = WebDriverWait(driver, 40)
+
+        iframe = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "iframe[id^='cmeIframe-']")
+            )
+        )
+        driver.switch_to.frame(iframe)
+
+        tabs = _list_meeting_tabs(wait)
+        selected = _select_meeting_tabs(tabs, today)
+
+        rows = [
+            {**_scrape_meeting_probabilities(driver, wait, tab_id, date), "horizon": horizon}
+            for horizon, (tab_id, date) in selected.items()
+        ]
+
+        return (
+            pd.DataFrame(rows)
+            .sort_values("meeting_date")
+            .reset_index(drop=True)
+        )
+
+
+def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str | None]:
+    """Fetch meeting probabilities with retry/backoff. Returns (data, error_message)."""
+    last_error = None
+    for attempt in range(SCRAPE_RETRIES):
+        try:
+            return _fetch_meeting_probabilities(today), None
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt + 1 == SCRAPE_RETRIES:
+                log.error("FedWatch scrape failed after %d tries (%s); cache unchanged.", SCRAPE_RETRIES, last_error)
+                return None, last_error
+
+            delay = (
+                SCRAPE_BACKOFF_SEC * 2**attempt
+                + random.uniform(0, 1)
+            )
+            log.debug("FedWatch attempt %d failed (%s); retry in %.0fs", attempt + 1, last_error, delay)
+            time.sleep(delay)
+
+    return None, last_error
+
+
+def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
+    """Refresh the cached FedWatch snapshot. Returns an error message, or None on success."""
+    filepath = Path(filepath)
+    time.sleep(random.uniform(*FETCH_JITTER_SEC))
+
+    snapshot, error = _fetch_with_retries(pd.Timestamp.now().normalize())
+    if snapshot is None:
+        return error or "unknown error"
+
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.to_csv(filepath, index=False)
+
+    log.info(
+        "FedWatch cache updated: %d meetings, %s -> %s",
+        len(snapshot),
+        snapshot["meeting_date"].min().date(),
+        snapshot["meeting_date"].max().date(),
+    )
+    return None
+
+
+def latest_fedwatch(
+    filepath: Path | str = FEDWATCH_CSV,
+) -> pd.DataFrame:
+    """Load the cached FedWatch snapshot."""
+    return pd.read_csv(filepath, parse_dates=["meeting_date"])
+
+
+
+if __name__ == "__main__":
+    from buysignal import logs
+
+    logs.configure()
+    update_fed_rate_data()
+    print(latest_fedwatch().to_string(index=False))

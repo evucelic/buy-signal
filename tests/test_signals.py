@@ -5,10 +5,10 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
-from config import MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, YIELD_CURVE_BUCKET_DAYS
-from signals.base import NONE, SOFT, STRONG, SubSignal
-from signals.buy_signal import SIGNAL_LOCK, _alert_state, compute_signal
+from buysignal.signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.config import MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, YIELD_CURVE_BUCKET_DAYS
+from buysignal.signals.base import NONE, SOFT, STRONG, SubSignal
+from buysignal.signals.buy_signal import SIGNAL_LOCK, _alert_state, compute_signal
 
 # --- vix_signal ---------------------------------------------------------------
 
@@ -17,14 +17,14 @@ _LIVE_VIX = 31.0
 
 
 def _vix(vix, change=None):
-    with patch("signals.vix_signal.vix_change_pct", return_value=change):
+    with patch("buysignal.signals.vix_signal.vix_change_pct", return_value=change):
         return vix_signal.score(vix=vix)
 
 
 def _vix_sources(monkeypatch, cached=_CACHED_VIX, live=_LIVE_VIX):
-    monkeypatch.setattr("signals.vix_signal.load_latest_cached_vix", lambda: cached)
-    monkeypatch.setattr("signals.vix_signal.get_latest_vix", lambda: live)
-    monkeypatch.setattr("signals.vix_signal.vix_change_pct", lambda: None)
+    monkeypatch.setattr("buysignal.signals.vix_signal.load_latest_cached_vix", lambda: cached)
+    monkeypatch.setattr("buysignal.signals.vix_signal.get_latest_vix", lambda: live)
+    monkeypatch.setattr("buysignal.signals.vix_signal.vix_change_pct", lambda: None)
 
 
 def test_vix_strong_passes():
@@ -137,7 +137,7 @@ def _fedwatch(*, ease, no_change, hike):
 
 
 def _rate(expectations):
-    with patch("signals.rate_signal.latest_fedwatch", return_value=expectations):
+    with patch("buysignal.signals.rate_signal.latest_fedwatch", return_value=expectations):
         return rate_signal.score()
 
 
@@ -200,8 +200,8 @@ def _margin_history(balances):
 
 
 def _margin(balances, freshness=("fresh", "ok")):
-    with patch("signals.margin_signal.margin_history", return_value=_margin_history(balances)), patch(
-        "signals.margin_signal.data_freshness", return_value=freshness
+    with patch("buysignal.signals.margin_signal.margin_history", return_value=_margin_history(balances)), patch(
+        "buysignal.signals.margin_signal.data_freshness", return_value=freshness
     ):
         return margin_signal.score()
 
@@ -231,7 +231,7 @@ def test_margin_zero_change_is_not_deleveraging():
 
 
 def test_margin_a_decrease_followed_by_an_increase_is_not_deleveraging(monkeypatch):
-    monkeypatch.setattr("signals.margin_signal.MARGIN_DELEVERAGE_MONTHS", 2)
+    monkeypatch.setattr("buysignal.signals.margin_signal.MARGIN_DELEVERAGE_MONTHS", 2)
 
     assert _margin([1000, 900, 950]).passes is False
 
@@ -272,17 +272,17 @@ def _market_changes(spy_daily):
 
 
 def _market(spy_daily):
-    with patch("signals.market_signal.get_latest_market_changes", return_value=_market_changes(spy_daily)):
+    with patch("buysignal.signals.market_signal.get_latest_market_changes", return_value=_market_changes(spy_daily)):
         return market_signal.score()
 
 
 def _market_sources(monkeypatch, cached=_CACHED_DAILY, live=_LIVE_DAILY):
     monkeypatch.setattr(
-        "signals.market_signal.latest_changes",
+        "buysignal.signals.market_signal.latest_changes",
         lambda: None if cached is None else _market_changes(cached),
     )
     monkeypatch.setattr(
-        "signals.market_signal.get_latest_market_changes", lambda: _market_changes(live)
+        "buysignal.signals.market_signal.get_latest_market_changes", lambda: _market_changes(live)
     )
 
 
@@ -377,28 +377,28 @@ def _sector_df(growths):
 
 
 def test_sector_passes_at_quorum():
-    with patch("signals.sector_signal.sector_performance", return_value=_sector_df([0.1, 0.1, 0.1, -0.1, -0.1])):
+    with patch("buysignal.signals.sector_signal.sector_performance", return_value=_sector_df([0.1, 0.1, 0.1, -0.1, -0.1])):
         s = sector_signal.score()
         assert s.passes is True
         assert s.state == "growing"
 
 
 def test_sector_fails_below_quorum():
-    with patch("signals.sector_signal.sector_performance", return_value=_sector_df([0.1, 0.1, -0.1, -0.1, -0.1])):
+    with patch("buysignal.signals.sector_signal.sector_performance", return_value=_sector_df([0.1, 0.1, -0.1, -0.1, -0.1])):
         s = sector_signal.score()
         assert s.passes is False
         assert s.state == "flat"
 
 
 def test_sector_extreme_none_growing():
-    with patch("signals.sector_signal.sector_performance", return_value=_sector_df([-0.1] * 5)):
+    with patch("buysignal.signals.sector_signal.sector_performance", return_value=_sector_df([-0.1] * 5)):
         s = sector_signal.score()
         assert s.passes is False
         assert s.score == 0.0
 
 
 def test_sector_extreme_all_growing():
-    with patch("signals.sector_signal.sector_performance", return_value=_sector_df([0.1] * 5)):
+    with patch("buysignal.signals.sector_signal.sector_performance", return_value=_sector_df([0.1] * 5)):
         s = sector_signal.score()
         assert s.passes is True
         assert s.score == 1.0
@@ -477,7 +477,7 @@ def test_spread_df_builder_omits_the_policy_column_when_not_asked_for():
 
 def _curve(spreads, policy=None):
     with patch(
-        "signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(spreads, policy)
+        "buysignal.signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(spreads, policy)
     ):
         return yield_curve_signal.score()
 
@@ -567,7 +567,7 @@ def test_policy_spread_gap_breaks_the_run_instead_of_collapsing():
     stale = history["date"] >= pd.Timestamp("2026-01-01") + pd.Timedelta(days=42)
     history.loc[stale, "policy_spread"] = float("nan")
 
-    with patch("signals.yield_curve_signal.yield_curve_history", return_value=history):
+    with patch("buysignal.signals.yield_curve_signal.yield_curve_history", return_value=history):
         s = yield_curve_signal.score()
 
     assert s.footer is None
@@ -653,7 +653,7 @@ def _compute(monkeypatch, allow_refresh=True, **overrides):
     outcomes.update(overrides)
 
     for module, outcome in outcomes.items():
-        monkeypatch.setattr(f"signals.buy_signal.{module}.score", _scoring(outcome))
+        monkeypatch.setattr(f"buysignal.signals.buy_signal.{module}.score", _scoring(outcome))
     return compute_signal(allow_refresh=allow_refresh)
 
 

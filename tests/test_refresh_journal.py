@@ -1,4 +1,4 @@
-"""Tests for refresh_journal.py: the retry/daily gating, the once-a-day failure dedup, and
+"""Tests for schedule/journal.py: the retry/daily gating, the once-a-day failure dedup, and
 the JSON persistence behind them.
 
 Every clock is a literal passed in, and every journal is built on tmp_path, so nothing here
@@ -8,7 +8,7 @@ monkeypatches time or touches the real data directory.
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from refresh_journal import RefreshJournal
+from buysignal.schedule.journal import RefreshJournal
 
 ET = ZoneInfo("America/New_York")
 
@@ -31,7 +31,7 @@ class _FakeCollector:
 
 
 def _journal(tmp_path, backoff=BACKOFF):
-    return RefreshJournal(tmp_path / "refresh_journal.json", backoff=backoff)
+    return RefreshJournal(tmp_path / "buysignal.schedule.journal.json", backoff=backoff)
 
 
 # --- due(): the single timing authority ---------------------------------------------------
@@ -85,31 +85,46 @@ def test_a_domain_demand_does_not_override_the_backoff(tmp_path):
     assert journal.due(_FakeCollector("margin_debt", demands=True), MORNING + timedelta(minutes=30)) is False
 
 
-# --- take_unreported_failures(): the dedup is the point ------------------------------------
+# --- unreported_failures() / mark_reported(): the dedup is the point -----------------------
 
 
 def test_a_failure_is_reported_once_and_then_not_again(tmp_path):
     journal = _journal(tmp_path)
     journal.record("fed_rate", ok=False, error="SessionNotCreated", now=MORNING)
 
-    assert journal.take_unreported_failures(MORNING) == [("fed_rate", "SessionNotCreated")]
-    assert journal.take_unreported_failures(NOON) == []
+    assert journal.unreported_failures(MORNING) == [("fed_rate", "SessionNotCreated")]
+    journal.mark_reported("fed_rate", MORNING)
+    assert journal.unreported_failures(NOON) == []
+
+
+def test_a_failure_stays_pending_until_it_is_marked_reported(tmp_path):
+    """Asking is not delivering: if the push never goes out, the next tick must try again."""
+    journal = _journal(tmp_path)
+    journal.record("fed_rate", ok=False, error="SessionNotCreated", now=MORNING)
+
+    journal.unreported_failures(MORNING)
+
+    assert journal.unreported_failures(NOON) == [("fed_rate", "SessionNotCreated")]
+
+
+def test_marking_an_unknown_collector_is_harmless(tmp_path):
+    _journal(tmp_path).mark_reported("never_heard_of_it", MORNING)
 
 
 def test_a_failure_that_persists_is_reported_again_the_next_day(tmp_path):
     journal = _journal(tmp_path)
     journal.record("fed_rate", ok=False, error="SessionNotCreated", now=MORNING)
-    journal.take_unreported_failures(MORNING)
+    journal.mark_reported("fed_rate", MORNING)
     journal.record("fed_rate", ok=False, error="SessionNotCreated", now=NEXT_DAY)
 
-    assert journal.take_unreported_failures(NEXT_DAY) == [("fed_rate", "SessionNotCreated")]
+    assert journal.unreported_failures(NEXT_DAY) == [("fed_rate", "SessionNotCreated")]
 
 
 def test_a_success_is_never_reported(tmp_path):
     journal = _journal(tmp_path)
     journal.record("fed_rate", ok=True, error=None, now=MORNING)
 
-    assert journal.take_unreported_failures(MORNING) == []
+    assert journal.unreported_failures(MORNING) == []
 
 
 def test_a_collector_that_recovers_stops_being_reported(tmp_path):
@@ -117,7 +132,7 @@ def test_a_collector_that_recovers_stops_being_reported(tmp_path):
     journal.record("fed_rate", ok=False, error="boom", now=MORNING)
     journal.record("fed_rate", ok=True, error=None, now=NEXT_DAY)
 
-    assert journal.take_unreported_failures(NEXT_DAY) == []
+    assert journal.unreported_failures(NEXT_DAY) == []
 
 
 # --- statuses(): what /status renders ------------------------------------------------------
@@ -154,13 +169,13 @@ def test_a_reported_failure_stays_reported_across_a_reopen(tmp_path):
     """A redeploy must not re-push the failure you were already told about."""
     journal = _journal(tmp_path)
     journal.record("fed_rate", ok=False, error="boom", now=MORNING)
-    journal.take_unreported_failures(MORNING)
+    journal.mark_reported("fed_rate", MORNING)
 
-    assert _journal(tmp_path).take_unreported_failures(NOON) == []
+    assert _journal(tmp_path).unreported_failures(NOON) == []
 
 
 def test_a_corrupt_file_degrades_to_refreshing_everything(tmp_path):
-    path = tmp_path / "refresh_journal.json"
+    path = tmp_path / "buysignal.schedule.journal.json"
     path.write_text("{not json at all")
 
     journal = RefreshJournal(path, backoff=BACKOFF)
@@ -170,7 +185,7 @@ def test_a_corrupt_file_degrades_to_refreshing_everything(tmp_path):
 
 
 def test_an_unparseable_entry_is_dropped_without_losing_the_others(tmp_path):
-    path = tmp_path / "refresh_journal.json"
+    path = tmp_path / "buysignal.schedule.journal.json"
     path.write_text('{"fed_rate": {"attempted_at": "not-a-date"}, "sector": '
                     '{"attempted_at": "2026-09-14T05:00:00-04:00", "ok": true, "error": null}}')
 
@@ -180,7 +195,7 @@ def test_an_unparseable_entry_is_dropped_without_losing_the_others(tmp_path):
 
 
 def test_a_missing_data_directory_is_created_on_the_first_write(tmp_path):
-    path = tmp_path / "nested" / "refresh_journal.json"
+    path = tmp_path / "nested" / "buysignal.schedule.journal.json"
     RefreshJournal(path, backoff=BACKOFF).record("fed_rate", ok=True, error=None, now=MORNING)
 
     assert path.exists()

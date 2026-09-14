@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-import logs
+from buysignal import logs
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def test_configure_installs_a_stream_and_a_file_handler(tmp_path):
 
 
 def test_configure_is_idempotent(tmp_path):
-    """bot.py calls it once, but a re-import or a second entrypoint must not double every line."""
+    """__main__.py calls it once, but a re-import or a second entrypoint must not double every line."""
     logs.configure(tmp_path / "buysignal.log")
     logs.configure(tmp_path / "buysignal.log")
 
@@ -43,11 +43,11 @@ def test_configure_writes_records_to_the_configured_path(tmp_path):
     path = tmp_path / "buysignal.log"
     logs.configure(path)
 
-    logging.getLogger("collectors.fed_rate").info("FedWatch cache updated")
+    logging.getLogger("buysignal.collectors.fed_rate").info("FedWatch cache updated")
 
     written = path.read_text()
     assert "FedWatch cache updated" in written
-    assert "collectors.fed_rate" in written
+    assert "buysignal.collectors.fed_rate" in written
     assert "INFO" in written
 
 

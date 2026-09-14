@@ -1,0 +1,94 @@
+"""Rank industries by market cap and their forward-earnings outlook (#4/#5); cache to CSV.
+
+Industry market cap = sector.overview['market_cap'] * the industry's weight within
+that sector; ranks all ~145 industries from ~11 sector-level requests instead of
+one request per industry.
+"""
+
+import logging
+from pathlib import Path
+
+import pandas as pd
+import yfinance as yf
+from yfinance.const import SECTOR_INDUSTY_MAPPING_LC
+
+from buysignal.config import SECTOR_TOP_CONSTITUENTS, SECTOR_TOP_N, SECTORS_CSV
+
+log = logging.getLogger(__name__)
+
+
+def _industry_market_caps() -> pd.DataFrame:
+    """Market cap for every industry, ranked descending."""
+    rows = []
+    for sector_key in SECTOR_INDUSTY_MAPPING_LC:
+        sector = yf.Sector(sector_key)
+        sector_cap = sector.overview["market_cap"]
+        for industry_key, row in sector.industries.iterrows():
+            rows.append({
+                "industry": row["name"],
+                "key": industry_key,
+                "market_cap": sector_cap * row["market weight"],
+            })
+    return pd.DataFrame(rows).sort_values("market_cap", ascending=False).reset_index(drop=True)
+
+
+def _industry_earnings_growth(industry_key: str) -> float:
+    """Market-weighted average next-fiscal-year EPS growth estimate across an industry's top constituents.
+
+    `Ticker.info["earningsGrowth"]` is trailing (last reported quarter vs a year ago) despite the
+    name; `Ticker.earnings_estimate`'s "+1y" row is the actual forward analyst consensus.
+    """
+    top = yf.Industry(industry_key).top_companies
+    if top is None:
+        return float("nan")
+    top = top.head(SECTOR_TOP_CONSTITUENTS)
+
+    weights, growths = [], []
+    for symbol, weight in top["market weight"].items():
+        estimate = yf.Ticker(symbol).earnings_estimate
+        if "growth" not in estimate.columns or "+1y" not in estimate.index:
+            continue
+        growth = estimate.loc["+1y", "growth"]
+        if pd.isna(growth):
+            continue
+        weights.append(weight)
+        growths.append(growth)
+
+    return sum(w * g for w, g in zip(weights, growths)) / sum(weights) if weights else float("nan")
+
+
+def update_sector_data(filepath: Path = SECTORS_CSV) -> str | None:
+    """Refresh the cached top-N industries (by market cap) and their earnings growth.
+
+    Returns an error message, or None on success.
+    """
+    filepath = Path(filepath)
+
+    try:
+        ranked = _industry_market_caps().head(SECTOR_TOP_N).copy()
+        ranked["earnings_growth_estimate_1y"] = ranked["key"].apply(_industry_earnings_growth)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        log.error("Sector data fetch failed (%s); cache unchanged.", error)
+        return error
+
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    ranked.to_csv(filepath, index=False)
+
+    growing = int((ranked["earnings_growth_estimate_1y"] > 0).sum())
+    log.info("Sector cache updated: top %d industries, %d with positive earnings growth", len(ranked), growing)
+    return None
+
+
+def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
+    """Return the cached top-N industries with their market cap and earnings growth."""
+    return pd.read_csv(filepath)
+
+
+
+if __name__ == "__main__":
+    from buysignal import logs
+
+    logs.configure()
+    update_sector_data()
+    print(sector_performance().to_string(index=False))
