@@ -1,5 +1,6 @@
 """Fetch ^VIX intraday bars from yfinance; cache to CSV, merging new bars by timestamp (UTC)."""
 
+import logging
 from pathlib import Path
 import random
 import time
@@ -8,6 +9,8 @@ import pandas as pd
 import yfinance as yf
 
 from config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER
+
+log = logging.getLogger(__name__)
 
 _RECENT_WINDOW = "5d" # 5 days to have some leeway with failing to fetch
 
@@ -38,7 +41,7 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
 
     new = _download_close(f"{VIX_LOOKBACK_DAYS}d" if first_run else _RECENT_WINDOW)
     if new is None:
-        print("VIX download returned no data; cache unchanged.")
+        log.warning("VIX download returned no data; cache unchanged.")
         return False
 
     if first_run:
@@ -50,7 +53,7 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
         new = new[~new.index.duplicated(keep="last")].sort_index() # deduplicate indexes if they overlap
 
     new.to_csv(filepath)
-    print(f"VIX cache updated: {len(new)} rows, latest {new.index[-1]} = {new.iloc[-1]:.2f}")
+    log.info("VIX cache updated: %d rows, latest %s = %.2f", len(new), new.index[-1], new.iloc[-1])
     return True
 
 
@@ -98,4 +101,7 @@ def get_latest_vix(filepath: Path = VIX_CSV) -> float:
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     refresh_vix_cache()

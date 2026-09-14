@@ -4,6 +4,7 @@ Hourly (same cadence as vix.py) so "daily" % change reflects the live intraday p
 the prior finalized daily bar.
 """
 
+import logging
 from pathlib import Path
 import random
 import time
@@ -20,6 +21,8 @@ from config import (
     MARKET_MONTHLY_LOOKBACK_DAYS,
     MARKET_WEEKLY_LOOKBACK_DAYS,
 )
+
+log = logging.getLogger(__name__)
 
 _RECENT_WINDOW = "5d"  # a few days to have some leeway with failing to fetch
 
@@ -53,7 +56,7 @@ def refresh_market_cache(filepath: Path = MARKET_CSV) -> bool:
 
     new = _download_closes(f"{MARKET_LOOKBACK_DAYS}d" if first_run else _RECENT_WINDOW)
     if new is None:
-        print("Market index download returned no data; cache unchanged.")
+        log.warning("Market index download returned no data; cache unchanged.")
         return False
 
     if first_run:
@@ -65,7 +68,7 @@ def refresh_market_cache(filepath: Path = MARKET_CSV) -> bool:
         new = new[~new.index.duplicated(keep="last")].sort_index()
 
     new.to_csv(filepath)
-    print(f"Market index cache updated: {len(new)} rows, latest {new.index[-1].date()}")
+    log.info("Market index cache updated: %d rows, latest %s", len(new), new.index[-1].date())
     return True
 
 
@@ -115,4 +118,7 @@ def get_latest_market_changes(filepath: Path = MARKET_CSV) -> dict[str, dict[str
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     refresh_market_cache()

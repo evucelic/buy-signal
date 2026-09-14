@@ -11,6 +11,7 @@ vs own history") possible. Never overwrite this file wholesale.
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import time
@@ -18,36 +19,22 @@ from pathlib import Path
 
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
-from collectors.freshness import refreshed_today
+from collectors.chrome import chrome_session
 from config import (
     FETCH_JITTER_SEC,
     MSCI_INDEX_URL,
     MSCI_PAGE_LOAD_TIMEOUT_SEC,
     MSCI_RENDER_WAIT_SEC,
     OPPORTUNITY_SEGMENTS,
-    USER_AGENTS,
     VALUATIONS_CSV,
 )
 
+log = logging.getLogger(__name__)
+
 _METRICS = re.compile(r"P/E \| ([\d.,]+) \| P/E Fwd \| ([\d.,]+)")
 _ASOF = re.compile(r"as of (\w+ \d{1,2}, \d{4})", re.IGNORECASE)
-
-
-def _build_driver() -> webdriver.Chrome:
-    """Return a headless Chrome driver (mirrors fed_rate's setup)."""
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1200")
-    options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(MSCI_PAGE_LOAD_TIMEOUT_SEC)
-    return driver
 
 
 def _parse_metrics(body_text: str) -> tuple[float, float, str | None]:
@@ -78,24 +65,20 @@ def update_valuations_data(filepath: Path | str = VALUATIONS_CSV) -> str | None:
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
-    try:
-        driver = _build_driver()
-    except Exception as exc:
-        return f"webdriver: {type(exc).__name__}: {exc}"
-
     today = pd.Timestamp.now().normalize()
     rows, errors = [], []
     try:
-        for segment, spec in OPPORTUNITY_SEGMENTS.items():
-            try:
-                trailing, fwd, asof = _fetch_index_metrics(driver, spec["msci_code"])
-                rows.append(
-                    {"date": today, "segment": segment, "fwd_pe": fwd, "trailing_pe": trailing, "asof": asof}
-                )
-            except Exception as exc:
-                errors.append(f"{segment}: {type(exc).__name__}: {exc}")
-    finally:
-        driver.quit()
+        with chrome_session(MSCI_PAGE_LOAD_TIMEOUT_SEC) as driver:
+            for segment, spec in OPPORTUNITY_SEGMENTS.items():
+                try:
+                    trailing, fwd, asof = _fetch_index_metrics(driver, spec["msci_code"])
+                    rows.append(
+                        {"date": today, "segment": segment, "fwd_pe": fwd, "trailing_pe": trailing, "asof": asof}
+                    )
+                except Exception as exc:
+                    errors.append(f"{segment}: {type(exc).__name__}: {exc}")
+    except Exception as exc:  # the browser itself: whatever was scraped before it is still written
+        errors.append(f"webdriver: {type(exc).__name__}: {exc}")
 
     if rows:
         new = pd.DataFrame(rows)
@@ -105,7 +88,7 @@ def update_valuations_data(filepath: Path | str = VALUATIONS_CSV) -> str | None:
         new = new.drop_duplicates(subset=["date", "segment"], keep="last").sort_values(["date", "segment"])
         filepath.parent.mkdir(parents=True, exist_ok=True)
         new.to_csv(filepath, index=False)
-        print(f"Valuations cache updated: {len(rows)} segments for {today.date()} ({len(new)} rows total).")
+        log.info("Valuations cache updated: %d segments for %s (%d rows total).", len(rows), today.date(), len(new))
 
     return "; ".join(errors) if errors else None
 
@@ -116,11 +99,10 @@ def valuations_history(filepath: Path | str = VALUATIONS_CSV) -> pd.DataFrame:
     return df.sort_values(["date", "segment"]).reset_index(drop=True)
 
 
-def should_refresh(filepath: Path | str = VALUATIONS_CSV) -> bool:
-    """One snapshot per day; MSCI only changes the values monthly anyway."""
-    return not refreshed_today(filepath)
-
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_valuations_data()
     print(valuations_history().tail(8).to_string(index=False))

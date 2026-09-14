@@ -64,11 +64,11 @@ def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
     assert "2y-FFR" not in message
 
 
-def test_a_cache_predating_the_policy_column_is_refreshed_on_the_same_day(tmp_path):
+def test_a_cache_predating_the_policy_column_demands_a_refresh_however_recent_it_is(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     _write_pre_schema_cache(path)
 
-    assert yield_curve.should_refresh(path) is True
+    assert yield_curve.demands_refresh(path) is True
 
 
 def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_path):
@@ -83,12 +83,13 @@ def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_
     assert f"{_TWO_YEAR - _FED_FUNDS:+.2f}pp" in message
 
 
-def test_a_refreshed_cache_is_not_refreshed_again_the_same_day(tmp_path):
+def test_a_refreshed_cache_no_longer_demands_a_refresh(tmp_path):
+    """Once the column is there the schema rule goes quiet, leaving the journal's daily gate."""
     path = tmp_path / "yieldcurve.csv"
     _write_pre_schema_cache(path)
     _refresh(path)
 
-    assert yield_curve.should_refresh(path) is False
+    assert yield_curve.demands_refresh(path) is False
 
 
 def _vix_bars(closes, start="2026-01-01 14:00"):

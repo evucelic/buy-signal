@@ -7,6 +7,7 @@ T2YFF series). The policy spread going negative means the bond market expects cu
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from pathlib import Path
@@ -14,7 +15,6 @@ from pathlib import Path
 import pandas as pd
 
 from collectors.fred import fetch_series_with_retries
-from collectors.freshness import refreshed_today
 from config import (
     FED_FUNDS_SERIES,
     FETCH_JITTER_SEC,
@@ -22,6 +22,9 @@ from config import (
     YIELD_CURVE_CSV,
     YIELD_CURVE_SERIES,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 def _fetch_policy_spread() -> tuple[pd.DataFrame | None, str | None]:
@@ -88,9 +91,12 @@ def update_yield_curve_data(filepath: Path | str = YIELD_CURVE_CSV) -> str | Non
                 f", 2y-FFR {valid['policy_spread'].iloc[-1]:+.2f}pp "
                 f"({valid['date'].iloc[-1].date()})"
             )
-    print(
-        f"Yield curve cache updated: {len(history)} days, latest "
-        f"{latest['date'].date()} = {latest['spread']:+.2f}pp{policy_note}"
+    log.info(
+        "Yield curve cache updated: %d days, latest %s = %+.2fpp%s",
+        len(history),
+        latest["date"].date(),
+        latest["spread"],
+        policy_note,
     )
     return policy_error
 
@@ -108,12 +114,16 @@ def _cache_has_policy_spread(filepath: Path) -> bool:
         return False
 
 
-def should_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
-    """FRED updates once per business day, unless the cache lacks a column."""
-    filepath = Path(filepath)
-    return not refreshed_today(filepath) or not _cache_has_policy_spread(filepath)
+def demands_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
+    """Refresh regardless of when we last did: a cache written before the policy-spread column
+    existed can't render the signal, so the daily gate (refresh_journal.py) must not hold it.
+    """
+    return not _cache_has_policy_spread(Path(filepath))
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_yield_curve_data()
     print(yield_curve_history().tail(6).to_string(index=False))
