@@ -7,8 +7,8 @@ that actually send need a token, and they set their own.
 
 import pytest
 
-from signals.base import SubSignal
-from signals.buy_signal import BuySignal
+from buysignal.signals.base import SubSignal
+from buysignal.signals.buy_signal import BuySignal
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def make_opportunity():
     """A canned /whattobuy analysis: small caps at a 25% forward-P/E discount, cuts priced in."""
 
     def _make():
-        import analyzer as az
+        from buysignal import analyzer as az
 
         segments = [
             az.SegmentView("sp500", "MSCI USA", fwd_pe=20.0, asof="July 31, 2026", trailing_pe=25.0,

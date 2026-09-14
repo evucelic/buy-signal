@@ -6,8 +6,8 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
-from signals.base import SubSignal
+from buysignal.signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.signals.base import SubSignal
 
 log = logging.getLogger(__name__)
 

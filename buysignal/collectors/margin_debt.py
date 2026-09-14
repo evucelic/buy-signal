@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from config import (
+from buysignal.config import (
     CF_BYPASS_TIMEOUT_SEC,
     CF_BYPASS_URL,
     FETCH_JITTER_SEC,
@@ -164,7 +164,7 @@ def demands_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp 
     """Refresh more often than once a day: FINRA publishes month M around the third week of
     M+1, so once that checkpoint passes with the release still missing, every tick is a chance
     to catch it. The rest of the month there is nothing new to find, and the journal's daily
-    gate (refresh_journal.py) is the whole schedule.
+    gate (schedule/journal.py) is the whole schedule.
     """
     filepath = Path(filepath)
     today = pd.Timestamp(today) if today is not None else pd.Timestamp.now()
@@ -184,7 +184,7 @@ def demands_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp 
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     update_margin_debt_data()

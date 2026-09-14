@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-from config import USER_AGENTS
+from buysignal.config import USER_AGENTS
 
 
 def _options() -> Options:

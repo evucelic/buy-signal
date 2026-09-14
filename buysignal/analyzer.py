@@ -18,8 +18,8 @@ from io import BytesIO
 
 import pandas as pd
 
-from collectors.valuations import valuations_history
-from config import (
+from buysignal.collectors.valuations import valuations_history
+from buysignal.config import (
     OPPORTUNITY_SEGMENTS,
     SMALL_CAP_DISCOUNT_BANDS,
     SMALL_CAP_EASING_OBS,
@@ -120,8 +120,8 @@ def _rate_view() -> RateView:
     """Expected rate path from the cached CME FedWatch snapshot (forward-looking)."""
     view = RateView()
     try:
-        from collectors.fed_rate import latest_fedwatch
-        from signals.rate_signal import _meeting, _probabilities
+        from buysignal.collectors.fed_rate import latest_fedwatch
+        from buysignal.signals.rate_signal import _meeting, _probabilities
 
         df = latest_fedwatch().sort_values("meeting_date").reset_index(drop=True)
         for label, horizon in (("nearest", "nearest"), ("6m", "six_month"), ("1y", "one_year")):

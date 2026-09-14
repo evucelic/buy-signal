@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from collectors.fred import fetch_series_with_retries
-from config import (
+from buysignal.collectors.fred import fetch_series_with_retries
+from buysignal.config import (
     FED_FUNDS_SERIES,
     FETCH_JITTER_SEC,
     TWO_YEAR_SERIES,
@@ -116,13 +116,13 @@ def _cache_has_policy_spread(filepath: Path) -> bool:
 
 def demands_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
     """Refresh regardless of when we last did: a cache written before the policy-spread column
-    existed can't render the signal, so the daily gate (refresh_journal.py) must not hold it.
+    existed can't render the signal, so the daily gate (schedule/journal.py) must not hold it.
     """
     return not _cache_has_policy_spread(Path(filepath))
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     update_yield_curve_data()

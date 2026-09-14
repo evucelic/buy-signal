@@ -1,4 +1,4 @@
-"""Cache age for the "data as of" table. Refresh *timing* lives in refresh_journal.py: an
+"""Cache age for the "data as of" table. Refresh *timing* lives in schedule/journal.py: an
 mtime only records the last successful write, so it can't tell "never attempted" apart from
 "attempted hourly and failing".
 """

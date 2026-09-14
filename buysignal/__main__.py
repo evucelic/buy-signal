@@ -3,9 +3,8 @@
 import logging
 import signal
 
-import logs
-import telegram_bot
-from runner import refresh_macro, run_forever
+from buysignal import logs, telegram_bot
+from buysignal.schedule.runner import refresh_macro, run_forever
 
 log = logging.getLogger(__name__)
 

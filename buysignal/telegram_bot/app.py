@@ -12,13 +12,13 @@ import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-import analyzer
-import config
-import runner
-from collectors import freshness
-from signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
-from signals.buy_signal import BuySignal, compute_signal
-from telegram_bot import render, transport
+from buysignal import analyzer
+from buysignal import config
+from buysignal.schedule import runner
+from buysignal.collectors import freshness
+from buysignal.signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.signals.buy_signal import BuySignal, compute_signal
+from buysignal.telegram_bot import render, transport
 
 # Per-signal commands: score() called directly (not compute_signal()) so a broken collector
 # can't block checking the others. /vix and /dip are handled separately in handle_message

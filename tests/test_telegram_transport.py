@@ -7,7 +7,7 @@ environment at import any more, so only the tests that actually send need them.
 import pytest
 import requests
 
-from telegram_bot import transport
+from buysignal.telegram_bot import transport
 
 
 @pytest.fixture(autouse=True)

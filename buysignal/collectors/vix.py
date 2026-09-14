@@ -8,7 +8,7 @@ import time
 import pandas as pd
 import yfinance as yf
 
-from config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER
+from buysignal.config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def get_latest_vix(filepath: Path = VIX_CSV) -> float:
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     refresh_vix_cache()

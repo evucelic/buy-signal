@@ -15,7 +15,7 @@ from io import StringIO
 import pandas as pd
 import requests
 
-from config import FRED_GRAPH_CSV_URL, SCRAPE_BACKOFF_SEC, SCRAPE_RETRIES
+from buysignal.config import FRED_GRAPH_CSV_URL, SCRAPE_BACKOFF_SEC, SCRAPE_RETRIES
 
 log = logging.getLogger(__name__)
 

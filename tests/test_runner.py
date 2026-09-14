@@ -1,4 +1,4 @@
-"""Tests for runner.py: session classification, tick's refresh-trigger conditions, the
+"""Tests for schedule/runner.py: session classification, tick's refresh-trigger conditions, the
 per-collector isolation of a refresh pass, and run_forever()'s failure resilience.
 """
 
@@ -9,8 +9,8 @@ from unittest.mock import patch
 import pytest
 from zoneinfo import ZoneInfo
 
-import runner
-from refresh_journal import RefreshJournal
+from buysignal.schedule import runner
+from buysignal.schedule.journal import RefreshJournal
 
 ET = ZoneInfo("America/New_York")
 
@@ -83,8 +83,8 @@ def test_market_session_exactly_at_after_hours_window_end_is_closed():
 
 
 def _fake_result(vix_passes):
-    from signals.base import SubSignal
-    from signals.buy_signal import BuySignal
+    from buysignal.signals.base import SubSignal
+    from buysignal.signals.buy_signal import BuySignal
 
     subs = [SubSignal("vix", 20.0, "none", "x", passes=vix_passes)]
     return BuySignal(score=0, state="none", passing_count=int(vix_passes), subsignals=subs)
@@ -92,7 +92,7 @@ def _fake_result(vix_passes):
 
 def test_tick_returns_none_and_skips_compute_when_closed():
     dt = datetime(2026, 7, 25, 12, 0, tzinfo=ET)
-    with patch("runner.compute_signal") as mock_compute:
+    with patch("buysignal.schedule.runner.compute_signal") as mock_compute:
         result = runner.tick(dt)
     assert result is None
     mock_compute.assert_not_called()
@@ -100,9 +100,9 @@ def test_tick_returns_none_and_skips_compute_when_closed():
 
 def test_tick_always_refreshes_in_pre_market():
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -112,12 +112,12 @@ def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
     pre-market included: the five macro caches then sat frozen until someone ran /refresh.
     """
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    from signals.buy_signal import BuySignal
+    from buysignal.signals.buy_signal import BuySignal
 
     vixless = BuySignal(score=0, state="none", passing_count=0, subsignals=[])
-    with patch("runner.compute_signal", return_value=vixless), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=vixless), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -125,9 +125,9 @@ def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
 def test_tick_reports_a_refresh_failure_instead_of_discarding_it(caplog):
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
     with caplog.at_level(logging.INFO), patch(
-        "runner.compute_signal", return_value=_fake_result(vix_passes=False)
-    ), patch("runner._any_due", return_value=False), patch(
-        "runner.refresh_macro", return_value=[("fed_rate", "SessionNotCreated")]
+        "buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)
+    ), patch("buysignal.schedule.runner._any_due", return_value=False), patch(
+        "buysignal.schedule.runner.refresh_macro", return_value=[("fed_rate", "SessionNotCreated")]
     ):
         runner.tick(dt)
     assert "fed_rate" in caplog.text
@@ -136,27 +136,27 @@ def test_tick_reports_a_refresh_failure_instead_of_discarding_it(caplog):
 
 def test_tick_always_refreshes_in_after_hours():
     dt = datetime(2026, 7, 24, 17, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
 def test_tick_regular_refreshes_only_if_vix_passes():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
 def test_tick_regular_no_refresh_when_vix_not_passing_and_nothing_is_due():
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro") as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro") as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_not_called()
 
@@ -167,9 +167,9 @@ def test_tick_regular_refreshes_whatever_the_journal_says_is_due_even_if_vix_not
     collector whose retry backoff has just elapsed.
     """
     dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=True
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "buysignal.schedule.runner._any_due", return_value=True
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -203,11 +203,11 @@ NOW = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
 
 @pytest.fixture
 def journal(tmp_path):
-    return RefreshJournal(tmp_path / "refresh_journal.json")
+    return RefreshJournal(tmp_path / "buysignal.schedule.journal.json")
 
 
 def _refresh(collectors, journal, force=False, now=NOW):
-    with patch("runner._macro_collectors", return_value=collectors):
+    with patch("buysignal.schedule.runner._macro_collectors", return_value=collectors):
         failed = runner.refresh_macro(force=force, journal=journal, now=now)
     return [c.name for c in collectors if c.refreshed], failed
 
@@ -234,7 +234,7 @@ def test_refresh_macro_force_refreshes_collectors_that_are_not_due(journal):
 def test_refresh_macro_can_be_narrowed_to_named_collectors(journal):
     collectors = [_FakeCollector("fed_rate"), _FakeCollector("valuations")]
 
-    with patch("runner._macro_collectors", return_value=collectors):
+    with patch("buysignal.schedule.runner._macro_collectors", return_value=collectors):
         runner.refresh_macro(journal=journal, now=NOW, only=("valuations",))
 
     assert [c.name for c in collectors if c.refreshed] == ["valuations"]
@@ -321,12 +321,12 @@ def test_refresh_macro_does_not_record_a_collector_it_skipped(journal):
 
 
 def test_cf_bypass_precondition_passes_when_the_service_is_reachable():
-    with patch("runner._cf_bypass_ready", return_value=True):
+    with patch("buysignal.schedule.runner._cf_bypass_ready", return_value=True):
         assert runner._cf_bypass_precondition() is None
 
 
 def test_cf_bypass_precondition_reports_the_url_when_the_service_is_unreachable():
-    with patch("runner._cf_bypass_ready", return_value=False):
+    with patch("buysignal.schedule.runner._cf_bypass_ready", return_value=False):
         error = runner._cf_bypass_precondition()
 
     assert "cfbypass" in error
@@ -355,7 +355,7 @@ def test_run_forever_survives_a_failing_tick():
             raise KeyboardInterrupt  # simulate Ctrl+C to end the loop deterministically
         raise RuntimeError("boom")
 
-    with patch("runner.tick", side_effect=fake_tick), patch("runner.sleep"):
+    with patch("buysignal.schedule.runner.tick", side_effect=fake_tick), patch("buysignal.schedule.runner.sleep"):
         runner.run_forever(interval_sec=0)
     assert len(calls) == 2
 
@@ -372,28 +372,28 @@ def test_run_forever_survives_a_failing_on_tick_callback():
     def bad_callback(result, error):
         raise ValueError("callback boom")
 
-    with patch("runner.tick", side_effect=fake_tick), patch("runner.sleep"):
+    with patch("buysignal.schedule.runner.tick", side_effect=fake_tick), patch("buysignal.schedule.runner.sleep"):
         runner.run_forever(interval_sec=0, on_tick=bad_callback)
     assert len(tick_calls) == 2
 
 
 def test_run_forever_keyboard_interrupt_from_sleep_stops_cleanly(caplog):
-    with caplog.at_level(logging.INFO), patch("runner.tick", return_value=None), patch(
-        "runner.sleep", side_effect=KeyboardInterrupt
+    with caplog.at_level(logging.INFO), patch("buysignal.schedule.runner.tick", return_value=None), patch(
+        "buysignal.schedule.runner.sleep", side_effect=KeyboardInterrupt
     ):
         runner.run_forever(interval_sec=0)
     assert "Runner stopped." in caplog.text
 
 
 def test_cf_bypass_ready_true_when_reachable():
-    with patch("runner.requests.get", return_value=None):
+    with patch("buysignal.schedule.runner.requests.get", return_value=None):
         assert runner._cf_bypass_ready(timeout=1.0) is True
 
 
 def test_cf_bypass_ready_false_when_unreachable():
     import requests
 
-    with patch("runner.requests.get", side_effect=requests.exceptions.ConnectionError()):
+    with patch("buysignal.schedule.runner.requests.get", side_effect=requests.exceptions.ConnectionError()):
         assert runner._cf_bypass_ready(timeout=0.1) is False
 
 
@@ -431,9 +431,9 @@ def test_vix_active_window_inactive_on_weekend_even_within_hour_range():
 def test_tick_runs_when_closed_but_vix_window_active():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
     assert runner.market_session(dt) == runner.CLOSED
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro") as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)) as mock_compute, patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro") as mock_refresh:
         result = runner.tick(dt)
     assert result is not None
     mock_compute.assert_called_once()
@@ -443,7 +443,7 @@ def test_tick_runs_when_closed_but_vix_window_active():
 def test_tick_idle_when_closed_and_vix_window_inactive():
     dt = datetime(2026, 7, 24, 21, 0, tzinfo=ET)  # 9pm ET = 8pm CT: both NYSE closed and VIX quiet
     assert runner.market_session(dt) == runner.CLOSED
-    with patch("runner.compute_signal") as mock_compute:
+    with patch("buysignal.schedule.runner.compute_signal") as mock_compute:
         result = runner.tick(dt)
     assert result is None
     mock_compute.assert_not_called()
@@ -451,18 +451,18 @@ def test_tick_idle_when_closed_and_vix_window_inactive():
 
 def test_tick_refreshes_during_closed_vix_window_if_vix_passes():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=True)), patch(
+        "buysignal.schedule.runner._any_due", return_value=False
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
 
 def test_tick_refreshes_during_closed_vix_window_when_a_collector_is_due():
     dt = datetime(2026, 7, 24, 3, 0, tzinfo=ET)  # 3am ET = 2am CT: NYSE closed, VIX active
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=True
-    ), patch("runner.refresh_macro", return_value=[]) as mock_refresh:
+    with patch("buysignal.schedule.runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
+        "buysignal.schedule.runner._any_due", return_value=True
+    ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
         runner.tick(dt)
     mock_refresh.assert_called_once()
 
@@ -489,7 +489,7 @@ def test_run_forever_sleeps_until_next_hour_boundary(monkeypatch):
         calls.append(sec)
         raise KeyboardInterrupt
 
-    with patch("runner.tick", return_value=None), patch("runner.sleep", side_effect=fake_sleep):
+    with patch("buysignal.schedule.runner.tick", return_value=None), patch("buysignal.schedule.runner.sleep", side_effect=fake_sleep):
         runner.run_forever(interval_sec=3600)
     assert calls == [3600 - (1_700_003_600.0 % 3600)]
 
@@ -499,5 +499,5 @@ def test_any_due_survives_a_domain_rule_that_raises():
     exploding = _FakeCollector("margin_debt")
     exploding.demands_refresh = lambda: 1 / 0
 
-    with patch("runner._macro_collectors", return_value=[exploding]):
+    with patch("buysignal.schedule.runner._macro_collectors", return_value=[exploding]):
         assert runner._any_due(NOW) is True

@@ -1,14 +1,14 @@
 """Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
 
 One tick() per call: hourly, the highest frequency any signal needs (VIX and market_dip
-refresh every tick). `python runner.py` does a single tick, for an external scheduler (cron,
-GitHub Actions, /loop); `python runner.py --loop` runs tick() forever itself, sleeping until
-the next wall-clock hour between calls. Sessions come from the exchange schedule, so holidays/
+refresh every tick). `python -m buysignal.schedule.runner` does a single tick, for an external
+scheduler (cron, GitHub Actions, /loop); the same command with --loop runs tick() forever
+itself, sleeping until the next wall-clock hour between calls. Sessions come from the exchange schedule, so holidays/
 early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
 session just track VIX, recomputing macro only on a band crossing, except margin_debt, which
 is checked every tick once its monthly checkpoint is due (see below), regardless of VIX/session.
 When each macro collector is actually attempted is decided in one place, RefreshJournal
-(refresh_journal.py): once a day on success, sooner on a domain rule (margin_debt's FINRA
+(schedule/journal.py): once a day on success, sooner on a domain rule (margin_debt's FINRA
 checkpoint, see MARGIN_REFRESH_WINDOW_DAY / data_freshness()), later on a failure (a retry
 backoff, so one bad pass costs hours rather than the whole day). So a VIX band crossing that
 persists for several hourly ticks only triggers one real refresh, not one per tick, and a
@@ -31,15 +31,15 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 import requests
 
-from config import (
+from buysignal.config import (
     CF_BYPASS_URL,
     REFRESH_JOURNAL_JSON,
     TICK_INTERVAL_SEC,
     VIX_WINDOW_END_HOUR_CT,
     VIX_WINDOW_START_HOUR_CT,
 )
-from refresh_journal import RefreshJournal
-from signals.buy_signal import compute_signal
+from buysignal.schedule.journal import RefreshJournal
+from buysignal.signals.buy_signal import compute_signal
 
 log = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ def _macro_collectors() -> list[MacroCollector]:
     """The macro caches refresh_macro() drives, cheapest and most reliable first, so a browser
     that won't start costs only the two collectors that need one.
     """
-    from collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
+    from buysignal.collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
 
     return [
         MacroCollector("yield_curve", yield_curve.update_yield_curve_data, yield_curve.demands_refresh),
@@ -301,9 +301,9 @@ def run_forever(interval_sec: float = TICK_INTERVAL_SEC, on_tick=None) -> None:
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
-    logs.configure()  # bot.py does this for the long-running process; do it for the CLI too
+    logs.configure()  # __main__.py does this for the long-running process; do it for the CLI too
     if "--loop" in sys.argv:
         run_forever()
     else:

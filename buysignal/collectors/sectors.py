@@ -12,7 +12,7 @@ import pandas as pd
 import yfinance as yf
 from yfinance.const import SECTOR_INDUSTY_MAPPING_LC
 
-from config import SECTOR_TOP_CONSTITUENTS, SECTOR_TOP_N, SECTORS_CSV
+from buysignal.config import SECTOR_TOP_CONSTITUENTS, SECTOR_TOP_N, SECTORS_CSV
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     update_sector_data()

@@ -14,11 +14,11 @@ import pandas as pd
 import pytest
 import requests
 
-from collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
-from collectors import market as market_mod
-from collectors import vix as vix_mod
-from collectors.freshness import last_modified
-from config import MARKET_MONTHLY_LOOKBACK_DAYS, MARKET_WEEKLY_LOOKBACK_DAYS
+from buysignal.collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
+from buysignal.collectors import market as market_mod
+from buysignal.collectors import vix as vix_mod
+from buysignal.collectors.freshness import last_modified
+from buysignal.config import MARKET_MONTHLY_LOOKBACK_DAYS, MARKET_WEEKLY_LOOKBACK_DAYS
 
 # --- freshness ---------------------------------------------------------------
 
@@ -43,7 +43,7 @@ def test_refresh_vix_cache_first_run(tmp_path):
     path = tmp_path / "vix.csv"
     idx = pd.date_range("2026-01-01", periods=3, freq="h", tz="UTC")
     series = pd.Series([20.0, 21.0, 22.0], index=idx, name="Close")
-    with patch("collectors.vix._download_close", return_value=series):
+    with patch("buysignal.collectors.vix._download_close", return_value=series):
         assert vix_mod.refresh_vix_cache(path) is True
     df = pd.read_csv(path, index_col=0)
     assert len(df) == 3
@@ -55,7 +55,7 @@ def test_refresh_vix_cache_keeps_the_newer_value_for_an_overlapping_timestamp(tm
     pd.Series([20.0, 21.0], index=idx1, name="Close").to_csv(path)
     idx2 = pd.date_range("2026-01-01 01:00", periods=2, freq="h", tz="UTC")
     new_series = pd.Series([99.0, 23.0], index=idx2, name="Close")
-    with patch("collectors.vix._download_close", return_value=new_series):
+    with patch("buysignal.collectors.vix._download_close", return_value=new_series):
         vix_mod.refresh_vix_cache(path)
     df = pd.read_csv(path, index_col=0)
     assert len(df) == 3
@@ -64,7 +64,7 @@ def test_refresh_vix_cache_keeps_the_newer_value_for_an_overlapping_timestamp(tm
 
 def test_refresh_vix_cache_no_data(tmp_path):
     path = tmp_path / "vix.csv"
-    with patch("collectors.vix._download_close", return_value=None):
+    with patch("buysignal.collectors.vix._download_close", return_value=None):
         assert vix_mod.refresh_vix_cache(path) is False
     assert not path.exists()
 
@@ -94,7 +94,7 @@ def test_load_latest_cached_vix_empty_file(tmp_path):
 
 def test_get_latest_vix_raises_when_no_cache_and_download_fails(tmp_path):
     path = tmp_path / "vix.csv"
-    with patch("collectors.vix._download_close", return_value=None):
+    with patch("buysignal.collectors.vix._download_close", return_value=None):
         with pytest.raises(RuntimeError):
             vix_mod.get_latest_vix(path)
 
@@ -158,7 +158,7 @@ def test_market_refresh_cache_first_run(tmp_path):
     path = tmp_path / "market.csv"
     idx = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
     df = pd.DataFrame({"SPY": [100, 101], "NASDAQ": [200, 201], "DOW": [300, 301]}, index=idx)
-    with patch("collectors.market._download_closes", return_value=df):
+    with patch("buysignal.collectors.market._download_closes", return_value=df):
         assert market_mod.refresh_market_cache(path) is True
     assert path.exists()
 
@@ -210,7 +210,7 @@ def test_market_latest_changes_succeeds_at_exactly_the_monthly_lookback(tmp_path
 
 def test_get_latest_market_changes_raises_when_no_cache_and_download_fails(tmp_path):
     path = tmp_path / "market.csv"
-    with patch("collectors.market._download_closes", return_value=None):
+    with patch("buysignal.collectors.market._download_closes", return_value=None):
         with pytest.raises(RuntimeError):
             market_mod.get_latest_market_changes(path)
 
@@ -302,7 +302,7 @@ def test_parse_xlsx():
 
 
 def test_get_clearance_connection_error_hint():
-    with patch("collectors.margin_debt.requests.get", side_effect=requests.exceptions.ConnectionError()):
+    with patch("buysignal.collectors.margin_debt.requests.get", side_effect=requests.exceptions.ConnectionError()):
         with pytest.raises(RuntimeError, match="docker compose up -d cfbypass"):
             margin_debt._get_clearance()
 
@@ -371,7 +371,7 @@ def test_industry_earnings_growth_no_top_companies(monkeypatch):
 
 def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
     path = tmp_path / "sectors.csv"
-    with patch("collectors.sectors._industry_market_caps", side_effect=RuntimeError("boom")):
+    with patch("buysignal.collectors.sectors._industry_market_caps", side_effect=RuntimeError("boom")):
         error = sectors.update_sector_data(path)
     assert not path.exists()
     assert error is not None
@@ -381,9 +381,9 @@ def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
 def test_update_sector_data_success_returns_none(tmp_path):
     path = tmp_path / "sectors.csv"
     with patch(
-        "collectors.sectors._industry_market_caps",
+        "buysignal.collectors.sectors._industry_market_caps",
         return_value=pd.DataFrame({"industry": ["X"], "key": ["x"], "market_cap": [1.0]}),
-    ), patch("collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
+    ), patch("buysignal.collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
         error = sectors.update_sector_data(path)
     assert error is None
     assert path.exists()
@@ -398,7 +398,7 @@ def test_percentage_parsing():
 
 def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
     path = tmp_path / "fedwatch.csv"
-    with patch("collectors.fed_rate._fetch_with_retries", return_value=(None, "ConnectionError: boom")):
+    with patch("buysignal.collectors.fed_rate._fetch_with_retries", return_value=(None, "ConnectionError: boom")):
         error = fed_rate.update_fed_rate_data(path)
     assert not path.exists()
     assert error == "ConnectionError: boom"
@@ -437,7 +437,7 @@ def _mock_fred_get(url, params=None, timeout=None):
 
 
 def test_fred_fetch_series_parses_and_drops_holiday_blanks():
-    with patch("collectors.fred.requests.get", return_value=_mock_fred_response()):
+    with patch("buysignal.collectors.fred.requests.get", return_value=_mock_fred_response()):
         df = fred.fetch_series("T10Y3M")
     assert list(df.columns) == ["date", "value"]
     assert len(df) == 3
@@ -447,8 +447,8 @@ def test_fred_fetch_series_parses_and_drops_holiday_blanks():
 
 def test_update_yield_curve_data_writes_cache(tmp_path):
     path = tmp_path / "yieldcurve.csv"
-    with patch("collectors.fred.requests.get", side_effect=_mock_fred_get), patch(
-        "collectors.yield_curve.time.sleep"
+    with patch("buysignal.collectors.fred.requests.get", side_effect=_mock_fred_get), patch(
+        "buysignal.collectors.yield_curve.time.sleep"
     ):
         error = yield_curve.update_yield_curve_data(path)
     assert error is None
@@ -469,8 +469,8 @@ def _failing_policy_leg(series_id, label):
 def test_update_yield_curve_data_caches_curve_when_policy_legs_fail(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     with patch(
-        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
-    ), patch("collectors.yield_curve.time.sleep"):
+        "buysignal.collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("buysignal.collectors.yield_curve.time.sleep"):
         error = yield_curve.update_yield_curve_data(path)
 
     assert error == "policy spread: HTTPError: 503"
@@ -489,8 +489,8 @@ def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_return_not
             return pd.DataFrame({"date": [pd.Timestamp("2026-08-21")], "value": [0.86]}), None
         return empty, None
 
-    with patch("collectors.yield_curve.fetch_series_with_retries", side_effect=legs), patch(
-        "collectors.yield_curve.time.sleep"
+    with patch("buysignal.collectors.yield_curve.fetch_series_with_retries", side_effect=legs), patch(
+        "buysignal.collectors.yield_curve.time.sleep"
     ):
         yield_curve.update_yield_curve_data(path)
 
@@ -503,8 +503,8 @@ def test_update_yield_curve_data_survives_a_truncated_cache(tmp_path):
     path.write_text("")
 
     with patch(
-        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
-    ), patch("collectors.yield_curve.time.sleep"):
+        "buysignal.collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("buysignal.collectors.yield_curve.time.sleep"):
         error = yield_curve.update_yield_curve_data(path)
 
     assert error == "policy spread: HTTPError: 503"
@@ -516,8 +516,8 @@ def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_fail(tmp_p
     path.write_text("date,spread,policy_spread\n2026-08-21,0.80,-0.41\n")
 
     with patch(
-        "collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
-    ), patch("collectors.yield_curve.time.sleep"):
+        "buysignal.collectors.yield_curve.fetch_series_with_retries", side_effect=_failing_policy_leg
+    ), patch("buysignal.collectors.yield_curve.time.sleep"):
         yield_curve.update_yield_curve_data(path)
 
     history = yield_curve.yield_curve_history(path)
@@ -528,8 +528,8 @@ def test_update_yield_curve_data_keeps_cached_policy_spread_when_legs_fail(tmp_p
 def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     with patch(
-        "collectors.yield_curve.fetch_series_with_retries", return_value=(None, "ConnectionError: boom")
-    ), patch("collectors.yield_curve.time.sleep"):
+        "buysignal.collectors.yield_curve.fetch_series_with_retries", return_value=(None, "ConnectionError: boom")
+    ), patch("buysignal.collectors.yield_curve.time.sleep"):
         error = yield_curve.update_yield_curve_data(path)
     assert not path.exists()
     assert error == "ConnectionError: boom"
@@ -566,7 +566,7 @@ def _driver(page_load_timeout):
 
 def _fake_chrome():
     """Stand in for the real browser session; _fetch_index_metrics is patched alongside it."""
-    return patch("collectors.valuations.chrome_session", _driver)
+    return patch("buysignal.collectors.valuations.chrome_session", _driver)
 
 
 # Body text as Selenium reads it off a rendered MSCI index page (abridged).
@@ -603,8 +603,8 @@ def test_parse_metrics_raises_on_challenge_page():
 def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
     path = tmp_path / "valuations.csv"
     with _fake_chrome(), patch(
-        "collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
-    ), patch("collectors.valuations.time.sleep"):
+        "buysignal.collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
+    ), patch("buysignal.collectors.valuations.time.sleep"):
         assert valuations.update_valuations_data(path) is None
         assert valuations.update_valuations_data(path) is None
     history = valuations.valuations_history(path)
@@ -623,8 +623,8 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
         return 20.0, 15.0, "July 31, 2026"
 
     with _fake_chrome(), patch(
-        "collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
-    ), patch("collectors.valuations.time.sleep"):
+        "buysignal.collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
+    ), patch("buysignal.collectors.valuations.time.sleep"):
         error = valuations.update_valuations_data(path)
     assert "world_small" in error
     assert "not found" in error
@@ -635,8 +635,8 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
 
 def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     path = tmp_path / "valuations.csv"
-    with patch("collectors.valuations.chrome_session", side_effect=RuntimeError("no chrome")), patch(
-        "collectors.valuations.time.sleep"
+    with patch("buysignal.collectors.valuations.chrome_session", side_effect=RuntimeError("no chrome")), patch(
+        "buysignal.collectors.valuations.time.sleep"
     ):
         error = valuations.update_valuations_data(path)
     assert "webdriver" in error
@@ -650,7 +650,7 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
 
 def test_chrome_session_quits_the_driver_on_the_happy_path():
     driver = MagicMock()
-    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver):
         with chrome.chrome_session(30) as yielded:
             assert yielded is driver
         driver.quit.assert_called_once()
@@ -658,7 +658,7 @@ def test_chrome_session_quits_the_driver_on_the_happy_path():
 
 def test_chrome_session_quits_the_driver_when_the_body_raises():
     driver = MagicMock()
-    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver):
         with pytest.raises(ValueError):
             with chrome.chrome_session(30):
                 raise ValueError("scrape blew up")
@@ -671,7 +671,7 @@ def test_chrome_session_quits_the_driver_when_the_timeout_setting_raises():
     """
     driver = MagicMock()
     driver.set_page_load_timeout.side_effect = RuntimeError("session not created")
-    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver):
         with pytest.raises(RuntimeError):
             with chrome.chrome_session(30):
                 pass
@@ -680,7 +680,7 @@ def test_chrome_session_quits_the_driver_when_the_timeout_setting_raises():
 
 def test_chrome_session_sets_the_page_load_timeout_it_was_given():
     driver = MagicMock()
-    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver):
         with chrome.chrome_session(42):
             pass
     driver.set_page_load_timeout.assert_called_once_with(42)

@@ -1,4 +1,4 @@
-"""Tests for refresh_journal.py: the retry/daily gating, the once-a-day failure dedup, and
+"""Tests for schedule/journal.py: the retry/daily gating, the once-a-day failure dedup, and
 the JSON persistence behind them.
 
 Every clock is a literal passed in, and every journal is built on tmp_path, so nothing here
@@ -8,7 +8,7 @@ monkeypatches time or touches the real data directory.
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from refresh_journal import RefreshJournal
+from buysignal.schedule.journal import RefreshJournal
 
 ET = ZoneInfo("America/New_York")
 
@@ -31,7 +31,7 @@ class _FakeCollector:
 
 
 def _journal(tmp_path, backoff=BACKOFF):
-    return RefreshJournal(tmp_path / "refresh_journal.json", backoff=backoff)
+    return RefreshJournal(tmp_path / "buysignal.schedule.journal.json", backoff=backoff)
 
 
 # --- due(): the single timing authority ---------------------------------------------------
@@ -160,7 +160,7 @@ def test_a_reported_failure_stays_reported_across_a_reopen(tmp_path):
 
 
 def test_a_corrupt_file_degrades_to_refreshing_everything(tmp_path):
-    path = tmp_path / "refresh_journal.json"
+    path = tmp_path / "buysignal.schedule.journal.json"
     path.write_text("{not json at all")
 
     journal = RefreshJournal(path, backoff=BACKOFF)
@@ -170,7 +170,7 @@ def test_a_corrupt_file_degrades_to_refreshing_everything(tmp_path):
 
 
 def test_an_unparseable_entry_is_dropped_without_losing_the_others(tmp_path):
-    path = tmp_path / "refresh_journal.json"
+    path = tmp_path / "buysignal.schedule.journal.json"
     path.write_text('{"fed_rate": {"attempted_at": "not-a-date"}, "sector": '
                     '{"attempted_at": "2026-09-14T05:00:00-04:00", "ok": true, "error": null}}')
 
@@ -180,7 +180,7 @@ def test_an_unparseable_entry_is_dropped_without_losing_the_others(tmp_path):
 
 
 def test_a_missing_data_directory_is_created_on_the_first_write(tmp_path):
-    path = tmp_path / "nested" / "refresh_journal.json"
+    path = tmp_path / "nested" / "buysignal.schedule.journal.json"
     RefreshJournal(path, backoff=BACKOFF).record("fed_rate", ok=True, error=None, now=MORNING)
 
     assert path.exists()

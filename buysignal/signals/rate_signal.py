@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from collectors.fed_rate import latest_fedwatch
-from signals.base import SubSignal
+from buysignal.collectors.fed_rate import latest_fedwatch
+from buysignal.signals.base import SubSignal
 
 
 def _meeting(df: pd.DataFrame, horizon: str) -> pd.Series:

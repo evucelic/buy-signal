@@ -6,8 +6,8 @@ whole point of the module: rendering is the part of the bot you can check by rea
 
 from datetime import datetime, timedelta, timezone
 
-from refresh_journal import CollectorStatus
-from telegram_bot import render
+from buysignal.schedule.journal import CollectorStatus
+from buysignal.telegram_bot import render
 
 NOW = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
 

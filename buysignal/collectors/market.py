@@ -12,7 +12,7 @@ import time
 import pandas as pd
 import yfinance as yf
 
-from config import (
+from buysignal.config import (
     FETCH_JITTER_SEC,
     INDEX_TICKERS,
     MARKET_CSV,
@@ -118,7 +118,7 @@ def get_latest_market_changes(filepath: Path = MARKET_CSV) -> dict[str, dict[str
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     refresh_market_cache()

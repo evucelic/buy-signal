@@ -2,10 +2,10 @@
 
 Three modules, in dependency order: `render` turns values into Telegram HTML and does nothing
 else; `transport` owns the credentials and the wire; `app` holds the state, decides what to
-say and wires the other two together. bot.py only needs the four names below.
+say and wires the other two together. The entrypoint only needs the four names below.
 """
 
-from telegram_bot.app import handle_tick, start
-from telegram_bot.transport import notify_started, notify_stopped
+from buysignal.telegram_bot.app import handle_tick, start
+from buysignal.telegram_bot.transport import notify_started, notify_stopped
 
 __all__ = ["handle_tick", "notify_started", "notify_stopped", "start"]

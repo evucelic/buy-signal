@@ -1,4 +1,4 @@
-"""Logging setup for the whole process: one configure() call, from bot.py, before anything else.
+"""Logging setup for the whole process: one configure() call, from __main__.py, before anything else.
 
 Collector output used to be bare print()s with no timestamp at all, so `docker compose logs`
 couldn't be lined up against the tick schedule. Everything goes through logging now: to stderr,
@@ -11,7 +11,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import DATA_DIR
+from buysignal.config import DATA_DIR
 
 LOG_FILE = DATA_DIR / "buysignal.log"
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"

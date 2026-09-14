@@ -1,8 +1,8 @@
 """Score indicator #1: VIX level -> fear / buying-opportunity signal."""
 
-from collectors.vix import get_latest_vix, load_latest_cached_vix, vix_change_pct
-from config import VIX_OPTIMISTIC, VIX_SOFT, VIX_STRONG
-from signals.base import NONE, SOFT, STRONG, SubSignal
+from buysignal.collectors.vix import get_latest_vix, load_latest_cached_vix, vix_change_pct
+from buysignal.config import VIX_OPTIMISTIC, VIX_SOFT, VIX_STRONG
+from buysignal.signals.base import NONE, SOFT, STRONG, SubSignal
 
 
 def _change_suffix(change: float | None) -> str:

@@ -21,8 +21,8 @@ import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 
-from collectors.chrome import chrome_session
-from config import (
+from buysignal.collectors.chrome import chrome_session
+from buysignal.config import (
     FETCH_JITTER_SEC,
     MSCI_INDEX_URL,
     MSCI_PAGE_LOAD_TIMEOUT_SEC,
@@ -101,7 +101,7 @@ def valuations_history(filepath: Path | str = VALUATIONS_CSV) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     update_valuations_data()

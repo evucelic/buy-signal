@@ -5,7 +5,9 @@ from datetime import timedelta
 from pathlib import Path
 
 # --- Paths -------------------------------------------------------------------
-ROOT = Path(__file__).parent
+# The repo root, one level above the package: data/ is a mounted volume in the container
+# (docker-compose.yml maps ./data to /app/data), so it must not follow the source into it.
+ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 
 VIX_CSV = DATA_DIR / "vixdata.csv"
@@ -15,7 +17,7 @@ SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
-REFRESH_JOURNAL_JSON = DATA_DIR / "refresh_journal.json"  # how each macro collector is doing
+REFRESH_JOURNAL_JSON = DATA_DIR / "buysignal.schedule.journal.json"  # how each macro collector is doing
 
 # --- Tickers -----------------------------------------------------------------
 VIX_TICKER = "^VIX"
@@ -127,9 +129,9 @@ SMALL_CAP_EASING_OBS = 1             # FedWatch horizons (from nearest) expected
 VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed before z-scores are shown
 
 # --- Runner cadence -----------------------------------------------------------
-# How long a failed collector is left alone before it's retried (see refresh_journal.py).
+# How long a failed collector is left alone before it's retried (see schedule/journal.py).
 # Two hours is two ticks: enough that a rate-limited source isn't hammered, short enough
 # that a transient failure still costs part of a day rather than all of it.
 REFRESH_RETRY_BACKOFF = timedelta(hours=2)
-TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (runner.py --loop); matches VIX/market's cadence
+TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (python -m buysignal.schedule.runner --loop); matches VIX/market's cadence
 DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central

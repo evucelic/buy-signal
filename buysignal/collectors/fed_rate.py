@@ -13,8 +13,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from collectors.chrome import chrome_session
-from config import (
+from buysignal.collectors.chrome import chrome_session
+from buysignal.config import (
     FEDWATCH_CSV,
     FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
     FEDWATCH_URL,
@@ -191,7 +191,7 @@ def latest_fedwatch(
 
 
 if __name__ == "__main__":
-    import logs
+    from buysignal import logs
 
     logs.configure()
     update_fed_rate_data()

@@ -1,8 +1,8 @@
 """Score indicators #4 & #5: are the market's leading industries showing earnings growth."""
 
-from collectors.sectors import sector_performance
-from config import SECTOR_GROWTH_QUORUM, SECTOR_TOP_N
-from signals.base import SubSignal
+from buysignal.collectors.sectors import sector_performance
+from buysignal.config import SECTOR_GROWTH_QUORUM, SECTOR_TOP_N
+from buysignal.signals.base import SubSignal
 
 _CAP_UNITS = ((1e12, "T"), (1e9, "B"), (1e6, "M"))
 

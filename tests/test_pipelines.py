@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from telegram_bot import render
-from collectors import market, sectors, vix, yield_curve
-from signals import market_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.telegram_bot import render
+from buysignal.collectors import market, sectors, vix, yield_curve
+from buysignal.signals import market_signal, sector_signal, vix_signal, yield_curve_signal
 
 _TRADING_DAYS = 60
 _CURVE = 0.85
@@ -40,15 +40,15 @@ def _write_pre_schema_cache(path):
 
 
 def _refresh(path):
-    with patch("collectors.fred.requests.get", side_effect=_fake_fred_get), patch(
-        "collectors.yield_curve.time.sleep"
+    with patch("buysignal.collectors.fred.requests.get", side_effect=_fake_fred_get), patch(
+        "buysignal.collectors.yield_curve.time.sleep"
     ):
         return yield_curve.update_yield_curve_data(path)
 
 
 def _score_against(path):
     with patch(
-        "signals.yield_curve_signal.yield_curve_history",
+        "buysignal.signals.yield_curve_signal.yield_curve_history",
         side_effect=lambda: yield_curve.yield_curve_history(path),
     ):
         return yield_curve_signal.score()
@@ -99,11 +99,11 @@ def _vix_bars(closes, start="2026-01-01 14:00"):
 
 def test_a_vix_download_reaches_the_signal_through_the_cache(tmp_path):
     path = tmp_path / "vix.csv"
-    with patch("collectors.vix._download_close", return_value=_vix_bars([18.0, 33.0])):
+    with patch("buysignal.collectors.vix._download_close", return_value=_vix_bars([18.0, 33.0])):
         vix.refresh_vix_cache(path)
         with patch(
-            "signals.vix_signal.get_latest_vix", new=lambda: vix.get_latest_vix(path)
-        ), patch("signals.vix_signal.vix_change_pct", new=lambda: vix.vix_change_pct(path)):
+            "buysignal.signals.vix_signal.get_latest_vix", new=lambda: vix.get_latest_vix(path)
+        ), patch("buysignal.signals.vix_signal.vix_change_pct", new=lambda: vix.vix_change_pct(path)):
             signal = vix_signal.score()
 
     assert signal.score == 33.0
@@ -116,11 +116,11 @@ def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
     index = pd.date_range("2026-01-01 14:00", periods=30, freq="D", tz="UTC")
     closes = [100.0] * 29 + [90.0]
     frame = pd.DataFrame({"SPY": closes, "NASDAQ": closes, "DOW": closes}, index=index)
-    with patch("collectors.market._download_closes", return_value=frame):
+    with patch("buysignal.collectors.market._download_closes", return_value=frame):
         market.refresh_market_cache(path)
 
     with patch(
-        "signals.market_signal.get_latest_market_changes", new=lambda: market.latest_changes(path)
+        "buysignal.signals.market_signal.get_latest_market_changes", new=lambda: market.latest_changes(path)
     ):
         signal = market_signal.score()
 
@@ -139,13 +139,13 @@ def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
         }
     )
     growth = {"a": 0.2, "b": 0.1, "c": 0.05, "d": -0.1, "e": -0.2}
-    with patch("collectors.sectors._industry_market_caps", return_value=ranked), patch(
-        "collectors.sectors._industry_earnings_growth", new=growth.get
+    with patch("buysignal.collectors.sectors._industry_market_caps", return_value=ranked), patch(
+        "buysignal.collectors.sectors._industry_earnings_growth", new=growth.get
     ):
         assert sectors.update_sector_data(path) is None
 
     with patch(
-        "signals.sector_signal.sector_performance", new=lambda: sectors.sector_performance(path)
+        "buysignal.signals.sector_signal.sector_performance", new=lambda: sectors.sector_performance(path)
     ):
         signal = sector_signal.score()
 

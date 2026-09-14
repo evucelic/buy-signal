@@ -11,9 +11,9 @@ import html
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from refresh_journal import CollectorStatus
-from signals.base import SubSignal, format_table
-from signals.buy_signal import BuySignal
+from buysignal.schedule.journal import CollectorStatus
+from buysignal.signals.base import SubSignal, format_table
+from buysignal.signals.buy_signal import BuySignal
 
 # Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
 ALERT_LABELS = {

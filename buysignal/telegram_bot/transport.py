@@ -18,7 +18,7 @@ from collections.abc import Callable
 import requests
 from dotenv import load_dotenv
 
-from telegram_bot.render import COMMANDS
+from buysignal.telegram_bot.render import COMMANDS
 
 load_dotenv()
 

@@ -9,8 +9,8 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from refresh_journal import RefreshJournal
-from telegram_bot import app
+from buysignal.schedule.journal import RefreshJournal
+from buysignal.telegram_bot import app
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,7 @@ def reset_state(monkeypatch, tmp_path):
     """
     app._state = app._State(start_time=datetime.now(timezone.utc))
     monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", -1)
-    journal = RefreshJournal(tmp_path / "refresh_journal.json")
+    journal = RefreshJournal(tmp_path / "buysignal.schedule.journal.json")
     monkeypatch.setattr(app.runner, "macro_journal", lambda: journal)
     yield journal
 

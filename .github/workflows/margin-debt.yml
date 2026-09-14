@@ -22,9 +22,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # runner.py starts the cfbypass container itself (docker is preinstalled on
+      # The runner starts the cfbypass container itself (docker is preinstalled on
       # ubuntu-latest runners) -- the same code path as a local run. Data is
       # intentionally not persisted (data/*.csv stays gitignored); this just fails
       # loudly if the Cloudflare bypass or FINRA's page layout breaks.
-      - name: Run runner.py
-        run: python runner.py
+      - name: Run one tick
+        run: python -m buysignal.schedule.runner

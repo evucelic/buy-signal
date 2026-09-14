@@ -1,8 +1,8 @@
 """Score indicator #6: daily/weekly/monthly % change on SPY, Nasdaq Composite, and Dow Jones."""
 
-from collectors.market import get_latest_market_changes, latest_changes
-from config import INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, MARKET_PRIMARY_INDEX
-from signals.base import SubSignal, format_table
+from buysignal.collectors.market import get_latest_market_changes, latest_changes
+from buysignal.config import INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, MARKET_PRIMARY_INDEX
+from buysignal.signals.base import SubSignal, format_table
 
 
 def _format_index(name: str, changes: dict[str, float]) -> str:

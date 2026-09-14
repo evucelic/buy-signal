@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-import analyzer
+from buysignal import analyzer
 
 
 # --- discount bands ---------------------------------------------------------------
@@ -57,7 +57,7 @@ def _fedwatch_df(nearest, six_month, one_year):
 
 def _rate_view_with(nearest, six_month=(0.2, 0.7, 0.1), one_year=(0.2, 0.7, 0.1)):
     # latest_fedwatch is imported lazily inside _rate_view, so patch it at its home module.
-    with patch("collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df(nearest, six_month, one_year)):
+    with patch("buysignal.collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df(nearest, six_month, one_year)):
         return analyzer._rate_view()
 
 
@@ -96,7 +96,7 @@ def test_rate_view_tie_is_mixed():
 
 
 def test_rate_view_missing_cache_degrades_to_empty():
-    with patch("collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError):
+    with patch("buysignal.collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError):
         view = analyzer._rate_view()
     assert view.horizons == []
     assert view.consecutive_easing == 0
@@ -106,7 +106,7 @@ def test_rate_view_missing_cache_degrades_to_empty():
 def test_rate_view_empty_fedwatch_frame_degrades_not_raises():
     # A present-but-empty cache must not raise out of analyze() (it would kill the bot's poll thread).
     empty = pd.DataFrame(columns=["horizon", "meeting_date", "prob_ease", "prob_no_change", "prob_hike"])
-    with patch("collectors.fed_rate.latest_fedwatch", return_value=empty):
+    with patch("buysignal.collectors.fed_rate.latest_fedwatch", return_value=empty):
         view = analyzer._rate_view()
     assert view.horizons == []
     assert view.rate_support is False
@@ -196,8 +196,8 @@ def _one_day_history(sp500=20.0, world_small=15.0, europe=16.0):
 
 
 def _analyze_with(history):
-    with patch("analyzer.valuations_history", return_value=history), patch(
-        "collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df((0.8, 0.1, 0.1), (0.2, 0.7, 0.1), (0.2, 0.7, 0.1))
+    with patch("buysignal.analyzer.valuations_history", return_value=history), patch(
+        "buysignal.collectors.fed_rate.latest_fedwatch", return_value=_fedwatch_df((0.8, 0.1, 0.1), (0.2, 0.7, 0.1), (0.2, 0.7, 0.1))
     ):
         return analyzer.analyze()
 
@@ -211,8 +211,8 @@ def test_analyze_computes_ratios_and_discounts():
 
 
 def test_analyze_missing_valuations_cache_degrades_with_note():
-    with patch("analyzer.valuations_history", side_effect=FileNotFoundError), patch(
-        "collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError
+    with patch("buysignal.analyzer.valuations_history", side_effect=FileNotFoundError), patch(
+        "buysignal.collectors.fed_rate.latest_fedwatch", side_effect=FileNotFoundError
     ):
         opp = analyzer.analyze()
     assert all(s.fwd_pe is None for s in opp.segments)

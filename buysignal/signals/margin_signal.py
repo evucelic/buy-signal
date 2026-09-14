@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collectors.margin_debt import data_freshness, margin_history
-from config import MARGIN_DELEVERAGE_MONTHS
-from signals.base import SubSignal
+from buysignal.collectors.margin_debt import data_freshness, margin_history
+from buysignal.config import MARGIN_DELEVERAGE_MONTHS
+from buysignal.signals.base import SubSignal
 
 # No dates here -- the "data as of" freshness table elsewhere already shows cache age.
 _TIER_FLAG = {

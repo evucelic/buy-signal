@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from collectors.yield_curve import yield_curve_history
-from config import (
+from buysignal.collectors.yield_curve import yield_curve_history
+from buysignal.config import (
     POLICY_SPREAD_NEG_BUCKETS,
     YIELD_CURVE_BUCKET_DAYS,
     YIELD_CURVE_DEEP_INVERSION,
     YIELD_CURVE_STEEP,
 )
-from signals.base import SubSignal, format_table
+from buysignal.signals.base import SubSignal, format_table
 
 _BUCKET = f"{YIELD_CURVE_BUCKET_DAYS}D"
 

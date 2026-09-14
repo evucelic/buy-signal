@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from config import REFRESH_RETRY_BACKOFF
+from buysignal.config import REFRESH_RETRY_BACKOFF
 
 
 log = logging.getLogger(__name__)
