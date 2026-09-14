@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-import telegram_bot as tb
+from telegram_bot import render
 from collectors import market, sectors, vix, yield_curve
 from signals import market_signal, sector_signal, vix_signal, yield_curve_signal
 
@@ -58,7 +58,7 @@ def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     _write_pre_schema_cache(path)
 
-    message = tb._format_subsignal(_score_against(path))
+    message = render.subsignal_block(_score_against(path))
 
     assert "10y-3m" in message
     assert "2y-FFR" not in message
@@ -77,7 +77,7 @@ def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_
 
     assert _refresh(path) is None
 
-    message = tb._format_subsignal(_score_against(path))
+    message = render.subsignal_block(_score_against(path))
 
     assert "2y-FFR" in message
     assert f"{_TWO_YEAR - _FED_FUNDS:+.2f}pp" in message
