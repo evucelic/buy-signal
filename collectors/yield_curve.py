@@ -7,6 +7,7 @@ T2YFF series). The policy spread going negative means the bond market expects cu
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from pathlib import Path
@@ -21,6 +22,9 @@ from config import (
     YIELD_CURVE_CSV,
     YIELD_CURVE_SERIES,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 def _fetch_policy_spread() -> tuple[pd.DataFrame | None, str | None]:
@@ -87,9 +91,12 @@ def update_yield_curve_data(filepath: Path | str = YIELD_CURVE_CSV) -> str | Non
                 f", 2y-FFR {valid['policy_spread'].iloc[-1]:+.2f}pp "
                 f"({valid['date'].iloc[-1].date()})"
             )
-    print(
-        f"Yield curve cache updated: {len(history)} days, latest "
-        f"{latest['date'].date()} = {latest['spread']:+.2f}pp{policy_note}"
+    log.info(
+        "Yield curve cache updated: %d days, latest %s = %+.2fpp%s",
+        len(history),
+        latest["date"].date(),
+        latest["spread"],
+        policy_note,
     )
     return policy_error
 
@@ -115,5 +122,8 @@ def demands_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_yield_curve_data()
     print(yield_curve_history().tail(6).to_string(index=False))

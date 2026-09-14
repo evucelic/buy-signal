@@ -1,6 +1,7 @@
 __pycache__/
 data/*.csv
 data/*.json
+data/*.log*
 .venv/
 idea.md
 .env

@@ -7,6 +7,7 @@ feeds it results via handle_tick().
 """
 
 import html
+import logging
 import os
 import threading
 import time
@@ -25,6 +26,8 @@ from signals.base import SubSignal, format_table
 from signals.buy_signal import BuySignal, compute_signal
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -149,7 +152,7 @@ def _send(text: str) -> None:
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        print(f"Telegram send failed ({type(exc).__name__}: {exc})")
+        log.error("Telegram send failed (%s: %s)", type(exc).__name__, exc)
 
 
 def _send_photo(png: bytes, caption: str) -> None:
@@ -162,7 +165,7 @@ def _send_photo(png: bytes, caption: str) -> None:
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        print(f"Telegram sendPhoto failed ({type(exc).__name__}: {exc})")
+        log.error("Telegram sendPhoto failed (%s: %s)", type(exc).__name__, exc)
 
 
 def _is_alerting(result: BuySignal) -> bool:
@@ -509,7 +512,7 @@ def _poll_loop() -> None:
                 if reply is not None:
                     _send(reply)
         except requests.exceptions.RequestException as exc:
-            print(f"Telegram poll failed ({type(exc).__name__}: {exc}); retrying.")
+            log.warning("Telegram poll failed (%s: %s); retrying.", type(exc).__name__, exc)
             time.sleep(_RETRY_DELAY_SEC)
 
 
@@ -519,5 +522,5 @@ def start() -> None:
         resp = requests.post(f"{API}/setMyCommands", json={"commands": _COMMANDS}, timeout=10)
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        print(f"Telegram setMyCommands failed ({type(exc).__name__}: {exc}); continuing anyway.")
+        log.warning("Telegram setMyCommands failed (%s: %s); continuing anyway.", type(exc).__name__, exc)
     threading.Thread(target=_poll_loop, daemon=True).start()

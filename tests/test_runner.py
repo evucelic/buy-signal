@@ -2,6 +2,7 @@
 per-collector isolation of a refresh pass, and run_forever()'s failure resilience.
 """
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -121,15 +122,16 @@ def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
     mock_refresh.assert_called_once()
 
 
-def test_tick_reports_a_refresh_failure_instead_of_discarding_it(capsys):
+def test_tick_reports_a_refresh_failure_instead_of_discarding_it(caplog):
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    with patch("runner.compute_signal", return_value=_fake_result(vix_passes=False)), patch(
-        "runner._any_due", return_value=False
-    ), patch("runner.refresh_macro", return_value=[("fed_rate", "SessionNotCreated")]):
+    with caplog.at_level(logging.INFO), patch(
+        "runner.compute_signal", return_value=_fake_result(vix_passes=False)
+    ), patch("runner._any_due", return_value=False), patch(
+        "runner.refresh_macro", return_value=[("fed_rate", "SessionNotCreated")]
+    ):
         runner.tick(dt)
-    printed = capsys.readouterr().out
-    assert "fed_rate" in printed
-    assert "SessionNotCreated" in printed
+    assert "fed_rate" in caplog.text
+    assert "SessionNotCreated" in caplog.text
 
 
 def test_tick_always_refreshes_in_after_hours():
@@ -375,10 +377,12 @@ def test_run_forever_survives_a_failing_on_tick_callback():
     assert len(tick_calls) == 2
 
 
-def test_run_forever_keyboard_interrupt_from_sleep_stops_cleanly(capsys):
-    with patch("runner.tick", return_value=None), patch("runner.sleep", side_effect=KeyboardInterrupt):
+def test_run_forever_keyboard_interrupt_from_sleep_stops_cleanly(caplog):
+    with caplog.at_level(logging.INFO), patch("runner.tick", return_value=None), patch(
+        "runner.sleep", side_effect=KeyboardInterrupt
+    ):
         runner.run_forever(interval_sec=0)
-    assert "Runner stopped." in capsys.readouterr().out
+    assert "Runner stopped." in caplog.text
 
 
 def test_cf_bypass_ready_true_when_reachable():

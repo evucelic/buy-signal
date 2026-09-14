@@ -613,13 +613,13 @@ def test_notify_stopped(monkeypatch):
     assert sent == ["🔴 Runner stopped"]
 
 
-def test_send_swallows_request_exception(monkeypatch, capsys):
+def test_send_swallows_request_exception(monkeypatch, caplog):
     def boom(*a, **k):
         raise tb.requests.exceptions.RequestException("fail")
 
     monkeypatch.setattr(tb.requests, "post", boom)
     tb._send("hi")  # must not raise
-    assert "Telegram send failed" in capsys.readouterr().out
+    assert "Telegram send failed" in caplog.text
 
 
 # --- bot.py ---------------------------------------------------------

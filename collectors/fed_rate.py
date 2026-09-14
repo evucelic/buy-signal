@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from pathlib import Path
@@ -21,6 +22,8 @@ from config import (
     SCRAPE_BACKOFF_SEC,
     SCRAPE_RETRIES,
 )
+
+log = logging.getLogger(__name__)
 
 _HORIZONS = {
     "nearest": pd.DateOffset(),
@@ -145,14 +148,14 @@ def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str |
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt + 1 == SCRAPE_RETRIES:
-                print(f"FedWatch scrape failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
+                log.error("FedWatch scrape failed after %d tries (%s); cache unchanged.", SCRAPE_RETRIES, last_error)
                 return None, last_error
 
             delay = (
                 SCRAPE_BACKOFF_SEC * 2**attempt
                 + random.uniform(0, 1)
             )
-            print(f"FedWatch attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
+            log.debug("FedWatch attempt %d failed (%s); retry in %.0fs", attempt + 1, last_error, delay)
             time.sleep(delay)
 
     return None, last_error
@@ -170,10 +173,11 @@ def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(filepath, index=False)
 
-    print(
-        f"FedWatch cache updated: {len(snapshot)} meetings, "
-        f"{snapshot['meeting_date'].min().date()} -> "
-        f"{snapshot['meeting_date'].max().date()}"
+    log.info(
+        "FedWatch cache updated: %d meetings, %s -> %s",
+        len(snapshot),
+        snapshot["meeting_date"].min().date(),
+        snapshot["meeting_date"].max().date(),
     )
     return None
 
@@ -187,5 +191,8 @@ def latest_fedwatch(
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_fed_rate_data()
     print(latest_fedwatch().to_string(index=False))

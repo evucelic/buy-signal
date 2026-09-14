@@ -8,6 +8,7 @@ the xlsx directly (no browser needed for the download itself). See config.CF_BYP
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from io import BytesIO
@@ -28,6 +29,8 @@ from config import (
     SCRAPE_BACKOFF_SEC,
     SCRAPE_RETRIES,
 )
+
+log = logging.getLogger(__name__)
 
 _COLUMN_MAP = {
     "Year-Month": "month",
@@ -82,11 +85,11 @@ def _fetch_with_retries() -> tuple[pd.DataFrame | None, str | None]:
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt + 1 == SCRAPE_RETRIES:
-                print(f"Margin debt fetch failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
+                log.error("Margin debt fetch failed after %d tries (%s); cache unchanged.", SCRAPE_RETRIES, last_error)
                 return None, last_error
 
             delay = SCRAPE_BACKOFF_SEC * 2**attempt + random.uniform(0, 1)
-            print(f"Margin debt attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
+            log.debug("Margin debt attempt %d failed (%s); retry in %.0fs", attempt + 1, last_error, delay)
             time.sleep(delay)
 
     return None, last_error
@@ -106,9 +109,13 @@ def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> str | Non
 
     tier, message = data_freshness(history)
     latest = history.iloc[-1]
-    print(
-        f"Margin debt cache updated: {len(history)} months, latest "
-        f"{latest['month'].date()} = {latest['debit_balances']:,.0f} ({tier}: {message})"
+    log.info(
+        "Margin debt cache updated: %d months, latest %s = %s (%s: %s)",
+        len(history),
+        latest["month"].date(),
+        f"{latest['debit_balances']:,.0f}",
+        tier,
+        message,
     )
     return None
 
@@ -177,5 +184,8 @@ def demands_refresh(filepath: Path | str = MARGIN_DEBT_CSV, today: pd.Timestamp 
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_margin_debt_data()
     print(margin_history().tail(6).to_string(index=False))

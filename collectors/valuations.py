@@ -11,6 +11,7 @@ vs own history") possible. Never overwrite this file wholesale.
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import time
@@ -29,6 +30,8 @@ from config import (
     OPPORTUNITY_SEGMENTS,
     VALUATIONS_CSV,
 )
+
+log = logging.getLogger(__name__)
 
 _METRICS = re.compile(r"P/E \| ([\d.,]+) \| P/E Fwd \| ([\d.,]+)")
 _ASOF = re.compile(r"as of (\w+ \d{1,2}, \d{4})", re.IGNORECASE)
@@ -85,7 +88,7 @@ def update_valuations_data(filepath: Path | str = VALUATIONS_CSV) -> str | None:
         new = new.drop_duplicates(subset=["date", "segment"], keep="last").sort_values(["date", "segment"])
         filepath.parent.mkdir(parents=True, exist_ok=True)
         new.to_csv(filepath, index=False)
-        print(f"Valuations cache updated: {len(rows)} segments for {today.date()} ({len(new)} rows total).")
+        log.info("Valuations cache updated: %d segments for %s (%d rows total).", len(rows), today.date(), len(new))
 
     return "; ".join(errors) if errors else None
 
@@ -98,5 +101,8 @@ def valuations_history(filepath: Path | str = VALUATIONS_CSV) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_valuations_data()
     print(valuations_history().tail(8).to_string(index=False))

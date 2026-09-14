@@ -19,6 +19,7 @@ market hours whenever VIX might still be moving, even though the other signals (
 move outside NYSE hours) end up recomputed as a harmless no-op in that window.
 """
 
+import logging
 import sys
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
@@ -39,6 +40,8 @@ from config import (
 )
 from refresh_journal import RefreshJournal
 from signals.buy_signal import compute_signal
+
+log = logging.getLogger(__name__)
 
 ET = ZoneInfo("America/New_York")
 CT = ZoneInfo("America/Chicago")
@@ -96,7 +99,7 @@ def _cf_bypass_ready(timeout: float = 30.0) -> bool:
             return True
         except requests.exceptions.ConnectionError:
             sleep(1)
-    print(f"cfbypass never became reachable at {CF_BYPASS_URL}")
+    log.warning("cfbypass never became reachable at %s", CF_BYPASS_URL)
     return False
 
 
@@ -210,7 +213,7 @@ def _any_due(now: datetime | None = None) -> bool:
             if macro_journal().due(collector, now):
                 return True
         except Exception as exc:
-            print(f"{collector.name} refresh gate failed ({type(exc).__name__}: {exc}); attempting it")
+            log.warning("%s refresh gate failed (%s: %s); attempting it", collector.name, type(exc).__name__, exc)
             return True
     return False
 
@@ -224,7 +227,7 @@ def tick(now: datetime | None = None):
     now = _now_et(now)
     session = market_session(now)
     if session == CLOSED and not vix_active_window(now):
-        print(f"[{_stamp(now)}] Market closed, VIX quiet; idle.")
+        log.info("Market closed, VIX quiet; idle.")
         return None
 
     result = compute_signal()
@@ -237,7 +240,7 @@ def tick(now: datetime | None = None):
     vix_driven = current_vix is not None and current_vix.passes
     if session_driven or vix_driven or _any_due(now):
         for name, error in refresh_macro(now=now):
-            print(f"[{_stamp(now)}] refresh failed: {name}: {error}")
+            log.warning("refresh failed: %s: %s", name, error)
 
     report(result, session, now)
     return result
@@ -249,14 +252,17 @@ def _stamp(now_et: datetime) -> str:
 
 def report(result, session: str, now_et: datetime | None = None) -> None:
     now_et = _now_et(now_et)
-    print(f"[{_stamp(now_et)}] session={session}")
-    print(f"  Alert: {result.state.upper()}  (passing {result.passing_count}/{result.required_count}; score {result.score:+.2f})")
-    print(f"  Rule: {result.detail}")
+    log.info("[%s] session=%s", _stamp(now_et), session)
+    log.info(
+        "  Alert: %s  (passing %d/%d; score %+.2f)",
+        result.state.upper(), result.passing_count, result.required_count, result.score,
+    )
+    log.info("  Rule: %s", result.detail)
     if result.missing_signals:
-        print(f"  Missing: {', '.join(result.missing_signals)}")
+        log.info("  Missing: %s", ", ".join(result.missing_signals))
     for s in result.subsignals:
         status = "PASS" if s.passes else "FAIL"
-        print(f"    - {s.name:12s} {status:4s} {s.state:11s} {s.detail}")
+        log.info("    - %-12s %-4s %-11s %s", s.name, status, s.state, s.detail)
 
 
 def _seconds_until_next_boundary(interval_sec: float) -> float:
@@ -275,7 +281,7 @@ def run_forever(interval_sec: float = TICK_INTERVAL_SEC, on_tick=None) -> None:
     None when the market's closed or the tick failed; error is the caught exception, or None).
     A failing callback is itself logged and skipped, same as a failing tick.
     """
-    print(f"Runner starting: tick every {interval_sec / 60:.0f}m (Ctrl+C to stop).")
+    log.info("Runner starting: tick every %.0fm (Ctrl+C to stop).", interval_sec / 60)
     try:
         while True:
             result, error = None, None
@@ -283,18 +289,21 @@ def run_forever(interval_sec: float = TICK_INTERVAL_SEC, on_tick=None) -> None:
                 result = tick()
             except Exception as exc:
                 error = exc
-                print(f"[{_stamp(_now_et())}] tick failed ({type(exc).__name__}: {exc}); retrying next cycle.")
+                log.error("tick failed (%s: %s); retrying next cycle.", type(exc).__name__, exc)
             if on_tick is not None:
                 try:
                     on_tick(result, error)
                 except Exception as exc:
-                    print(f"[{_stamp(_now_et())}] on_tick callback failed ({type(exc).__name__}: {exc})")
+                    log.error("on_tick callback failed (%s: %s)", type(exc).__name__, exc)
             sleep(_seconds_until_next_boundary(interval_sec))
     except KeyboardInterrupt:
-        print("Runner stopped.")
+        log.info("Runner stopped.")
 
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()  # bot.py does this for the long-running process; do it for the CLI too
     if "--loop" in sys.argv:
         run_forever()
     else:

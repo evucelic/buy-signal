@@ -14,6 +14,7 @@ timestamps against a tmp file rather than a monkeypatched clock.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from dataclasses import dataclass
@@ -22,6 +23,9 @@ from pathlib import Path
 from typing import Protocol
 
 from config import REFRESH_RETRY_BACKOFF
+
+
+log = logging.getLogger(__name__)
 
 
 class Refreshable(Protocol):
@@ -158,4 +162,4 @@ class RefreshJournal:
             os.replace(tmp, self._path)  # atomic: a torn write would read back as "no journal"
         except OSError as exc:
             # Losing the journal costs backoff and dedup, not the refresh itself; keep going.
-            print(f"Refresh journal write failed ({type(exc).__name__}: {exc}); state is in-memory only.")
+            log.error("Refresh journal write failed (%s: %s); state is in-memory only.", type(exc).__name__, exc)
