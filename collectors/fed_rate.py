@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from pathlib import Path
 
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from collectors.freshness import refreshed_today
+from collectors.chrome import chrome_session
 from config import (
     FEDWATCH_CSV,
     FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
@@ -21,8 +21,9 @@ from config import (
     FETCH_JITTER_SEC,
     SCRAPE_BACKOFF_SEC,
     SCRAPE_RETRIES,
-    USER_AGENTS,
 )
+
+log = logging.getLogger(__name__)
 
 _HORIZONS = {
     "nearest": pd.DateOffset(),
@@ -42,20 +43,6 @@ _MEETING_TAB_XPATH = "//a[contains(@id, '_lvMeetings_ctrl') and contains(@id, '_
 
 _TAB_DATE_FORMAT = "%d %b%y"     # tab text, e.g. "29 Jul26"
 _CARD_DATE_FORMAT = "%d %b %Y"   # meeting-info card text once a tab is selected, e.g. "29 Jul 2026"
-
-
-def _build_driver() -> webdriver.Chrome:
-    """Return a headless Chrome driver."""
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1200")
-    options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC)
-    return driver
 
 
 def _percentage(text: str) -> float:
@@ -126,9 +113,7 @@ def _scrape_meeting_probabilities(
 
 def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
     """Scrape the nearest, six-month, and one-year meeting probabilities."""
-    driver = _build_driver()
-
-    try:
+    with chrome_session(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC) as driver:
         driver.get(FEDWATCH_URL)
         wait = WebDriverWait(driver, 40)
 
@@ -153,9 +138,6 @@ def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
             .reset_index(drop=True)
         )
 
-    finally:
-        driver.quit()
-
 
 def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str | None]:
     """Fetch meeting probabilities with retry/backoff. Returns (data, error_message)."""
@@ -166,14 +148,14 @@ def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str |
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt + 1 == SCRAPE_RETRIES:
-                print(f"FedWatch scrape failed after {SCRAPE_RETRIES} tries ({last_error}); cache unchanged.")
+                log.error("FedWatch scrape failed after %d tries (%s); cache unchanged.", SCRAPE_RETRIES, last_error)
                 return None, last_error
 
             delay = (
                 SCRAPE_BACKOFF_SEC * 2**attempt
                 + random.uniform(0, 1)
             )
-            print(f"FedWatch attempt {attempt + 1} failed ({last_error}); retry in {delay:.0f}s")
+            log.debug("FedWatch attempt %d failed (%s); retry in %.0fs", attempt + 1, last_error, delay)
             time.sleep(delay)
 
     return None, last_error
@@ -191,10 +173,11 @@ def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     snapshot.to_csv(filepath, index=False)
 
-    print(
-        f"FedWatch cache updated: {len(snapshot)} meetings, "
-        f"{snapshot['meeting_date'].min().date()} -> "
-        f"{snapshot['meeting_date'].max().date()}"
+    log.info(
+        "FedWatch cache updated: %d meetings, %s -> %s",
+        len(snapshot),
+        snapshot["meeting_date"].min().date(),
+        snapshot["meeting_date"].max().date(),
     )
     return None
 
@@ -206,11 +189,10 @@ def latest_fedwatch(
     return pd.read_csv(filepath, parse_dates=["meeting_date"])
 
 
-def should_refresh(filepath: Path | str = FEDWATCH_CSV) -> bool:
-    """Skip if already refreshed today: CME FedWatch doesn't need more than daily tracking."""
-    return not refreshed_today(filepath)
-
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_fed_rate_data()
     print(latest_fedwatch().to_string(index=False))

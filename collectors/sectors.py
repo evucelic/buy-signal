@@ -5,14 +5,16 @@ that sector; ranks all ~145 industries from ~11 sector-level requests instead of
 one request per industry.
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
 from yfinance.const import SECTOR_INDUSTY_MAPPING_LC
 
-from collectors.freshness import refreshed_today
 from config import SECTOR_TOP_CONSTITUENTS, SECTOR_TOP_N, SECTORS_CSV
+
+log = logging.getLogger(__name__)
 
 
 def _industry_market_caps() -> pd.DataFrame:
@@ -67,14 +69,14 @@ def update_sector_data(filepath: Path = SECTORS_CSV) -> str | None:
         ranked["earnings_growth_estimate_1y"] = ranked["key"].apply(_industry_earnings_growth)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
-        print(f"Sector data fetch failed ({error}); cache unchanged.")
+        log.error("Sector data fetch failed (%s); cache unchanged.", error)
         return error
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
     ranked.to_csv(filepath, index=False)
 
     growing = int((ranked["earnings_growth_estimate_1y"] > 0).sum())
-    print(f"Sector cache updated: top {len(ranked)} industries, {growing} with positive earnings growth")
+    log.info("Sector cache updated: top %d industries, %d with positive earnings growth", len(ranked), growing)
     return None
 
 
@@ -83,11 +85,10 @@ def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
     return pd.read_csv(filepath)
 
 
-def should_refresh(filepath: Path = SECTORS_CSV) -> bool:
-    """Skip if already refreshed today: industry rankings/earnings estimates move slowly."""
-    return not refreshed_today(filepath)
-
 
 if __name__ == "__main__":
+    import logs
+
+    logs.configure()
     update_sector_data()
     print(sector_performance().to_string(index=False))

@@ -4,8 +4,8 @@ Selenium/live-network scraping (collectors/fed_rate.py's browser-driving code) i
 meaningfully unit-testable and is scoped out: only its pure-logic helpers are covered here.
 """
 
-import os
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from datetime import datetime
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -14,31 +14,13 @@ import pandas as pd
 import pytest
 import requests
 
-from collectors import fed_rate, fred, margin_debt, sectors, valuations, yield_curve
+from collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
 from collectors import market as market_mod
 from collectors import vix as vix_mod
-from collectors.freshness import last_modified, refreshed_today
+from collectors.freshness import last_modified
 from config import MARKET_MONTHLY_LOOKBACK_DAYS, MARKET_WEEKLY_LOOKBACK_DAYS
 
 # freshness
-
-
-def test_refreshed_today_missing_file(tmp_path):
-    assert refreshed_today(tmp_path / "nope.csv") is False
-
-
-def test_refreshed_today_true(tmp_path):
-    f = tmp_path / "x.csv"
-    f.write_text("x")
-    assert refreshed_today(f) is True
-
-
-def test_refreshed_today_false_old_mtime(tmp_path):
-    f = tmp_path / "x.csv"
-    f.write_text("x")
-    old = (datetime.now() - timedelta(days=2)).timestamp()
-    os.utime(f, (old, old))
-    assert refreshed_today(f) is False
 
 
 def test_last_modified_missing_file(tmp_path):
@@ -260,30 +242,42 @@ def test_data_freshness_tiers(age_months, day, expected_tier):
     assert tier == expected_tier
 
 
-def test_margin_should_refresh_missing_file(tmp_path):
-    assert margin_debt.should_refresh(tmp_path / "nope.csv") is True
+def test_margin_demands_refresh_missing_file(tmp_path):
+    assert margin_debt.demands_refresh(tmp_path / "nope.csv") is True
 
 
-def test_margin_should_refresh_already_done_today(tmp_path):
+def test_margin_demands_refresh_false_when_the_cached_month_is_current(tmp_path):
+    """The normal one-month FINRA lag: nothing new to find, so the daily gate is the schedule."""
     path = tmp_path / "m.csv"
     pd.DataFrame({"month": [pd.Timestamp("2026-06-01")]}).to_csv(path, index=False)
-    assert margin_debt.should_refresh(path, today=pd.Timestamp.now()) is False
+    assert margin_debt.demands_refresh(path, today=pd.Timestamp("2026-07-05")) is False
 
 
-def test_margin_should_refresh_false_when_still_fresh_but_not_checked_today(tmp_path):
+def test_margin_demands_refresh_when_the_release_checkpoint_has_passed(tmp_path):
+    """Past the third week with the release still missing: worth a try every tick, refreshed
+    today or not, which is exactly what the journal's daily gate would otherwise prevent.
+    """
     path = tmp_path / "m.csv"
-    pd.DataFrame({"month": [pd.Timestamp("2026-06-01")]}).to_csv(path, index=False)
-    old = (datetime.now() - timedelta(days=3)).timestamp()
-    os.utime(path, (old, old))
-    assert margin_debt.should_refresh(path, today=pd.Timestamp("2026-07-05")) is False
+    pd.DataFrame({"month": [pd.Timestamp("2026-05-01")]}).to_csv(path, index=False)
+    assert margin_debt.demands_refresh(path, today=pd.Timestamp("2026-07-26")) is True
 
 
-def test_margin_should_refresh_stale_triggers(tmp_path):
+def test_margin_does_not_demand_hourly_refreshes_for_a_stale_cache(tmp_path):
+    """"stale" means the scraper looks broken; hitting FINRA every hour wouldn't fix that, so
+    it falls back to the journal's daily gate.
+    """
     path = tmp_path / "m.csv"
     pd.DataFrame({"month": [pd.Timestamp("2025-01-01")]}).to_csv(path, index=False)
-    old = (datetime.now() - timedelta(days=5)).timestamp()
-    os.utime(path, (old, old))
-    assert margin_debt.should_refresh(path, today=pd.Timestamp("2026-07-26")) is True
+    assert margin_debt.demands_refresh(path, today=pd.Timestamp("2026-07-26")) is False
+
+
+def test_margin_demands_refresh_when_the_cache_is_unreadable(tmp_path):
+    """A cache truncated by a kill mid-write must ask for a refetch, not raise out of the gate
+    and take the whole tick - signal, alert and report - down with it.
+    """
+    path = tmp_path / "m.csv"
+    path.write_text("")
+    assert margin_debt.demands_refresh(path, today=pd.Timestamp("2026-07-26")) is True
 
 
 def test_parse_xlsx():
@@ -400,10 +394,6 @@ def test_update_sector_data_success_returns_none(tmp_path):
 
 def test_percentage_parsing():
     assert fed_rate._percentage("34.2%") == pytest.approx(0.342)
-
-
-def test_fed_rate_should_refresh_missing_file(tmp_path):
-    assert fed_rate.should_refresh(tmp_path / "nope.csv") is True
 
 
 def test_update_fed_rate_data_failure_leaves_cache_untouched(tmp_path):
@@ -545,29 +535,39 @@ def test_update_yield_curve_data_failure_leaves_cache_untouched(tmp_path):
     assert error == "ConnectionError: boom"
 
 
-def test_yield_curve_should_refresh_missing_file(tmp_path):
-    assert yield_curve.should_refresh(tmp_path / "nope.csv") is True
+def test_yield_curve_demands_refresh_missing_file(tmp_path):
+    assert yield_curve.demands_refresh(tmp_path / "nope.csv") is True
 
 
-def test_yield_curve_should_refresh_false_when_todays_cache_has_every_column(tmp_path):
+def test_yield_curve_does_not_demand_refresh_when_the_cache_has_every_column(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("date,spread,policy_spread\n2026-08-21,0.86,-0.41\n")
-    assert yield_curve.should_refresh(path) is False
+    assert yield_curve.demands_refresh(path) is False
 
 
-def test_yield_curve_should_refresh_when_todays_cache_predates_the_policy_column(tmp_path):
+def test_yield_curve_demands_refresh_when_the_cache_predates_the_policy_column(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("date,spread\n2026-08-21,0.86\n")
-    assert yield_curve.should_refresh(path) is True
+    assert yield_curve.demands_refresh(path) is True
 
 
-def test_yield_curve_should_refresh_when_todays_cache_is_truncated(tmp_path):
+def test_yield_curve_demands_refresh_when_the_cache_is_truncated(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("")
-    assert yield_curve.should_refresh(path) is True
+    assert yield_curve.demands_refresh(path) is True
 
 
 # collectors/valuations.py (non-Selenium logic only, like fed_rate)
+
+@contextmanager
+def _driver(page_load_timeout):
+    yield MagicMock()
+
+
+def _fake_chrome():
+    """Stand in for the real browser session; _fetch_index_metrics is patched alongside it."""
+    return patch("collectors.valuations.chrome_session", _driver)
+
 
 # Body text as Selenium reads it off a rendered MSCI index page (abridged).
 _MSCI_BODY = (
@@ -602,7 +602,7 @@ def test_parse_metrics_raises_on_challenge_page():
 
 def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
     path = tmp_path / "valuations.csv"
-    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+    with _fake_chrome(), patch(
         "collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
     ), patch("collectors.valuations.time.sleep"):
         assert valuations.update_valuations_data(path) is None
@@ -622,7 +622,7 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
             raise ValueError("P/E metrics not found on page")
         return 20.0, 15.0, "July 31, 2026"
 
-    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+    with _fake_chrome(), patch(
         "collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
     ), patch("collectors.valuations.time.sleep"):
         error = valuations.update_valuations_data(path)
@@ -635,7 +635,7 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
 
 def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     path = tmp_path / "valuations.csv"
-    with patch("collectors.valuations._build_driver", side_effect=RuntimeError("no chrome")), patch(
+    with patch("collectors.valuations.chrome_session", side_effect=RuntimeError("no chrome")), patch(
         "collectors.valuations.time.sleep"
     ):
         error = valuations.update_valuations_data(path)
@@ -644,5 +644,41 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     assert not path.exists()
 
 
-def test_valuations_should_refresh_missing_file(tmp_path):
-    assert valuations.should_refresh(tmp_path / "nope.csv") is True
+
+# collectors/chrome.py
+
+
+def test_chrome_session_quits_the_driver_on_the_happy_path():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with chrome.chrome_session(30) as yielded:
+            assert yielded is driver
+        driver.quit.assert_called_once()
+
+
+def test_chrome_session_quits_the_driver_when_the_body_raises():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with pytest.raises(ValueError):
+            with chrome.chrome_session(30):
+                raise ValueError("scrape blew up")
+    driver.quit.assert_called_once()
+
+
+def test_chrome_session_quits_the_driver_when_the_timeout_setting_raises():
+    """A failure after the browser starts must still quit it, or a chrome process is left behind."""
+    driver = MagicMock()
+    driver.set_page_load_timeout.side_effect = RuntimeError("session not created")
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with pytest.raises(RuntimeError):
+            with chrome.chrome_session(30):
+                pass
+    driver.quit.assert_called_once()
+
+
+def test_chrome_session_sets_the_page_load_timeout_it_was_given():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with chrome.chrome_session(42):
+            pass
+    driver.set_page_load_timeout.assert_called_once_with(42)
