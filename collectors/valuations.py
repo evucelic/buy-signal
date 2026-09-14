@@ -18,35 +18,20 @@ from pathlib import Path
 
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
+from collectors.chrome import chrome_session
 from config import (
     FETCH_JITTER_SEC,
     MSCI_INDEX_URL,
     MSCI_PAGE_LOAD_TIMEOUT_SEC,
     MSCI_RENDER_WAIT_SEC,
     OPPORTUNITY_SEGMENTS,
-    USER_AGENTS,
     VALUATIONS_CSV,
 )
 
 _METRICS = re.compile(r"P/E \| ([\d.,]+) \| P/E Fwd \| ([\d.,]+)")
 _ASOF = re.compile(r"as of (\w+ \d{1,2}, \d{4})", re.IGNORECASE)
-
-
-def _build_driver() -> webdriver.Chrome:
-    """Return a headless Chrome driver (mirrors fed_rate's setup)."""
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1200")
-    options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(MSCI_PAGE_LOAD_TIMEOUT_SEC)
-    return driver
 
 
 def _parse_metrics(body_text: str) -> tuple[float, float, str | None]:
@@ -77,24 +62,20 @@ def update_valuations_data(filepath: Path | str = VALUATIONS_CSV) -> str | None:
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
 
-    try:
-        driver = _build_driver()
-    except Exception as exc:
-        return f"webdriver: {type(exc).__name__}: {exc}"
-
     today = pd.Timestamp.now().normalize()
     rows, errors = [], []
     try:
-        for segment, spec in OPPORTUNITY_SEGMENTS.items():
-            try:
-                trailing, fwd, asof = _fetch_index_metrics(driver, spec["msci_code"])
-                rows.append(
-                    {"date": today, "segment": segment, "fwd_pe": fwd, "trailing_pe": trailing, "asof": asof}
-                )
-            except Exception as exc:
-                errors.append(f"{segment}: {type(exc).__name__}: {exc}")
-    finally:
-        driver.quit()
+        with chrome_session(MSCI_PAGE_LOAD_TIMEOUT_SEC) as driver:
+            for segment, spec in OPPORTUNITY_SEGMENTS.items():
+                try:
+                    trailing, fwd, asof = _fetch_index_metrics(driver, spec["msci_code"])
+                    rows.append(
+                        {"date": today, "segment": segment, "fwd_pe": fwd, "trailing_pe": trailing, "asof": asof}
+                    )
+                except Exception as exc:
+                    errors.append(f"{segment}: {type(exc).__name__}: {exc}")
+    except Exception as exc:  # the browser itself: whatever was scraped before it is still written
+        errors.append(f"webdriver: {type(exc).__name__}: {exc}")
 
     if rows:
         new = pd.DataFrame(rows)

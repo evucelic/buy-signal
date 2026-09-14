@@ -4,6 +4,7 @@ Selenium/live-network scraping (collectors/fed_rate.py's browser-driving code) i
 meaningfully unit-testable and is scoped out: only its pure-logic helpers are covered here.
 """
 
+from contextlib import contextmanager
 from datetime import datetime
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -13,7 +14,7 @@ import pandas as pd
 import pytest
 import requests
 
-from collectors import fed_rate, fred, margin_debt, sectors, valuations, yield_curve
+from collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
 from collectors import market as market_mod
 from collectors import vix as vix_mod
 from collectors.freshness import last_modified
@@ -558,6 +559,16 @@ def test_yield_curve_demands_refresh_when_the_cache_is_truncated(tmp_path):
 
 # --- collectors/valuations.py (non-Selenium logic only, like fed_rate) -----------------------
 
+@contextmanager
+def _driver(page_load_timeout):
+    yield MagicMock()
+
+
+def _fake_chrome():
+    """Stand in for the real browser session; _fetch_index_metrics is patched alongside it."""
+    return patch("collectors.valuations.chrome_session", _driver)
+
+
 # Body text as Selenium reads it off a rendered MSCI index page (abridged).
 _MSCI_BODY = (
     "MSCI World Small Cap Index\n"
@@ -591,7 +602,7 @@ def test_parse_metrics_raises_on_challenge_page():
 
 def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
     path = tmp_path / "valuations.csv"
-    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+    with _fake_chrome(), patch(
         "collectors.valuations._fetch_index_metrics", return_value=(26.68, 16.29, "July 31, 2026")
     ), patch("collectors.valuations.time.sleep"):
         assert valuations.update_valuations_data(path) is None
@@ -611,7 +622,7 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
             raise ValueError("P/E metrics not found on page")
         return 20.0, 15.0, "July 31, 2026"
 
-    with patch("collectors.valuations._build_driver", return_value=MagicMock()), patch(
+    with _fake_chrome(), patch(
         "collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
     ), patch("collectors.valuations.time.sleep"):
         error = valuations.update_valuations_data(path)
@@ -624,7 +635,7 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
 
 def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     path = tmp_path / "valuations.csv"
-    with patch("collectors.valuations._build_driver", side_effect=RuntimeError("no chrome")), patch(
+    with patch("collectors.valuations.chrome_session", side_effect=RuntimeError("no chrome")), patch(
         "collectors.valuations.time.sleep"
     ):
         error = valuations.update_valuations_data(path)
@@ -632,3 +643,43 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     assert "no chrome" in error
     assert not path.exists()
 
+
+# --- collectors/chrome.py -----------------------------------------------------------------
+
+
+def test_chrome_session_quits_the_driver_on_the_happy_path():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with chrome.chrome_session(30) as yielded:
+            assert yielded is driver
+        driver.quit.assert_called_once()
+
+
+def test_chrome_session_quits_the_driver_when_the_body_raises():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with pytest.raises(ValueError):
+            with chrome.chrome_session(30):
+                raise ValueError("scrape blew up")
+    driver.quit.assert_called_once()
+
+
+def test_chrome_session_quits_the_driver_when_the_timeout_setting_raises():
+    """The leak that was: the driver was built outside the try, so anything between the browser
+    starting and the try beginning left a chrome process behind - three times per pass.
+    """
+    driver = MagicMock()
+    driver.set_page_load_timeout.side_effect = RuntimeError("session not created")
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with pytest.raises(RuntimeError):
+            with chrome.chrome_session(30):
+                pass
+    driver.quit.assert_called_once()
+
+
+def test_chrome_session_sets_the_page_load_timeout_it_was_given():
+    driver = MagicMock()
+    with patch("collectors.chrome.webdriver.Chrome", return_value=driver):
+        with chrome.chrome_session(42):
+            pass
+    driver.set_page_load_timeout.assert_called_once_with(42)

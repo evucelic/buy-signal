@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from collectors.chrome import chrome_session
 from config import (
     FEDWATCH_CSV,
     FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
@@ -20,7 +20,6 @@ from config import (
     FETCH_JITTER_SEC,
     SCRAPE_BACKOFF_SEC,
     SCRAPE_RETRIES,
-    USER_AGENTS,
 )
 
 _HORIZONS = {
@@ -41,20 +40,6 @@ _MEETING_TAB_XPATH = "//a[contains(@id, '_lvMeetings_ctrl') and contains(@id, '_
 
 _TAB_DATE_FORMAT = "%d %b%y"     # tab text, e.g. "29 Jul26"
 _CARD_DATE_FORMAT = "%d %b %Y"   # meeting-info card text once a tab is selected, e.g. "29 Jul 2026"
-
-
-def _build_driver() -> webdriver.Chrome:
-    """Return a headless Chrome driver."""
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1200")
-    options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC)
-    return driver
 
 
 def _percentage(text: str) -> float:
@@ -125,9 +110,7 @@ def _scrape_meeting_probabilities(
 
 def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
     """Scrape the nearest, six-month, and one-year meeting probabilities."""
-    driver = _build_driver()
-
-    try:
+    with chrome_session(FEDWATCH_PAGE_LOAD_TIMEOUT_SEC) as driver:
         driver.get(FEDWATCH_URL)
         wait = WebDriverWait(driver, 40)
 
@@ -151,9 +134,6 @@ def _fetch_meeting_probabilities(today: pd.Timestamp) -> pd.DataFrame:
             .sort_values("meeting_date")
             .reset_index(drop=True)
         )
-
-    finally:
-        driver.quit()
 
 
 def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str | None]:
