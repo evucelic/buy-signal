@@ -1,5 +1,7 @@
-"""Tests for schedule/runner.py: session classification, tick's refresh-trigger conditions, the
-per-collector isolation of a refresh pass, and run_forever()'s failure resilience.
+"""Tests for schedule/runner.py: tick's refresh-trigger conditions, the per-collector
+isolation of a refresh pass, and run_forever()'s failure resilience.
+
+The session boundaries those triggers are read against live in test_market_hours.py.
 """
 
 import logging
@@ -15,71 +17,6 @@ from buysignal.schedule.journal import RefreshJournal
 ET = ZoneInfo("America/New_York")
 
 # 2026-07-24 is a Friday (ordinary NYSE trading day, no holiday); 2026-07-25 is a Saturday.
-
-
-def test_market_session_closed_on_weekend():
-    dt = datetime(2026, 7, 25, 12, 0, tzinfo=ET)
-    assert runner.market_session(dt) == runner.CLOSED
-
-
-def test_market_session_pre_market():
-    dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    assert runner.market_session(dt) == runner.PRE_MARKET
-
-
-def test_market_session_regular():
-    dt = datetime(2026, 7, 24, 12, 0, tzinfo=ET)
-    assert runner.market_session(dt) == runner.REGULAR
-
-
-def test_market_session_after_hours():
-    dt = datetime(2026, 7, 24, 17, 0, tzinfo=ET)
-    assert runner.market_session(dt) == runner.AFTER_HOURS
-
-
-def test_market_session_closed_late_night():
-    dt = datetime(2026, 7, 24, 21, 0, tzinfo=ET)  # past close(16:00)+4h after-hours window
-    assert runner.market_session(dt) == runner.CLOSED
-
-
-def test_market_session_just_before_premarket_is_closed():
-    dt = datetime(2026, 7, 24, 3, 59, 59, tzinfo=ET)
-    assert runner.market_session(dt) == runner.CLOSED
-
-
-def test_market_session_exactly_at_premarket_start_is_pre_market():
-    dt = datetime(2026, 7, 24, 4, 0, 0, tzinfo=ET)  # boundary is `<`, so == counts as started
-    assert runner.market_session(dt) == runner.PRE_MARKET
-
-
-def test_market_session_just_before_open_is_pre_market():
-    dt = datetime(2026, 7, 24, 9, 29, 59, tzinfo=ET)
-    assert runner.market_session(dt) == runner.PRE_MARKET
-
-
-def test_market_session_exactly_at_open_is_regular():
-    dt = datetime(2026, 7, 24, 9, 30, 0, tzinfo=ET)  # boundary is `<`, so == is already REGULAR
-    assert runner.market_session(dt) == runner.REGULAR
-
-
-def test_market_session_just_before_close_is_regular():
-    dt = datetime(2026, 7, 24, 15, 59, 59, tzinfo=ET)
-    assert runner.market_session(dt) == runner.REGULAR
-
-
-def test_market_session_exactly_at_close_is_after_hours():
-    dt = datetime(2026, 7, 24, 16, 0, 0, tzinfo=ET)  # boundary is `<`, so == is already AFTER_HOURS
-    assert runner.market_session(dt) == runner.AFTER_HOURS
-
-
-def test_market_session_just_before_after_hours_window_ends():
-    dt = datetime(2026, 7, 24, 19, 59, 59, tzinfo=ET)
-    assert runner.market_session(dt) == runner.AFTER_HOURS
-
-
-def test_market_session_exactly_at_after_hours_window_end_is_closed():
-    dt = datetime(2026, 7, 24, 20, 0, 0, tzinfo=ET)  # boundary is `>=`, so == is already CLOSED
-    assert runner.market_session(dt) == runner.CLOSED
 
 
 def _fake_result(vix_passes):
@@ -395,34 +332,6 @@ def test_cf_bypass_ready_false_when_unreachable():
 
     with patch("buysignal.schedule.runner.requests.get", side_effect=requests.exceptions.ConnectionError()):
         assert runner._cf_bypass_ready(timeout=0.1) is False
-
-
-# --- vix_active_window ---------------------------------------------------------
-
-
-def test_vix_active_window_just_before_start_is_inactive():
-    dt = datetime(2026, 7, 24, 1, 59, tzinfo=runner.CT)
-    assert runner.vix_active_window(dt) is False
-
-
-def test_vix_active_window_exactly_at_start_is_active():
-    dt = datetime(2026, 7, 24, 2, 0, tzinfo=runner.CT)  # boundary is `<=`, so == is already active
-    assert runner.vix_active_window(dt) is True
-
-
-def test_vix_active_window_just_before_end_is_active():
-    dt = datetime(2026, 7, 24, 19, 59, tzinfo=runner.CT)
-    assert runner.vix_active_window(dt) is True
-
-
-def test_vix_active_window_exactly_at_end_is_inactive():
-    dt = datetime(2026, 7, 24, 20, 0, tzinfo=runner.CT)  # boundary is `<`, so == is already inactive
-    assert runner.vix_active_window(dt) is False
-
-
-def test_vix_active_window_inactive_on_weekend_even_within_hour_range():
-    dt = datetime(2026, 7, 25, 12, 0, tzinfo=runner.CT)  # Saturday, well within 02:00-20:00
-    assert runner.vix_active_window(dt) is False
 
 
 # --- tick(): CLOSED-but-vix-active behavior ---------------------------------------------------------

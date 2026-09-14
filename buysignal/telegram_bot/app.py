@@ -12,10 +12,10 @@ import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from buysignal.analysis import chart, opportunity
 from buysignal import config
-from buysignal.schedule import runner
+from buysignal.analysis import chart, opportunity
 from buysignal.collectors import freshness
+from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from buysignal.signals.buy_signal import BuySignal, compute_signal
 from buysignal.telegram_bot import render, transport
@@ -123,10 +123,10 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
 
     # The journal owns the dedup (once per collector per day), so there's no state here to
     # keep in sync with it: whatever comes back has not been pushed yet.
-    for failure in runner.macro_journal().take_unreported_failures(now.astimezone(runner.ET)):
+    for failure in runner.macro_journal().take_unreported_failures(now.astimezone(market_hours.ET)):
         transport.send(render.refresh_failures([failure]))
 
-    now_ct = now.astimezone(runner.CT)
+    now_ct = now.astimezone(market_hours.CT)
     with _lock:
         due = report_due(now_ct, _state.last_report_date, config.DAILY_REPORT_HOUR_CT)
         if due:
@@ -167,7 +167,7 @@ def _single_signal(score_fn) -> str:
 
 
 def market_open() -> bool:
-    return runner.market_session() != runner.CLOSED
+    return market_hours.market_session() != market_hours.CLOSED
 
 
 def _status_message() -> str:
@@ -206,7 +206,7 @@ def _refresh() -> str:
     with buy_signal.SIGNAL_LOCK:
         failed = runner.refresh_macro(force=True)
     # Shown in this reply, so don't also push them from the next tick.
-    runner.macro_journal().take_unreported_failures(datetime.now(runner.ET))
+    runner.macro_journal().take_unreported_failures(datetime.now(market_hours.ET))
     reply = _signal_message(compute_signal(allow_refresh=True))
     return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
 

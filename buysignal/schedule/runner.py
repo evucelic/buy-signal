@@ -1,93 +1,45 @@
-"""Decide WHEN to act (NYSE session, in ET), then compute and report the buy signal.
+"""Decide WHEN to act, then compute and report the buy signal.
 
 One tick() per call: hourly, the highest frequency any signal needs (VIX and market_dip
 refresh every tick). `python -m buysignal.schedule.runner` does a single tick, for an external
 scheduler (cron, GitHub Actions, /loop); the same command with --loop runs tick() forever
-itself, sleeping until the next wall-clock hour between calls. Sessions come from the exchange schedule, so holidays/
-early-closes/DST are handled. Full recompute pre-open and post-close; during the regular
-session just track VIX, recomputing macro only on a band crossing, except margin_debt, which
-is checked every tick once its monthly checkpoint is due (see below), regardless of VIX/session.
-When each macro collector is actually attempted is decided in one place, RefreshJournal
-(schedule/journal.py): once a day on success, sooner on a domain rule (margin_debt's FINRA
-checkpoint, see MARGIN_REFRESH_WINDOW_DAY / data_freshness()), later on a failure (a retry
-backoff, so one bad pass costs hours rather than the whole day). So a VIX band crossing that
-persists for several hourly ticks only triggers one real refresh, not one per tick, and a
-collector that still has work to do gets its chance from an ordinary REGULAR tick.
-VIX moves on its own clock, independent of the
-NYSE session (see vix_active_window(), roughly 02:00-20:00 CT), so tick() stays live outside
-market hours whenever VIX might still be moving, even though the other signals (which don't
-move outside NYSE hours) end up recomputed as a harmless no-op in that window.
+itself, sleeping until the next wall-clock hour between calls. What session it is - and
+whether VIX is still moving on its own clock, roughly 02:00-20:00 CT, outside NYSE hours -
+comes from market_hours.py, so holidays, early closes and DST are handled there.
+
+Full recompute pre-open and post-close; during the regular session just track VIX, recomputing
+macro only on a band crossing. When each macro collector is actually attempted is decided in
+one place, RefreshJournal (schedule/journal.py): once a day on success, sooner on a domain rule
+(margin_debt's FINRA checkpoint, see MARGIN_REFRESH_WINDOW_DAY / data_freshness()), later on a
+failure (a retry backoff, so one bad pass costs hours rather than the whole day). So a VIX band
+crossing that persists for several hourly ticks only triggers one real refresh, not one per
+tick, and a collector that still has work to do gets its chance from an ordinary REGULAR tick.
 """
 
 import logging
 import sys
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from threading import Lock
 from time import monotonic, sleep, time as wall_time
-from zoneinfo import ZoneInfo
 
-import pandas_market_calendars as mcal
 import requests
 
-from buysignal.config import (
-    CF_BYPASS_URL,
-    REFRESH_JOURNAL_JSON,
-    TICK_INTERVAL_SEC,
-    VIX_WINDOW_END_HOUR_CT,
-    VIX_WINDOW_START_HOUR_CT,
-)
+from buysignal.config import CF_BYPASS_URL, REFRESH_JOURNAL_JSON, TICK_INTERVAL_SEC
 from buysignal.schedule.journal import RefreshJournal
+from buysignal.schedule.market_hours import (
+    AFTER_HOURS,
+    CLOSED,
+    PRE_MARKET,
+    market_session,
+    now_et,
+    stamp,
+    vix_active_window,
+)
 from buysignal.signals.buy_signal import compute_signal
 
 log = logging.getLogger(__name__)
-
-ET = ZoneInfo("America/New_York")
-CT = ZoneInfo("America/Chicago")
-_NYSE = mcal.get_calendar("XNYS")
-
-EXTENDED_AFTER = timedelta(hours=4)  # after-hours run 4h past the close
-
-CLOSED, PRE_MARKET, REGULAR, AFTER_HOURS = "closed", "pre_market", "regular", "after_hours"
-
-
-def _now_et(now: datetime | None = None) -> datetime:
-    return now.astimezone(ET) if now else datetime.now(ET)
-
-
-def vix_active_window(now: datetime | None = None) -> bool:
-    """Whether VIX is expected to still be moving (~02:00-20:00 CT on a trading day).
-
-    Independent of market_session()'s intraday boundaries (pre-market/regular/after-hours),
-    but VIX still doesn't move on weekends/holidays, so it shares the same trading-day check.
-    """
-    now = _now_et(now)
-    sched = _NYSE.schedule(start_date=now.date(), end_date=now.date())
-    if sched.empty:  # weekend or holiday
-        return False
-    now_ct = now.astimezone(CT)
-    return VIX_WINDOW_START_HOUR_CT <= now_ct.hour < VIX_WINDOW_END_HOUR_CT
-
-
-def market_session(now: datetime | None = None) -> str:
-    """Classify the NYSE session for `now` (any tz; defaults to real time)."""
-    now = _now_et(now)
-    sched = _NYSE.schedule(start_date=now.date(), end_date=now.date())
-    if sched.empty:  # weekend or holiday
-        return CLOSED
-
-    open_et = sched.iloc[0]["market_open"].astimezone(ET)
-    close_et = sched.iloc[0]["market_close"].astimezone(ET)
-    premarket = now.replace(hour=4, minute=0, second=0, microsecond=0)
-
-    if now < premarket or now >= close_et + EXTENDED_AFTER:
-        return CLOSED
-    if now < open_et:
-        return PRE_MARKET
-    if now < close_et:
-        return REGULAR
-    return AFTER_HOURS
 
 
 def _cf_bypass_ready(timeout: float = 30.0) -> bool:
@@ -182,7 +134,7 @@ def refresh_macro(
     refresh. Returns (name, error_message) for every collector attempted but failed.
     """
     journal = macro_journal() if journal is None else journal
-    now = _now_et(now)
+    now = now_et(now)
 
     failed = []
     for collector in _macro_collectors():
@@ -207,7 +159,7 @@ def _any_due(now: datetime | None = None) -> bool:
     the refresh path records and reports failures properly, and nothing here is worth losing
     a whole tick - signal, alert and report included - to.
     """
-    now = _now_et(now)
+    now = now_et(now)
     for collector in _macro_collectors():
         try:
             if macro_journal().due(collector, now):
@@ -224,7 +176,7 @@ def tick(now: datetime | None = None):
     Skipped only when the NYSE session is CLOSED and VIX isn't in its active window either:
     VIX moves outside NYSE hours, so tick() stays live for that on its own clock.
     """
-    now = _now_et(now)
+    now = now_et(now)
     session = market_session(now)
     if session == CLOSED and not vix_active_window(now):
         log.info("Market closed, VIX quiet; idle.")
@@ -246,13 +198,9 @@ def tick(now: datetime | None = None):
     return result
 
 
-def _stamp(now_et: datetime) -> str:
-    return f"{now_et:%Y-%m-%d %H:%M %Z} (local {now_et.astimezone():%H:%M %Z})"
-
-
-def report(result, session: str, now_et: datetime | None = None) -> None:
-    now_et = _now_et(now_et)
-    log.info("[%s] session=%s", _stamp(now_et), session)
+def report(result, session: str, now: datetime | None = None) -> None:
+    now = now_et(now)
+    log.info("[%s] session=%s", stamp(now), session)
     log.info(
         "  Alert: %s  (passing %d/%d; score %+.2f)",
         result.state.upper(), result.passing_count, result.required_count, result.score,

@@ -34,7 +34,7 @@ def sent(monkeypatch):
 
 
 def _ct(hour, day=24):
-    return datetime(2026, 7, day, hour, 0, tzinfo=app.runner.CT)
+    return datetime(2026, 7, day, hour, 0, tzinfo=app.market_hours.CT)
 
 
 def _never_computes():
@@ -84,7 +84,7 @@ def test_trigger_reasons_empty_when_nothing_triggers(make_subsignal, make_buy_si
 
 
 def test_handle_tick_alert_edge_triggering(monkeypatch, sent, make_subsignal, make_buy_signal):
-    monkeypatch.setattr(app.runner, "market_session", lambda: app.runner.REGULAR)
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
 
     not_alerting = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
     alerting = make_buy_signal([make_subsignal("vix", "soft", "x", passes=True)])
@@ -225,7 +225,7 @@ def test_handle_tick_daily_report_carries_no_error_flag_after_an_idle_tick(
 
 def test_handle_tick_pushes_a_refresh_failure_once_a_day(sent, reset_state):
     now = datetime.now(timezone.utc)
-    reset_state.record("fed_rate", ok=False, error="SessionNotCreated", now=now.astimezone(app.runner.ET))
+    reset_state.record("fed_rate", ok=False, error="SessionNotCreated", now=now.astimezone(app.market_hours.ET))
 
     app.handle_tick(None, None, now)
     app.handle_tick(None, None, now)
@@ -238,7 +238,7 @@ def test_handle_tick_pushes_a_refresh_failure_once_a_day(sent, reset_state):
 
 def test_handle_tick_pushes_nothing_when_every_collector_succeeded(sent, reset_state):
     now = datetime.now(timezone.utc)
-    reset_state.record("fed_rate", ok=True, error=None, now=now.astimezone(app.runner.ET))
+    reset_state.record("fed_rate", ok=True, error=None, now=now.astimezone(app.market_hours.ET))
 
     app.handle_tick(None, None, now)
 
@@ -252,8 +252,8 @@ def test_handle_tick_refresh_failures_do_not_corrupt_the_daily_report(
     to carry a refresh failure would then report itself as a failed tick.
     """
     now = datetime.now(timezone.utc)
-    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", now.astimezone(app.runner.CT).hour)
-    reset_state.record("fed_rate", ok=False, error="boom", now=now.astimezone(app.runner.ET))
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", now.astimezone(app.market_hours.CT).hour)
+    reset_state.record("fed_rate", ok=False, error="boom", now=now.astimezone(app.market_hours.ET))
     monkeypatch.setattr(app, "compute_signal", lambda: make_buy_signal([]))
 
     app.handle_tick(None, None, now)
@@ -287,7 +287,7 @@ def test_handle_message_status():
 
 
 def test_handle_message_status_reads_the_journal(reset_state):
-    reset_state.record("yield_curve", ok=False, error="HTTPError: 503", now=datetime.now(app.runner.ET))
+    reset_state.record("yield_curve", ok=False, error="HTTPError: 503", now=datetime.now(app.market_hours.ET))
 
     assert "HTTPError: 503" in app.handle_message("/status")
 
@@ -427,7 +427,7 @@ def test_whattobuy_says_so_when_valuations_is_failing_but_was_not_retried(whatto
     """Inside the retry backoff nothing is attempted and nothing fails, so without this the
     reply would render a stale snapshot with no warning at all.
     """
-    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.runner.ET))
+    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.market_hours.ET))
 
     reply = app.handle_message("/whattobuy")
 
@@ -439,7 +439,7 @@ def test_whattobuy_does_not_double_report_a_failure_it_just_surfaced(whattobuy_e
     monkeypatch.setattr(
         app.runner, "refresh_macro", lambda **kw: [("valuations", "ValueError: FY1 not found")]
     )
-    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.runner.ET))
+    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.market_hours.ET))
 
     reply = app.handle_message("/whattobuy")
 
@@ -477,7 +477,7 @@ def test_handle_message_refresh_does_not_also_push_the_failures_it_just_showed(
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: make_buy_signal([]))
 
     def failing_refresh(force=False, **kw):
-        reset_state.record("fed_rate", ok=False, error="boom", now=datetime.now(app.runner.ET))
+        reset_state.record("fed_rate", ok=False, error="boom", now=datetime.now(app.market_hours.ET))
         return [("fed_rate", "boom")]
 
     monkeypatch.setattr(app.runner, "refresh_macro", failing_refresh)
@@ -493,12 +493,12 @@ def test_handle_message_refresh_does_not_also_push_the_failures_it_just_showed(
 
 
 def test_market_open_true_when_not_closed(monkeypatch):
-    monkeypatch.setattr(app.runner, "market_session", lambda: app.runner.REGULAR)
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
     assert app.market_open() is True
 
 
 def test_market_open_false_when_closed(monkeypatch):
-    monkeypatch.setattr(app.runner, "market_session", lambda: app.runner.CLOSED)
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.CLOSED)
     assert app.market_open() is False
 
 
