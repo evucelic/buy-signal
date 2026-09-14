@@ -27,10 +27,18 @@ def reset_state(monkeypatch, tmp_path):
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Everything the app hands to the transport, in order."""
+    """Everything the app hands to the transport, in order, all of it delivered."""
     messages = []
-    monkeypatch.setattr(app.transport, "send", lambda text: messages.append(text))
+    monkeypatch.setattr(app.transport, "send", lambda text: messages.append(text) or True)
     return messages
+
+
+@pytest.fixture
+def undeliverable(monkeypatch):
+    """A transport that swallows everything, the way it does when Telegram is unreachable."""
+    attempts = []
+    monkeypatch.setattr(app.transport, "send", lambda text: attempts.append(text) and False)
+    return attempts
 
 
 def _ct(hour, day=24):
@@ -234,6 +242,21 @@ def test_handle_tick_pushes_a_refresh_failure_once_a_day(sent, reset_state):
     assert "Refresh failed" in sent[0]
     assert "fed_rate" in sent[0]
     assert "SessionNotCreated" in sent[0]
+
+
+def test_handle_tick_keeps_a_failure_pending_when_the_push_could_not_be_delivered(
+    undeliverable, reset_state
+):
+    """Telegram being down is exactly when collectors tend to be failing too: an attempted
+    push that never arrived must not count as the day's notification.
+    """
+    now = datetime.now(timezone.utc)
+    reset_state.record("fed_rate", ok=False, error="boom", now=now.astimezone(app.market_hours.ET))
+
+    app.handle_tick(None, None, now)
+
+    assert len(undeliverable) == 1
+    assert reset_state.unreported_failures(now.astimezone(app.market_hours.ET)) == [("fed_rate", "boom")]
 
 
 def test_handle_tick_pushes_nothing_when_every_collector_succeeded(sent, reset_state):
@@ -471,9 +494,12 @@ def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_
     assert "ConnectionError: boom" in reply
 
 
-def test_handle_message_refresh_does_not_also_push_the_failures_it_just_showed(
+def test_handle_message_refresh_leaves_the_failure_for_the_daily_push(
     monkeypatch, sent, reset_state, make_buy_signal
 ):
+    """/refresh lists the failures in its reply, but the poll loop's send can fail like any
+    other, so the journal keeps them pending: a duplicate push beats a silent failure.
+    """
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: make_buy_signal([]))
 
     def failing_refresh(force=False, **kw):
@@ -486,7 +512,7 @@ def test_handle_message_refresh_does_not_also_push_the_failures_it_just_showed(
     app.handle_tick(None, None, datetime.now(timezone.utc))
 
     assert "Refresh failed" in reply
-    assert sent == []
+    assert [text for text in sent if "fed_rate" in text]
 
 
 # --- market_open ---------------------------------------------------------

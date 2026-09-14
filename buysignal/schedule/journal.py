@@ -91,22 +91,29 @@ class RefreshJournal:
             )
             self._save()
 
-    def take_unreported_failures(self, now: datetime) -> list[tuple[str, str]]:
+    def unreported_failures(self, now: datetime) -> list[tuple[str, str]]:
         """The (name, error) of every currently-failing collector not yet reported today.
 
-        Deliberately a mutating query: marking them reported is the job, so callers need no
-        dedup state of their own.
+        A query, not a take: the caller reports a failure and then calls mark_reported() for
+        the ones that actually went out. A notification that never arrives - Telegram down,
+        which is exactly when collectors tend to be failing too - is therefore still pending,
+        instead of being marked delivered by the attempt.
         """
-        taken = []
         with self._lock:
-            for name, entry in self._entries.items():
-                if entry.ok or entry.reported_on == now.date():
-                    continue
-                taken.append((name, entry.error or "unknown error"))
-                entry.reported_on = now.date()
-            if taken:
-                self._save()
-        return taken
+            return [
+                (name, entry.error or "unknown error")
+                for name, entry in self._entries.items()
+                if not entry.ok and entry.reported_on != now.date()
+            ]
+
+    def mark_reported(self, name: str, now: datetime) -> None:
+        """Record that `name`'s current failure reached someone today, so it isn't sent again."""
+        with self._lock:
+            entry = self._entries.get(name)
+            if entry is None:
+                return
+            entry.reported_on = now.date()
+            self._save()
 
     def statuses(self) -> list[CollectorStatus]:
         """Every collector's last attempt, in the order they were first recorded."""

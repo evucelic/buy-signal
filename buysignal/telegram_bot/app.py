@@ -122,9 +122,13 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             _state.last_result = result
 
     # The journal owns the dedup (once per collector per day), so there's no state here to
-    # keep in sync with it: whatever comes back has not been pushed yet.
-    for failure in runner.macro_journal().take_unreported_failures(now.astimezone(market_hours.ET)):
-        transport.send(render.refresh_failures([failure]))
+    # keep in sync with it. Each failure is marked only once it has actually been delivered,
+    # so a Telegram outage delays the notification rather than swallowing it.
+    now_et = now.astimezone(market_hours.ET)
+    journal = runner.macro_journal()
+    for name, failure in journal.unreported_failures(now_et):
+        if transport.send(render.refresh_failures([(name, failure)])):
+            journal.mark_reported(name, now_et)
 
     now_ct = now.astimezone(market_hours.CT)
     with _lock:
@@ -205,8 +209,9 @@ def _whattobuy() -> str:
 def _refresh() -> str:
     with buy_signal.SIGNAL_LOCK:
         failed = runner.refresh_macro(force=True)
-    # Shown in this reply, so don't also push them from the next tick.
-    runner.macro_journal().take_unreported_failures(datetime.now(market_hours.ET))
+    # These failures stay unreported in the journal even though this reply lists them: the
+    # reply is sent by the poll loop, which can fail like any other send, and a duplicate push
+    # from the next tick is cheaper than a failure nobody ever hears about.
     reply = _signal_message(compute_signal(allow_refresh=True))
     return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
 

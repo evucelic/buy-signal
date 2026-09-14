@@ -36,7 +36,8 @@ def _api() -> str:
     return f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}"
 
 
-def send(text: str) -> None:
+def send(text: str) -> bool:
+    """Send a message. Returns whether it was delivered; a failure is logged, never raised."""
     try:
         resp = requests.post(
             f"{_api()}/sendMessage",
@@ -46,9 +47,12 @@ def send(text: str) -> None:
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
         log.error("Telegram send failed (%s: %s)", type(exc).__name__, exc)
+        return False
+    return True
 
 
-def send_photo(png: bytes, caption: str) -> None:
+def send_photo(png: bytes, caption: str) -> bool:
+    """Send a photo. Returns whether it was delivered; a failure is logged, never raised."""
     try:
         resp = requests.post(
             f"{_api()}/sendPhoto",
@@ -59,6 +63,8 @@ def send_photo(png: bytes, caption: str) -> None:
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
         log.error("Telegram sendPhoto failed (%s: %s)", type(exc).__name__, exc)
+        return False
+    return True
 
 
 def notify_started() -> None:

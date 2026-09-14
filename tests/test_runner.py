@@ -235,7 +235,7 @@ def test_refresh_macro_records_a_raised_exception_as_that_collectors_error(journ
     _, failed = _refresh(collectors, journal)
 
     assert failed == [("fed_rate", "RuntimeError: chrome not reachable")]
-    assert journal.take_unreported_failures(NOW) == [("fed_rate", "RuntimeError: chrome not reachable")]
+    assert journal.unreported_failures(NOW) == [("fed_rate", "RuntimeError: chrome not reachable")]
 
 
 def test_refresh_macro_records_every_attempt_it_makes(journal):
