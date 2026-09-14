@@ -12,6 +12,23 @@ services:
         limits:
           memory: 2G
           cpus: '1.5'
+    # Nothing noticed when this stopped answering: margin_debt just went stale a day before
+    # the other caches did. This only makes that visible (`docker compose ps`, and the bot
+    # waits for it on startup) - compose restarts on exit, not on "unhealthy", so a hung-but-
+    # alive service still needs the collector's own precondition check to catch it.
+    healthcheck:
+      # A TCP connect, the same thing runner._cf_bypass_ready() treats as "reachable": any
+      # HTTP status means the service is answering, so don't make the check depend on a route.
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', 8000), 5).close()\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     restart: unless-stopped
 
   bot:
@@ -22,7 +39,19 @@ services:
     environment:
       - CF_BYPASS_HOST=cfbypass   # compose's internal DNS; config.py defaults to localhost otherwise
     volumes:
-      - ./data:/app/data   # persists the CSV caches across redeploys/restarts
+      - ./data:/app/data   # persists the CSV caches, the refresh journal and the log across redeploys
+    # Catch a leak before it degrades the host, without firing on legitimate work: the bot
+    # holds pandas/matplotlib and then drives a headless Chrome over five MSCI pages.
+    mem_limit: 2g
+    pids_limit: 512
     depends_on:
+      # Ordering only, deliberately not condition: service_healthy - margin_debt is the only
+      # collector that needs cfbypass and already degrades to a recorded failure without it,
+      # so an unhealthy cfbypass must not cost the other five signals their bot.
       - cfbypass
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     restart: unless-stopped
