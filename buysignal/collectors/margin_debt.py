@@ -1,14 +1,9 @@
-"""Collect FINRA margin statistics (margin debt); cache to CSV.
-
-finra.org sits behind Cloudflare Turnstile, which plain requests/headless Selenium
-can't get past. The cfbypass compose service solves it and hands back clearance
-cookies over HTTP, which get replayed through a plain `requests.Session` to fetch
-the xlsx directly (no browser needed for the download itself). See config.CF_BYPASS_*.
-"""
+"""Collect FINRA monthly balances from its official workbook; optional clearance fallback."""
 
 from __future__ import annotations
 
 import logging
+import math
 import random
 import time
 from io import BytesIO
@@ -16,6 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+
+from buysignal.collectors.cache import write_csv
 
 from buysignal.config import (
     CF_BYPASS_TIMEOUT_SEC,
@@ -55,7 +52,15 @@ def _get_clearance() -> tuple[dict, str]:
 
 
 def _fetch_xlsx_bytes() -> bytes:
-    """Download the margin-statistics workbook using a bypassed Cloudflare session."""
+    """Use FINRA's official workbook directly; browser clearance is a fallback."""
+    try:
+        response = requests.get(MARGIN_XLSX_URL, timeout=30, headers={"User-Agent": "BuySignal/1.0"})
+        response.raise_for_status()
+        if not response.content.startswith(b"PK"):
+            raise ValueError("FINRA returned non-workbook content")
+        return response.content
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        log.info("Direct FINRA workbook unavailable (%s); trying clearance service", type(exc).__name__)
     cookies, user_agent = _get_clearance()
 
     session = requests.Session()
@@ -105,7 +110,23 @@ def update_margin_debt_data(filepath: Path | str = MARGIN_DEBT_CSV) -> str | Non
         return error or "unknown error"
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    history.to_csv(filepath, index=False)
+    if history.empty or history.month.isna().any() or history.month.duplicated().any():
+        return "Invalid FINRA month sequence; cache unchanged"
+    balances = pd.to_numeric(history.debit_balances, errors="coerce")
+    if balances.isna().any() or not balances.map(math.isfinite).all() or (balances <= 0).any():
+        return "Invalid FINRA debit balances; cache unchanged"
+    month_numbers = history.month.dt.year * 12 + history.month.dt.month
+    if not month_numbers.diff().dropna().eq(1).all():
+        return "FINRA month sequence has gaps; cache unchanged"
+    if history.month.max() > pd.Timestamp.now().normalize().replace(day=1):
+        return "FINRA snapshot contains a future month; cache unchanged"
+    if filepath.exists():
+        try:
+            if history.month.max() < margin_history(filepath).month.max():
+                return "FINRA snapshot moved backwards; cache unchanged"
+        except (OSError, ValueError, KeyError):
+            pass
+    write_csv(history, filepath)
 
     tier, message = data_freshness(history)
     latest = history.iloc[-1]

@@ -116,13 +116,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
         if result is not None:
             _state.last_result = result
 
-    # Marked reported only once delivered, so an outage delays the notice instead of losing it.
     now_et = now.astimezone(market_hours.ET)
-    journal = runner.macro_journal()
-    for name, failure in journal.unreported_failures(now_et):
-        if transport.send(render.refresh_failures([(name, failure)])):
-            journal.mark_reported(name, now_et)
-
     now_ct = now.astimezone(market_hours.CT)
     with _lock:
         due = report_due(now_ct, _state.last_report_date, config.DAILY_REPORT_HOUR_CT)
@@ -130,7 +124,9 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             _state.last_report_date = now_ct.date()
         cached_result = _state.last_result
     if due:
-        reported = report_result(result, error, cached_result, compute_signal)
+        # Re-scrape before the report; failures are journaled and sent after it.
+        runner.refresh_macro(force=True, now=now_et)
+        reported = report_result(None, error, cached_result, compute_signal)
         if reported is not None:
             prefix = (
                 f"⚠️ latest tick failed ({render.esc(str(error))}); showing last cached data\n\n"
@@ -138,6 +134,12 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 else ""
             )
             transport.send(f"📅 <b>End of day</b>\n\n{prefix}{_signal_message(reported)}")
+
+    # Marked reported only once delivered, so an outage delays the notice instead of losing it.
+    journal = runner.macro_journal()
+    for name, failure in journal.unreported_failures(now_et):
+        if transport.send(render.refresh_failures([(name, failure)])):
+            journal.mark_reported(name, now_et)
 
     if result is None:
         return
@@ -149,9 +151,9 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
 
     if alerting and not was_alerting:
         reasons = trigger_reasons(result)
-        transport.send(f"🔔 <b>Signal active</b> ({render.esc(reasons)})\n\n{_signal_message(result)}")
+        transport.send(f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n{_signal_message(result)}")
     elif was_alerting and not alerting:
-        transport.send("Signal cleared, back to normal.")
+        transport.send("Watch trigger cleared (VIX/SPY); this does not assess whether market risk is normal.")
 
 
 def _single_signal(score_fn) -> str:
