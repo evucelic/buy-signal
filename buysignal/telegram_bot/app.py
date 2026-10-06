@@ -121,15 +121,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
         if result is not None:
             _state.last_result = result
 
-    # The journal owns the dedup (once per collector per day), so there's no state here to
-    # keep in sync with it. Each failure is marked only once it has actually been delivered,
-    # so a Telegram outage delays the notification rather than swallowing it.
     now_et = now.astimezone(market_hours.ET)
-    journal = runner.macro_journal()
-    for name, failure in journal.unreported_failures(now_et):
-        if transport.send(render.refresh_failures([(name, failure)])):
-            journal.mark_reported(name, now_et)
-
     now_ct = now.astimezone(market_hours.CT)
     with _lock:
         due = report_due(now_ct, _state.last_report_date, config.DAILY_REPORT_HOUR_CT)
@@ -137,7 +129,11 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             _state.last_report_date = now_ct.date()
         cached_result = _state.last_result
     if due:
-        reported = report_result(result, error, cached_result, compute_signal)
+        # The tick's result predates any refresh, and the macro caches may be hours old or
+        # behind a failed scrape: re-scrape everything, then report on what that produced.
+        # Its failures are journaled and sent below, right after the report.
+        runner.refresh_macro(force=True, now=now_et)
+        reported = report_result(None, error, cached_result, compute_signal)
         if reported is not None:
             prefix = (
                 f"⚠️ latest tick failed ({render.esc(str(error))}); showing last cached data\n\n"
@@ -145,6 +141,14 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 else ""
             )
             transport.send(f"📅 <b>End of day</b>\n\n{prefix}{_signal_message(reported)}")
+
+    # The journal owns the dedup (once per collector per day), so there's no state here to
+    # keep in sync with it. Each failure is marked only once it has actually been delivered,
+    # so a Telegram outage delays the notification rather than swallowing it.
+    journal = runner.macro_journal()
+    for name, failure in journal.unreported_failures(now_et):
+        if transport.send(render.refresh_failures([(name, failure)])):
+            journal.mark_reported(name, now_et)
 
     if result is None:
         return

@@ -22,6 +22,7 @@ def reset_state(monkeypatch, tmp_path):
     monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", -1)
     journal = RefreshJournal(tmp_path / "buysignal.schedule.journal.json")
     monkeypatch.setattr(app.runner, "macro_journal", lambda: journal)
+    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
     yield journal
 
 
@@ -178,11 +179,48 @@ def test_report_has_nothing_to_show_when_the_tick_failed_with_no_cache():
 def test_handle_tick_sends_the_daily_report_once_per_day(monkeypatch, sent, make_subsignal, make_buy_signal):
     monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
     result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
+    monkeypatch.setattr(app, "compute_signal", lambda: result)
 
     app.handle_tick(result, None, now=_ct(20))
     app.handle_tick(result, None, now=_ct(20))
 
     assert len([s for s in sent if "End of day" in s]) == 1
+
+
+def test_handle_tick_force_refreshes_and_recomputes_before_the_daily_report(
+    monkeypatch, sent, make_subsignal, make_buy_signal
+):
+    """The tick's result was computed before any refresh, so the report must not reuse it."""
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
+    calls = []
+    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: calls.append(("refresh", kwargs["force"])) or [])
+    fresh = make_buy_signal([make_subsignal("vix", "none", "fresh-detail", passes=False)])
+    monkeypatch.setattr(app, "compute_signal", lambda: calls.append(("compute",)) or fresh)
+    stale = make_buy_signal([make_subsignal("vix", "none", "stale-detail", passes=False)])
+
+    app.handle_tick(stale, None, now=_ct(20))
+
+    assert calls == [("refresh", True), ("compute",)]
+    report = next(s for s in sent if "End of day" in s)
+    assert "fresh-detail" in report and "stale-detail" not in report
+
+
+def test_handle_tick_sends_the_daily_reports_refresh_failures_in_the_same_tick(
+    monkeypatch, sent, reset_state, make_subsignal, make_buy_signal
+):
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
+    now = _ct(20)
+    monkeypatch.setattr(
+        app.runner,
+        "refresh_macro",
+        lambda **kwargs: reset_state.record("fed_rate", ok=False, error="tab crashed", now=kwargs["now"]) or [],
+    )
+    result = make_buy_signal([make_subsignal("vix", "none", "x", passes=False)])
+    monkeypatch.setattr(app, "compute_signal", lambda: result)
+
+    app.handle_tick(result, None, now=now)
+
+    assert any("tab crashed" in s for s in sent)
 
 
 def test_handle_tick_sends_no_daily_report_outside_the_report_hour(monkeypatch, sent, make_subsignal, make_buy_signal):
