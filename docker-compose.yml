@@ -12,6 +12,7 @@ services:
         limits:
           memory: 2G
           cpus: '1.5'
+    init: true
     # Nothing noticed when this stopped answering: margin_debt just went stale a day before
     # the other caches did. This only makes that visible (`docker compose ps`, and the bot
     # waits for it on startup) - compose restarts on exit, not on "unhealthy", so a hung-but-
