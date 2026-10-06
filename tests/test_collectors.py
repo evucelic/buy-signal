@@ -7,6 +7,7 @@ meaningfully unit-testable and is scoped out: only its pure-logic helpers are co
 from contextlib import contextmanager
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import openpyxl
@@ -646,6 +647,24 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
 
 
 # --- collectors/chrome.py -----------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _chromedriver_log_in_tmp(tmp_path, monkeypatch):
+    monkeypatch.setattr(chrome, "CHROMEDRIVER_LOG", tmp_path / "chromedriver.log")
+
+
+def test_chrome_session_removes_its_profile_dir_when_the_body_raises():
+    """A crashed session never deletes its own profile; left alone they pile up in /tmp."""
+    driver = MagicMock()
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver) as chrome_cls:
+        with pytest.raises(ValueError):
+            with chrome.chrome_session(30):
+                raise ValueError("tab crashed")
+    args = chrome_cls.call_args.kwargs["options"].arguments
+    profile_dir = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
+    assert not Path(profile_dir).exists()
+    driver.quit.assert_called_once()
 
 
 def test_chrome_session_quits_the_driver_on_the_happy_path():

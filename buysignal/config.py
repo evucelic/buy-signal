@@ -17,6 +17,7 @@ SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
+CHROMEDRIVER_LOG = DATA_DIR / "chromedriver.log"  # latest Selenium session only, for "Chrome instance exited"
 REFRESH_JOURNAL_JSON = DATA_DIR / "buysignal.schedule.journal.json"  # how each macro collector is doing
 
 # --- Tickers -----------------------------------------------------------------

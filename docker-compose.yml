@@ -44,6 +44,10 @@ services:
     # holds pandas/matplotlib and then drives a headless Chrome over five MSCI pages.
     mem_limit: 2g
     pids_limit: 512
+    # tini as PID 1: a crashed Chrome tab orphans its helper processes onto PID 1, and python
+    # never reaps them - the zombies filled pids_limit and Chrome stopped starting at all
+    # ("session not created: Chrome instance exited") until the container was restarted.
+    init: true
     depends_on:
       # Ordering only, deliberately not condition: service_healthy - margin_debt is the only
       # collector that needs cfbypass and already degrades to a recorded failure without it,
