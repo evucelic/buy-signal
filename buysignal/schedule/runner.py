@@ -96,7 +96,7 @@ def _macro_collectors() -> list[MacroCollector]:
             margin_debt.demands_refresh,
             _cf_bypass_precondition,
         ),
-        MacroCollector("fed_rate", fed_rate.update_fed_rate_data),
+        MacroCollector("fed_rate", fed_rate.update_fed_rate_data, fed_rate.demands_refresh),
         MacroCollector("valuations", valuations.update_valuations_data),
     ]
 
@@ -193,6 +193,9 @@ def tick(now: datetime | None = None):
     if session_driven or vix_driven or _any_due(now):
         for name, error in refresh_macro(now=now):
             log.warning("refresh failed: %s: %s", name, error)
+        # Report the refreshed macro snapshot in this tick, not one hour later.
+        # The first computation already fetched VIX/market data; reuse those caches.
+        result = compute_signal(allow_refresh=False)
 
     report(result, session, now)
     return result

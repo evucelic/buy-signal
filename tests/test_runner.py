@@ -410,3 +410,17 @@ def test_any_due_survives_a_domain_rule_that_raises():
 
     with patch("buysignal.schedule.runner._macro_collectors", return_value=[exploding]):
         assert runner._any_due(NOW) is True
+
+
+def test_tick_returns_the_post_refresh_assessment():
+    dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
+    before = _fake_result(vix_passes=False)
+    after = _fake_result(vix_passes=True)
+    with patch.object(runner, "compute_signal", side_effect=[before, after]) as compute, \
+         patch.object(runner, "refresh_macro", return_value=[]), \
+         patch.object(runner, "report") as report:
+        result = runner.tick(dt)
+    assert result is after
+    assert compute.call_count == 2
+    assert compute.call_args.kwargs == {"allow_refresh": False}
+    report.assert_called_once_with(after, runner.PRE_MARKET, dt)

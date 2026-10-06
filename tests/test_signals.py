@@ -138,7 +138,7 @@ def _fedwatch(*, ease, no_change, hike):
 
 def _rate(expectations):
     with patch("buysignal.signals.rate_signal.latest_fedwatch", return_value=expectations):
-        return rate_signal.score()
+        return rate_signal.score(asof=pd.Timestamp("2026-07-01"))
 
 
 def test_rate_hiking_fails():
@@ -159,7 +159,7 @@ def test_rate_no_change_passes():
     assert s.passes is True
 
 
-def test_rate_falls_back_to_the_last_meeting_when_the_cache_has_no_horizon_column():
+def test_rate_missing_horizons_requires_refresh():
     without_horizons = pd.DataFrame(
         [
             {"meeting_date": pd.Timestamp("2026-08-01"), "prob_ease": 0.1, "prob_no_change": 0.2, "prob_hike": 0.7},
@@ -167,17 +167,19 @@ def test_rate_falls_back_to_the_last_meeting_when_the_cache_has_no_horizon_colum
         ]
     )
 
-    assert _rate(without_horizons).state == "no_change"
+    with pytest.raises(ValueError, match="horizons missing"):
+        _rate(without_horizons)
 
 
-def test_rate_tie_between_the_two_leading_probabilities_is_flat():
+def test_rate_hike_tie_does_not_pass():
     s = _rate(_fedwatch(ease=0.0, no_change=0.5, hike=0.5))
-    assert s.state == "flat"
-    assert s.passes is True
+    assert s.state == "hiking"
+    assert s.passes is False
 
 
-def test_rate_three_way_tie_at_zero_is_flat():
-    assert _rate(_fedwatch(ease=0.0, no_change=0.0, hike=0.0)).state == "flat"
+def test_rate_zero_distribution_is_rejected():
+    with pytest.raises(ValueError, match="distribution"):
+        _rate(_fedwatch(ease=0.0, no_change=0.0, hike=0.0))
 
 
 def test_rate_carries_its_horizons_in_the_detail_string_instead_of_a_table():
@@ -748,3 +750,19 @@ def test_compute_signal_holds_the_signal_lock_while_scoring(monkeypatch):
     _compute(monkeypatch, vix_signal=check_lock)
 
     assert acquired_during_scoring == [False]
+
+
+def test_rate_pause_with_later_hikes_fails():
+    df = _fedwatch(ease=0.0, no_change=0.906, hike=0.094)
+    df.loc[df.horizon != "nearest", ["prob_no_change", "prob_hike"]] = [0.02, 0.98]
+    signal = _rate(df)
+    assert not signal.passes
+    assert signal.state == "hiking"
+    assert "6m, 1y" in signal.detail
+
+
+def test_rate_past_meeting_is_missing_not_supportive():
+    df = _fedwatch(ease=0.2, no_change=0.7, hike=0.1)
+    df.loc[df.horizon == "nearest", "meeting_date"] = pd.Timestamp("2026-06-30")
+    with pytest.raises(ValueError, match="past meeting"):
+        _rate(df)

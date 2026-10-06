@@ -7,6 +7,7 @@ meaningfully unit-testable and is scoped out: only its pure-logic helpers are co
 from contextlib import contextmanager
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import openpyxl
@@ -380,13 +381,15 @@ def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
 
 def test_update_sector_data_success_returns_none(tmp_path):
     path = tmp_path / "sectors.csv"
-    with patch(
-        "buysignal.collectors.sectors._industry_market_caps",
-        return_value=pd.DataFrame({"industry": ["X"], "key": ["x"], "market_cap": [1.0]}),
-    ), patch("buysignal.collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
+    ranking = pd.DataFrame({"industry": [f"X{i}" for i in range(5)], "key": [f"x{i}" for i in range(5)], "market_cap": [1.] * 5})
+    estimate = {"earnings_growth_estimate_1y": .1, "sampled_companies": 8, "covered_companies": 8,
+                "sampled_weight": .8, "covered_weight": .8, "estimate_coverage": 1.}
+    with patch.object(sectors, "_industry_market_caps", return_value=ranking), \
+         patch.object(sectors, "_industry_earnings_data", return_value=estimate):
         error = sectors.update_sector_data(path)
     assert error is None
     assert path.exists()
+    assert path.with_name("sectors_history.csv").exists()
 
 
 # --- collectors/fed_rate.py (non-Selenium logic only) -----------------------------------
@@ -648,6 +651,24 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
 # --- collectors/chrome.py -----------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _chromedriver_log_in_tmp(tmp_path, monkeypatch):
+    monkeypatch.setattr(chrome, "CHROMEDRIVER_LOG", tmp_path / "chromedriver.log")
+
+
+def test_chrome_session_removes_its_profile_dir_when_the_body_raises():
+    """A crashed session never deletes its own profile; left alone they pile up in /tmp."""
+    driver = MagicMock()
+    with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver) as chrome_cls:
+        with pytest.raises(ValueError):
+            with chrome.chrome_session(30):
+                raise ValueError("tab crashed")
+    args = chrome_cls.call_args.kwargs["options"].arguments
+    profile_dir = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
+    assert not Path(profile_dir).exists()
+    driver.quit.assert_called_once()
+
+
 def test_chrome_session_quits_the_driver_on_the_happy_path():
     driver = MagicMock()
     with patch("buysignal.collectors.chrome.webdriver.Chrome", return_value=driver):
@@ -684,3 +705,94 @@ def test_chrome_session_sets_the_page_load_timeout_it_was_given():
         with chrome.chrome_session(42):
             pass
     driver.set_page_load_timeout.assert_called_once_with(42)
+
+
+@pytest.mark.parametrize("text", ["28 Oct26", "28 Oct 26", "28 Oct 2026", "28  October 2026"])
+def test_fedwatch_date_layouts(text):
+    assert fed_rate._parse_meeting_date(text) == pd.Timestamp("2026-10-28")
+
+
+def test_fedwatch_rollover_excludes_previous_meeting():
+    tabs = [("old", pd.Timestamp("2026-10-28")), ("next", pd.Timestamp("2026-12-09")),
+            ("six", pd.Timestamp("2027-04-28")), ("year", pd.Timestamp("2027-10-27"))]
+    selected = fed_rate._select_meeting_tabs(tabs, pd.Timestamp("2026-10-29"))
+    assert selected["nearest"][0] == "next"
+    assert selected["six_month"][0] == "six"
+    assert selected["one_year"][0] == "year"
+
+
+@pytest.mark.parametrize("values", [(0., 0., 0.), (float("nan"), .5, .5), (-.1, .6, .5), (.1, .1, .1)])
+def test_fedwatch_invalid_probabilities(values):
+    with pytest.raises(ValueError, match="distribution"):
+        fed_rate._validate_probabilities(values)
+
+
+def test_fedwatch_timeout_error_is_concise():
+    from selenium.common.exceptions import TimeoutException
+    with patch.object(fed_rate, "_fetch_meeting_probabilities", side_effect=TimeoutException("", stacktrace=["browser frame"])), \
+         patch.object(fed_rate, "SCRAPE_RETRIES", 1):
+        snapshot, error = fed_rate._fetch_with_retries(pd.Timestamp("2026-10-29"))
+    assert snapshot is None
+    assert "Stacktrace" not in error
+    assert "did not become ready" in error
+
+
+def test_fedwatch_expired_cache_is_rejected(tmp_path):
+    import os
+    import time
+    path = tmp_path / "fed.csv"
+    path.write_text("meeting_date,prob_ease,prob_no_change,prob_hike,horizon\n2099-01-01,0,1,0,nearest\n")
+    os.utime(path, (time.time() - 49 * 3600,) * 2)
+    with pytest.raises(ValueError, match="older than"):
+        fed_rate.latest_fedwatch(path)
+
+
+def test_fedwatch_waits_through_postback_and_invalid_rows():
+    from selenium.common.exceptions import StaleElementReferenceException
+    from selenium.webdriver.common.by import By
+    browser = MagicMock()
+    card = MagicMock()
+    card.text = "28 Oct 2026"
+    browser.find_elements.return_value = [card]
+    table = MagicMock()
+    browser.find_element.return_value = table
+    cells = [MagicMock(), MagicMock(), MagicMock()]
+    for cell, text in zip(cells, ["0.0%", "90.6%", "9.4%"]):
+        cell.text = text
+    table.find_elements.side_effect = [StaleElementReferenceException(), [], cells]
+    wait = MagicMock()
+
+    def poll(predicate, **kwargs):
+        assert predicate(browser) is False
+        assert predicate(browser) is False
+        return predicate(browser)
+
+    wait.until.side_effect = poll
+    row = fed_rate._scrape_meeting_probabilities(browser, wait, "tab", pd.Timestamp("2026-10-28"))
+    assert row["prob_hike"] == pytest.approx(.094)
+    assert row["prob_no_change"] == pytest.approx(.906)
+
+
+def test_fedwatch_uses_direct_tool_when_outer_iframe_is_missing():
+    from selenium.common.exceptions import TimeoutException
+    from contextlib import contextmanager
+    browser = MagicMock()
+    browser.get.side_effect = [TimeoutException(), None]
+    wait = MagicMock()
+    wait.until.side_effect = TimeoutException()
+
+    @contextmanager
+    def session(timeout):
+        yield browser
+
+    selected = {name: ("tab", pd.Timestamp("2027-01-01")) for name in fed_rate._HORIZONS}
+    row = dict(meeting_date=pd.Timestamp("2027-01-01"), prob_ease=0., prob_no_change=1., prob_hike=0.)
+    with patch.object(fed_rate, "chrome_session", session), \
+         patch.object(fed_rate, "WebDriverWait", return_value=wait), \
+         patch.object(fed_rate, "_list_meeting_tabs", return_value=[]), \
+         patch.object(fed_rate, "_select_meeting_tabs", return_value=selected), \
+         patch.object(fed_rate, "_scrape_meeting_probabilities", return_value=row):
+        result = fed_rate._fetch_meeting_probabilities(pd.Timestamp("2026-11-02"))
+    assert len(result) == 3
+    assert browser.get.call_args_list[-1].args == (fed_rate.FEDWATCH_TOOL_URL,)
+    browser.switch_to.default_content.assert_called_once()
