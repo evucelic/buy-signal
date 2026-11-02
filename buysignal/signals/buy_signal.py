@@ -6,7 +6,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from buysignal.signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.signals import credit_signal, margin_signal, market_signal, rate_signal, sector_signal, trend_signal, vix_signal, yield_curve_signal
 from buysignal.signals.base import SubSignal
 
 log = logging.getLogger(__name__)
@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 SIGNAL_LOCK = threading.Lock()
 
 # Advisory signals are context only: they never gate the checklist, and one going missing
-# must not downgrade strong -> soft the way a missing required signal does.
-_ADVISORY_SIGNALS = {"yield_curve"}
+# must not mark complete alignment incomplete the way a missing required signal does.
+_ADVISORY_SIGNALS = {"yield_curve", "trend", "credit"}
 
 
 @dataclass
@@ -33,14 +33,15 @@ class BuySignal:
     @property
     def required_count(self) -> int:
         """Checklist size: advisory subsignals are shown but don't count as conditions."""
-        return sum(1 for signal in self.subsignals if not signal.advisory)
+        return (sum(1 for signal in self.subsignals if not signal.advisory)
+                + len(set(self.missing_signals) - _ADVISORY_SIGNALS))
 
 
 def _alert_state(required: list[SubSignal], missing_signals: list[str]) -> tuple[str, str]:
+    if missing_signals:
+        return "incomplete", "INCOMPLETE: required evidence is unavailable; no complete entry assessment."
     if not required or any(not signal.passes for signal in required):
         return "none", "NONE: one or more required signals failed."
-    if missing_signals:
-        return "soft", "SOFT: required signals passed, but some signals are missing."
     return "strong", "STRONG: all required signals passed."
 
 
@@ -78,10 +79,17 @@ def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
         log.warning("signal skipped (margin_debt: %s: %s)", type(exc).__name__, exc)
 
     try:
-        subsignals.append(market_signal.score(allow_refresh=allow_refresh))
+        market = market_signal.score(allow_refresh=allow_refresh)
+        subsignals.append(market)
     except Exception as exc:
-        missing_signals.append("market_dip")
+        missing_signals.extend(["market_dip", "trend"])
         log.warning("signal skipped (market_dip: %s: %s)", type(exc).__name__, exc)
+    else:
+        try:
+            subsignals.append(trend_signal.from_market(market))
+        except Exception as exc:
+            missing_signals.append("trend")
+            log.warning("signal skipped (trend: %s: %s)", type(exc).__name__, exc)
 
     try:
         subsignals.append(sector_signal.score())
@@ -95,10 +103,17 @@ def _compute_signal(vix: float | None, allow_refresh: bool) -> BuySignal:
         missing_signals.append("yield_curve")
         log.warning("signal skipped (yield_curve: %s: %s)", type(exc).__name__, exc)
 
+    try:
+        subsignals.append(credit_signal.score())
+    except Exception as exc:
+        missing_signals.append("credit")
+        log.warning("signal skipped (credit: %s: %s)", type(exc).__name__, exc)
+
     required = [signal for signal in subsignals if not signal.advisory]
     required_missing = [name for name in missing_signals if name not in _ADVISORY_SIGNALS]
     passing_count = sum(1 for signal in required if signal.passes)
-    score = passing_count / len(required) if required else 0.0
+    total = len(required) + len(set(required_missing))
+    score = passing_count / total if total else 0.0
     state, summary = _alert_state(required, required_missing)
 
     return BuySignal(
