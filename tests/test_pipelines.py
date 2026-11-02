@@ -151,5 +151,5 @@ def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
 
     assert signal.state == "growing"
     assert signal.passes is True
-    assert "3/5 top industries with rising EPS estimates" in signal.detail
+    assert "3/5 top industries with positive forecast EPS growth" in signal.detail
     assert "Alpha: cap 5.00T" in signal.detail

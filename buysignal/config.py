@@ -33,6 +33,8 @@ VIX_WINDOW_START_HOUR_CT = 2   # VIX starts moving ~2am Central
 VIX_WINDOW_END_HOUR_CT = 20    # ...and is done moving by ~8pm Central
 
 # --- Fed rate (#2): CME FedWatch ---------------------------------------------
+FEDWATCH_TOOL_URL = "https://cmegroup-tools.quikstrike.net/User/QuikStrikeTools.aspx?viewitemid=IntegratedFedWatchTool"
+FEDWATCH_MAX_AGE_HOURS = 48
 FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
 
 # --- Fetch hardening (anti bot-detection / rate-limiting) --------------------

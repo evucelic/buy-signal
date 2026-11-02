@@ -160,9 +160,9 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
 
     if alerting and not was_alerting:
         reasons = trigger_reasons(result)
-        transport.send(f"🔔 <b>Signal active</b> ({render.esc(reasons)})\n\n{_signal_message(result)}")
+        transport.send(f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n{_signal_message(result)}")
     elif was_alerting and not alerting:
-        transport.send("Signal cleared, back to normal.")
+        transport.send("Watch trigger cleared (VIX/SPY); this does not assess whether market risk is normal.")
 
 
 def _single_signal(score_fn) -> str:

@@ -103,7 +103,7 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, sent, make_subsignal, ma
 
     app.handle_tick(alerting, None)
     assert len(sent) == 1
-    assert "Signal active" in sent[0]
+    assert "Watch trigger active" in sent[0]
 
     app.handle_tick(alerting, None)
     assert len(sent) == 1  # no repeat while sustained

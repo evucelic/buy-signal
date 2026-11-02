@@ -1,27 +1,29 @@
-"""Score the one-year CME FedWatch rate outlook."""
+"""Score the CME FedWatch rate path across all three horizons."""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from buysignal.collectors.fed_rate import latest_fedwatch
+from buysignal.collectors.fed_rate import latest_fedwatch, _validate_probabilities
 from buysignal.signals.base import SubSignal
 
 
 def _meeting(df: pd.DataFrame, horizon: str) -> pd.Series:
-    """Return the meeting row for a horizon, or the latest row if missing."""
-    if "horizon" in df.columns:
-        matches = df.loc[df["horizon"] == horizon]
-        if not matches.empty:
-            return matches.iloc[0]
-    return df.iloc[-1]
+    """Return exactly one meeting row for the requested horizon."""
+    if "horizon" not in df.columns:
+        raise ValueError("FedWatch horizons missing; refresh required")
+    matches = df.loc[df["horizon"] == horizon]
+    if len(matches) != 1:
+        raise ValueError(f"FedWatch horizon {horizon} missing or duplicated; refresh required")
+    return matches.iloc[0]
 
 
 def _probabilities(meeting: pd.Series) -> tuple[float, float, float]:
     """Return Ease, No Change, and Hike probabilities from one meeting row."""
-    ease = float(meeting.get("prob_ease", 0.0))
-    no_change = float(meeting.get("prob_no_change", 0.0))
-    hike = float(meeting.get("prob_hike", 0.0))
+    ease = float(meeting["prob_ease"])
+    no_change = float(meeting["prob_no_change"])
+    hike = float(meeting["prob_hike"])
+    _validate_probabilities((ease, no_change, hike))
     return ease, no_change, hike
 
 
@@ -34,8 +36,8 @@ def _format_meeting(label: str, meeting: pd.Series) -> str:
     )
 
 
-def score() -> SubSignal:
-    """Return the FedWatch sub-signal for the nearest upcoming meeting."""
+def score(asof: pd.Timestamp | None = None) -> SubSignal:
+    """Require no hike-leading horizon across the displayed rate path."""
     df = latest_fedwatch().sort_values("meeting_date").reset_index(drop=True)
 
     meetings = {
@@ -44,9 +46,17 @@ def score() -> SubSignal:
         "1y": _meeting(df, "one_year"),
     }
 
+    today = (asof if asof is not None else pd.Timestamp.now(tz="America/New_York").tz_localize(None)).normalize()
+    if meetings["nearest"]["meeting_date"] < today:
+        raise ValueError("FedWatch snapshot refers to a past meeting; refresh required")
+
+    # A near-term pause is not a supportive path when later horizons price hikes.
+    probabilities = {label: _probabilities(meeting) for label, meeting in meetings.items()}
+    blocking = [label for label, (ease, hold, hike) in probabilities.items()
+                if hike >= max(ease, hold)]
     ease, no_change, hike = _probabilities(meetings["nearest"])
 
-    if hike > max(ease, no_change):
+    if blocking:
         state = "hiking"
     elif ease > max(no_change, hike):
         state = "cutting"
@@ -62,8 +72,10 @@ def score() -> SubSignal:
 
     return SubSignal(
         "fed_rate",
-        hike,
+        max(p[2] for p in probabilities.values()),
         state,
-        detail,
-        passes=state != "hiking",
+        detail + " | " + (f"Rate-path gate failed: higher-rate risk leads or ties at {', '.join(blocking)}"
+                          if blocking else "Rate-path gate passed: hikes do not lead at nearest, 6m or 1y")
+        + "; probabilities compare with the current target range, not the previous meeting",
+        passes=not blocking,
     )

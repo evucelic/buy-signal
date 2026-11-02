@@ -23,13 +23,13 @@ def _format_industry(row) -> str:
 
 
 def score() -> SubSignal:
-    """Pass if at least SECTOR_GROWTH_QUORUM of the top SECTOR_TOP_N industries (by market cap) have a rising EPS estimate."""
+    """Pass if at least SECTOR_GROWTH_QUORUM of the top SECTOR_TOP_N industries (by market cap) have positive forecast EPS growth."""
     df = sector_performance()
     growing = int((df["earnings_growth_estimate_1y"] > 0).sum())
     passes = growing >= SECTOR_GROWTH_QUORUM
 
     state = "growing" if passes else "flat"
-    detail = f"{growing}/{SECTOR_TOP_N} top industries with rising EPS estimates | " + " | ".join(
+    detail = f"{growing}/{SECTOR_TOP_N} top industries with positive forecast EPS growth | " + " | ".join(
         _format_industry(row) for _, row in df.iterrows()
     )
 
