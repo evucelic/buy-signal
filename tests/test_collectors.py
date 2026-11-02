@@ -381,13 +381,15 @@ def test_update_sector_data_fetch_exception_leaves_cache_untouched(tmp_path):
 
 def test_update_sector_data_success_returns_none(tmp_path):
     path = tmp_path / "sectors.csv"
-    with patch(
-        "buysignal.collectors.sectors._industry_market_caps",
-        return_value=pd.DataFrame({"industry": ["X"], "key": ["x"], "market_cap": [1.0]}),
-    ), patch("buysignal.collectors.sectors._industry_earnings_growth", new=lambda key: 0.1):
+    ranking = pd.DataFrame({"industry": [f"X{i}" for i in range(5)], "key": [f"x{i}" for i in range(5)], "market_cap": [1.] * 5})
+    estimate = {"earnings_growth_estimate_1y": .1, "sampled_companies": 8, "covered_companies": 8,
+                "sampled_weight": .8, "covered_weight": .8, "estimate_coverage": 1.}
+    with patch.object(sectors, "_industry_market_caps", return_value=ranking), \
+         patch.object(sectors, "_industry_earnings_data", return_value=estimate):
         error = sectors.update_sector_data(path)
     assert error is None
     assert path.exists()
+    assert path.with_name("sectors_history.csv").exists()
 
 
 # --- collectors/fed_rate.py (non-Selenium logic only) -----------------------------------

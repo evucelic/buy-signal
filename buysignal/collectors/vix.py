@@ -1,6 +1,7 @@
 """Fetch ^VIX intraday bars from yfinance; cache to CSV, merging new bars by timestamp (UTC)."""
 
 import logging
+import math
 from pathlib import Path
 import random
 import time
@@ -8,7 +9,9 @@ import time
 import pandas as pd
 import yfinance as yf
 
-from buysignal.config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER
+from buysignal.config import FETCH_JITTER_SEC, VIX_CSV, VIX_INTERVAL, VIX_LOOKBACK_DAYS, VIX_TICKER, LIVE_CACHE_TTL_SEC, YAHOO_TIMEOUT_SEC
+from buysignal.resources import FORCE_REFRESH
+from buysignal.collectors.cache import write_csv
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ def _download_close(period: str) -> pd.Series | None:
         auto_adjust=False,
         progress=False,
         multi_level_index=False,
+        threads=False, timeout=YAHOO_TIMEOUT_SEC,
     )
     if data is None or data.empty:
         return None
@@ -52,7 +56,10 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
         new = pd.concat([old, new]) # concat the new and old dataframes
         new = new[~new.index.duplicated(keep="last")].sort_index() # deduplicate indexes if they overlap
 
-    new.to_csv(filepath)
+    # Keep the provider-supported intraday window bounded on disk.
+    cutoff = new.index[-1] - pd.Timedelta(days=VIX_LOOKBACK_DAYS)
+    new = new.loc[new.index >= cutoff]
+    write_csv(new.to_frame(name="Close"), filepath, index=True)
     log.info("VIX cache updated: %d rows, latest %s = %.2f", len(new), new.index[-1], new.iloc[-1])
     return True
 
@@ -66,7 +73,8 @@ def load_latest_cached_vix(filepath: Path = VIX_CSV) -> float | None:
     df = pd.read_csv(filepath, index_col=0)
     if df.empty or "Close" not in df.columns:
         return None
-    return float(df["Close"].iloc[-1])
+    value = float(df["Close"].iloc[-1])
+    return value if math.isfinite(value) and value > 0 else None
 
 
 def vix_change_pct(filepath: Path = VIX_CSV) -> float | None:
@@ -85,19 +93,46 @@ def vix_change_pct(filepath: Path = VIX_CSV) -> float | None:
     return daily.iloc[-1] / daily.iloc[-2] - 1
 
 
-def get_latest_vix(filepath: Path = VIX_CSV) -> float:
-    """Refresh the cache and return the current (last recorded in the CSV file) VIX close."""
+def _vix_session_is_current(filepath: Path, now: pd.Timestamp) -> bool:
+    from buysignal.schedule.market_hours import _NYSE
+    local = now.tz_convert("America/Chicago")
+    schedule = _NYSE.schedule(start_date=(now-pd.Timedelta(days=14)).date(), end_date=local.date())
+    dates = schedule.index
+    # VIX opens before equities. Allow one hour for the first hourly observation.
+    if local.hour < 3:
+        dates = dates[dates.date < local.date()]
+    if len(dates) == 0:
+        return False
+    try:
+        history = daily_history(filepath)
+        observed = history.date.iloc[-1].date()
+        return dates[-1].date() <= observed <= local.date()
+    except (OSError, ValueError, KeyError, IndexError):
+        return False
+
+
+def get_latest_vix(filepath: Path = VIX_CSV, now: pd.Timestamp | None = None) -> float:
     filepath = Path(filepath)
-    first_run = not filepath.exists()
-    refreshed = refresh_vix_cache(filepath)
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    now = now.tz_localize("UTC") if now.tzinfo is None else now.tz_convert("UTC")
+    recent = filepath.exists() and time.time() - filepath.stat().st_mtime < LIVE_CACHE_TTL_SEC
+    source_current = _vix_session_is_current(filepath, now)
+    if FORCE_REFRESH.get() or not recent or not source_current:
+        refresh_vix_cache(filepath)
     vix = load_latest_cached_vix(filepath)
     if vix is None:
-        if first_run:
-            raise RuntimeError(f"Unable to load VIX: download failed and no cache exists at {filepath}")
-        if not refreshed:
-            raise RuntimeError(f"Unable to load VIX from cache at {filepath}")
-        raise RuntimeError(f"Unable to load VIX from cache at {filepath}")
+        raise RuntimeError(f"Unable to load VIX: download failed and no usable cache exists at {filepath}")
+    if not _vix_session_is_current(filepath, now):
+        raise RuntimeError("VIX observation predates the expected session")
     return vix
+
+
+def daily_history(filepath: Path | str = VIX_CSV) -> pd.DataFrame:
+    """Daily last observations for charting and fear context, without fetching."""
+    frame = pd.read_csv(filepath, index_col=0)
+    frame.index = pd.to_datetime(frame.index, utc=True).tz_convert("America/New_York")
+    series = frame["Close"].groupby(frame.index.date).last().dropna()
+    return pd.DataFrame({"date": pd.to_datetime(series.index), "vix": series.to_numpy()})
 
 
 if __name__ == "__main__":

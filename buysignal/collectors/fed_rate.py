@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import math
 import random
-import tempfile
+import re
 import time
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -21,9 +22,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from buysignal.collectors.chrome import chrome_session
+from buysignal.collectors.cache import write_csv
 from buysignal.config import (
     FEDWATCH_CSV,
     FEDWATCH_MAX_AGE_HOURS,
+    FEDWATCH_HISTORY_CSV,
     FEDWATCH_PAGE_LOAD_TIMEOUT_SEC,
     FEDWATCH_TOOL_URL,
     FEDWATCH_URL,
@@ -33,6 +36,7 @@ from buysignal.config import (
 )
 
 log = logging.getLogger(__name__)
+_UPDATE_LOCK = threading.Lock()
 
 _HORIZONS = {
     "nearest": pd.DateOffset(),
@@ -93,6 +97,71 @@ def _validate_snapshot(snapshot: pd.DataFrame, today: pd.Timestamp) -> pd.DataFr
         raise ValueError("FedWatch horizon dates are out of order; refresh required")
     for row in snapshot.itertuples():
         _validate_probabilities((float(row.prob_ease), float(row.prob_no_change), float(row.prob_hike)))
+    if {"reference_lower_bps", "reference_upper_bps"}.issubset(snapshot.columns):
+        references = snapshot[["reference_lower_bps", "reference_upper_bps"]]
+        if references.notna().any().any():
+            if references.isna().any().any() or len(references.drop_duplicates()) != 1:
+                raise ValueError("FedWatch reference range changed or was incomplete during collection")
+            if (references.reference_lower_bps >= references.reference_upper_bps).any():
+                raise ValueError("Invalid FedWatch reference target range")
+    return snapshot
+
+
+def _reference_metadata(text: str) -> dict:
+    """The reference range and CME observation time make comparisons meaningful."""
+    result = {"reference_lower_bps": None, "reference_upper_bps": None, "source_asof": None}
+    reference = re.search(r"Current target rate is\s*(\d+)\s*[-–]\s*(\d+)", text, re.IGNORECASE)
+    if reference:
+        result["reference_lower_bps"], result["reference_upper_bps"] = map(int, reference.groups())
+    observed = re.search(r"Data as of\s+(\d{1,2} \w+ \d{4} \d{1,2}:\d{2}:\d{2})\s+CT", text)
+    if observed:
+        date = pd.to_datetime(observed.group(1), format="%d %b %Y %H:%M:%S")
+        result["source_asof"] = date.tz_localize("America/Chicago").tz_convert("UTC").isoformat()
+    return result
+
+
+def _add_comparisons(snapshot: pd.DataFrame, previous: pd.DataFrame | None) -> pd.DataFrame:
+    """Match meeting dates, not rolling horizon labels; reset after reference changes."""
+    snapshot = snapshot.copy()
+    for column in ("ease", "no_change", "hike"):
+        snapshot[f"delta_{column}_pp"] = float("nan")
+    snapshot["comparison_since"] = ""
+    snapshot["comparison_status"] = "No comparable previous snapshot"
+    if previous is None or "meeting_date" not in previous:
+        return snapshot
+    previous = previous.copy()
+    previous["meeting_date"] = pd.to_datetime(previous["meeting_date"], errors="coerce")
+    reference_columns = ["reference_lower_bps", "reference_upper_bps"]
+    for index, row in snapshot.iterrows():
+        matches = previous.loc[previous.meeting_date == row.meeting_date]
+        if matches.empty:
+            snapshot.loc[index, "comparison_status"] = "New meeting; baseline starts with this refresh"
+            continue
+        before = matches.iloc[-1]
+        if any(pd.isna(row.get(c)) or pd.isna(before.get(c)) for c in reference_columns):
+            snapshot.loc[index, "comparison_status"] = "Reference target range unavailable; baseline reset"
+            continue
+        if any(row[c] != before[c] for c in reference_columns):
+            snapshot.loc[index, "comparison_status"] = "Reference target range changed; baseline reset"
+            continue
+        if pd.isna(before.get("fetched_at")):
+            continue
+        try:
+            _validate_probabilities(tuple(float(before[f"prob_{c}"]) for c in ("ease", "no_change", "hike")))
+            since = pd.Timestamp(before["fetched_at"])
+            elapsed = pd.Timestamp(row["fetched_at"]) - since
+            if elapsed.total_seconds() <= 0:
+                continue
+            old_source, new_source = before.get("source_asof"), row.get("source_asof")
+            if pd.notna(old_source) and pd.notna(new_source) and pd.Timestamp(new_source) <= pd.Timestamp(old_source):
+                snapshot.loc[index, "comparison_status"] = "Source timestamp unchanged or older; no new comparable observation"
+                continue
+        except (ValueError, TypeError, KeyError):
+            continue
+        for column in ("ease", "no_change", "hike"):
+            snapshot.loc[index, f"delta_{column}_pp"] = (float(row[f"prob_{column}"]) - float(before[f"prob_{column}"])) * 100
+        snapshot.loc[index, "comparison_since"] = since.isoformat()
+        snapshot.loc[index, "comparison_status"] = "Same meeting and current target range"
     return snapshot
 
 
@@ -181,7 +250,9 @@ def _scrape_meeting_probabilities(
         read_selected,
         message=f"FedWatch probabilities for {date.date()} did not become ready",
     )
+    metadata = _reference_metadata(str(driver.find_element(By.TAG_NAME, "body").text))
     return {
+        **metadata,
         "meeting_date": date,
         "prob_ease": ease,
         "prob_no_change": no_change,
@@ -254,6 +325,12 @@ def _fetch_with_retries(today: pd.Timestamp) -> tuple[pd.DataFrame | None, str |
 
 
 def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
+    """Serialize current-cache and observation-history publication."""
+    with _UPDATE_LOCK:
+        return _update_fed_rate_data(filepath)
+
+
+def _update_fed_rate_data(filepath: Path | str) -> str | None:
     """Refresh the cached FedWatch snapshot. Returns an error message, or None on success."""
     filepath = Path(filepath)
     time.sleep(random.uniform(*FETCH_JITTER_SEC))
@@ -267,18 +344,22 @@ def update_fed_rate_data(filepath: Path | str = FEDWATCH_CSV) -> str | None:
         snapshot = _validate_snapshot(snapshot, today)
     except (ValueError, TypeError) as exc:
         return f"Invalid FedWatch snapshot: {exc}"
-    filepath.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=filepath.parent, suffix=".csv", delete=False) as cache:
-        temporary = Path(cache.name)
-        try:
-            snapshot.to_csv(cache, index=False)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
     try:
-        temporary.replace(filepath)
-    finally:
-        temporary.unlink(missing_ok=True)
+        previous = pd.read_csv(filepath)
+    except (OSError, ValueError):
+        previous = None
+    snapshot["fetched_at"] = pd.Timestamp.now(tz="UTC").isoformat()
+    snapshot = _add_comparisons(snapshot, previous)
+    # Archive successful observations separately from the replaceable current cache.
+    history_path = (FEDWATCH_HISTORY_CSV if filepath == Path(FEDWATCH_CSV)
+                    else filepath.with_name(f"{filepath.stem}_history.csv"))
+    try:
+        history = pd.read_csv(history_path)
+    except (OSError, ValueError):
+        history = pd.DataFrame()
+    history = pd.concat([history, snapshot], ignore_index=True) if not history.empty else snapshot.copy()
+    write_csv(history, history_path)
+    write_csv(snapshot, filepath)
 
     log.info(
         "FedWatch cache updated: %d meetings, %s -> %s",

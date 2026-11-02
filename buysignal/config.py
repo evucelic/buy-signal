@@ -15,6 +15,8 @@ FEDWATCH_CSV = DATA_DIR / "fedwatch.csv"
 MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
+MARKET_DAILY_CSV = DATA_DIR / "marketdaily.csv"
+CREDIT_CSV = DATA_DIR / "credit.csv"
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
 CHROMEDRIVER_LOG = DATA_DIR / "chromedriver.log"  # latest Selenium session only, for "Chrome instance exited"
@@ -35,6 +37,7 @@ VIX_WINDOW_END_HOUR_CT = 20    # ...and is done moving by ~8pm Central
 # --- Fed rate (#2): CME FedWatch ---------------------------------------------
 FEDWATCH_TOOL_URL = "https://cmegroup-tools.quikstrike.net/User/QuikStrikeTools.aspx?viewitemid=IntegratedFedWatchTool"
 FEDWATCH_MAX_AGE_HOURS = 48
+FEDWATCH_HISTORY_CSV = DATA_DIR / "fedwatch_history.csv"
 FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
 
 # --- Fetch hardening (anti bot-detection / rate-limiting) --------------------
@@ -75,11 +78,20 @@ MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly l
 MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.005       # -0.5% or worse daily change on MARKET_PRIMARY_INDEX counts as a dip
+MARKET_DRAWDOWN_SESSIONS = 63       # prior completed sessions; current price is compared with their closing high
+MARKET_VOLATILITY_SESSIONS = 20    # baseline ends BEFORE the five-session selloff window
+MARKET_SELLOFF_SESSIONS = 5
+MARKET_TREND_SESSIONS = 200
+MARKET_TREND_SLOPE_SESSIONS = 20
+MARKET_BOOTSTRAP_PERIOD = "max"
+MARKET_DAILY_PERIOD = "5y"          # bootstrap history; incremental requests between daily full reconciliations
 MARKET_GROWTH_THRESHOLD = 0.0055    # +0.55% or better daily change counts as growth
 
 # --- Leading industries (#4/#5): top industries by market cap, earnings growth ---
 SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
 SECTOR_GROWTH_QUORUM = 3      # at least this many of the top N must have positive forward earnings growth
+SECTOR_MIN_ESTIMATE_COVERAGE = 0.60  # covered weight / sampled top-constituent weight
+SECTOR_MAX_CACHE_AGE_HOURS = 96
 SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for earnings growth
 
 # --- Yield curve (#7): 10y-3m Treasury spread, advisory-only recession context ---
@@ -99,6 +111,13 @@ YIELD_CURVE_BUCKET_DAYS = 21
 # crossed zero 406 times since 1982 and only 7 episodes lasted; two buckets cuts that to 14
 # fires in 44 years, still landing a median 26 days before each sustained episode began.
 POLICY_SPREAD_NEG_BUCKETS = 2
+
+# --- Credit market context: advisory; never a sixth checklist condition --------
+CREDIT_SERIES = "BAMLH0A0HYM2"      # ICE BofA US high-yield option-adjusted spread, percentage points
+CREDIT_CHANGE_SESSIONS = (5, 21)
+CREDIT_ELEVATED_SPREAD = 5.0       # descriptive threshold, not an optimized entry rule
+CREDIT_CHANGE_NOISE_BP = 10.0     # smaller monthly moves described as broadly stable
+CREDIT_MAX_OBSERVATION_AGE_DAYS = 7  # calendar-day tolerance for weekends/holidays
 
 # --- Equity opportunity analyzer (#8): which segment looks attractive ---------
 # Segments compared on valuations. Trailing AND forward P/E both come from MSCI index
@@ -138,3 +157,11 @@ VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed b
 REFRESH_RETRY_BACKOFF = timedelta(hours=2)
 TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (python -m buysignal.schedule.runner --loop); matches VIX/market's cadence
 DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central
+
+# --- Resource and fetch budgets (overridable on small deployments) ------------
+LIVE_CACHE_TTL_SEC = int(os.environ.get("LIVE_CACHE_TTL_SEC", "300"))
+YAHOO_TIMEOUT_SEC = 20
+TELEGRAM_CHARTS = os.environ.get("TELEGRAM_CHARTS", "1") != "0"
+TELEGRAM_CHART_DPI = int(os.environ.get("TELEGRAM_CHART_DPI", "120"))
+CHART_CACHE_MAX_BYTES = int(os.environ.get("CHART_CACHE_MAX_MB", "8")) * 1024 * 1024
+CHROME_VERBOSE_LOG = os.environ.get("CHROME_VERBOSE_LOG", "0") == "1"

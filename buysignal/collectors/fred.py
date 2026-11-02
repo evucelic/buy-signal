@@ -8,6 +8,7 @@ read_csv), so they're dropped.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import time
 from io import StringIO
@@ -26,7 +27,15 @@ def fetch_series(series_id: str) -> pd.DataFrame:
     resp.raise_for_status()
     df = pd.read_csv(StringIO(resp.text), parse_dates=["observation_date"])
     df = df.rename(columns={"observation_date": "date", series_id: "value"})
-    return df.dropna(subset=["value"]).sort_values("date").reset_index(drop=True)
+    if not {"date", "value"}.issubset(df.columns):
+        raise ValueError(f"FRED {series_id}: missing columns")
+    df["value"] = pd.to_numeric(df["value"].replace(".", float("nan")), errors="raise")
+    df = df.dropna(subset=["value"])
+    if df.empty or df.date.isna().any() or not df.value.map(math.isfinite).all():
+        raise ValueError(f"FRED {series_id}: invalid observations")
+    if df.date.duplicated().any():
+        raise ValueError(f"FRED {series_id}: duplicate observation dates")
+    return df.sort_values("date").reset_index(drop=True)
 
 
 def fetch_series_with_retries(series_id: str, label: str) -> tuple[pd.DataFrame | None, str | None]:

@@ -66,8 +66,8 @@ def test_valid_snapshot_is_published_and_loadable(tmp_path, snapshot):
          patch.object(fed_rate, "_fetch_with_retries", return_value=(snapshot, None)):
         assert fed_rate.update_fed_rate_data(path) is None
         loaded = fed_rate.latest_fedwatch(path)
-    pd.testing.assert_frame_equal(loaded, snapshot)
-    assert list(tmp_path.iterdir()) == [path]
+    pd.testing.assert_frame_equal(loaded[snapshot.columns], snapshot)
+    assert set(tmp_path.iterdir()) == {path, tmp_path / "fed_history.csv"}
 
 
 def test_failed_write_preserves_previous_snapshot_and_cleans_temporary_file(tmp_path, snapshot):
