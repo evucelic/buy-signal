@@ -85,16 +85,16 @@ def _macro_collectors() -> list[MacroCollector]:
     """The macro caches refresh_macro() drives, cheapest and most reliable first, so a browser
     that won't start costs only the two collectors that need one.
     """
-    from buysignal.collectors import fed_rate, margin_debt, sectors, valuations, yield_curve
+    from buysignal.collectors import credit, fed_rate, margin_debt, sectors, valuations, yield_curve
 
     return [
+        MacroCollector("credit", credit.update_credit_data),
         MacroCollector("yield_curve", yield_curve.update_yield_curve_data, yield_curve.demands_refresh),
-        MacroCollector("sector", sectors.update_sector_data),
+        MacroCollector("sector", sectors.update_sector_data, sectors.demands_refresh),
         MacroCollector(
             "margin_debt",
             margin_debt.update_margin_debt_data,
             margin_debt.demands_refresh,
-            _cf_bypass_precondition,
         ),
         MacroCollector("fed_rate", fed_rate.update_fed_rate_data, fed_rate.demands_refresh),
         MacroCollector("valuations", valuations.update_valuations_data),
@@ -119,7 +119,20 @@ def macro_journal() -> RefreshJournal:
         return _journal
 
 
+_macro_refresh_lock = Lock()
+
+
 def refresh_macro(
+    force: bool = False,
+    journal: RefreshJournal | None = None,
+    now: datetime | None = None,
+    only: Collection[str] | None = None,
+) -> list[tuple[str, str]]:
+    with _macro_refresh_lock:
+        return _refresh_macro(force=force, journal=journal, now=now, only=only)
+
+
+def _refresh_macro(
     force: bool = False,
     journal: RefreshJournal | None = None,
     now: datetime | None = None,

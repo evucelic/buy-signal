@@ -22,6 +22,7 @@ def _vix(vix, change=None):
 
 
 def _vix_sources(monkeypatch, cached=_CACHED_VIX, live=_LIVE_VIX):
+    monkeypatch.setattr("buysignal.signals.vix_signal._vix_session_is_current", lambda *args: True)
     monkeypatch.setattr("buysignal.signals.vix_signal.load_latest_cached_vix", lambda: cached)
     monkeypatch.setattr("buysignal.signals.vix_signal.get_latest_vix", lambda: live)
     monkeypatch.setattr("buysignal.signals.vix_signal.vix_change_pct", lambda: None)
@@ -261,107 +262,42 @@ def test_margin_detail_flags_stale_without_the_raw_message():
 
 # --- market_signal ---------------------------------------------------------------
 
-_CACHED_DAILY = -0.01
-_LIVE_DAILY = 0.01
-
-
-def _market_changes(spy_daily):
-    return {
-        "SPY": {"daily": spy_daily, "weekly": 0.01, "monthly": 0.02},
-        "NASDAQ": {"daily": 0.01, "weekly": 0.02, "monthly": 0.03},
-        "DOW": {"daily": 0.005, "weekly": 0.01, "monthly": 0.01},
-    }
-
-
-def _market(spy_daily):
-    with patch("buysignal.signals.market_signal.get_latest_market_changes", return_value=_market_changes(spy_daily)):
+def _market(drawdown):
+    values = [100.] * 219 + [100 * (1 + drawdown)]
+    history = pd.DataFrame({name: values for name in ("SPY", "NASDAQ", "DOW")},
+                           index=pd.bdate_range("2025-01-01", periods=len(values)))
+    with patch("buysignal.signals.market_signal.get_entry_history", return_value=history):
         return market_signal.score()
 
 
-def _market_sources(monkeypatch, cached=_CACHED_DAILY, live=_LIVE_DAILY):
-    monkeypatch.setattr(
-        "buysignal.signals.market_signal.latest_changes",
-        lambda: None if cached is None else _market_changes(cached),
-    )
-    monkeypatch.setattr(
-        "buysignal.signals.market_signal.get_latest_market_changes", lambda: _market_changes(live)
-    )
+def test_market_drawdown_passes():
+    signal = _market(-.07)
+    assert signal.state == "dip" and signal.passes
 
 
-def test_market_dip_passes():
-    s = _market(-0.01)
-    assert s.state == "dip"
-    assert s.passes is True
+def test_small_red_day_does_not_pass():
+    signal = _market(-.01)
+    assert signal.state == "flat" and not signal.passes
 
 
-def test_market_growth_fails():
-    s = _market(0.01)
-    assert s.state == "growth"
-    assert s.passes is False
+def test_exact_drawdown_threshold_passes():
+    assert _market(MARKET_DIP_THRESHOLD).passes
 
 
-def test_market_flat_fails():
-    s = _market(0.0)
-    assert s.state == "flat"
-    assert s.passes is False
+def test_drawdown_above_threshold_does_not_pass():
+    assert not _market(MARKET_DIP_THRESHOLD + .0001).passes
 
 
-def test_market_reports_the_live_changes_when_refresh_is_allowed(monkeypatch):
-    _market_sources(monkeypatch)
-
-    s = market_signal.score(allow_refresh=True)
-
-    assert s.score == _LIVE_DAILY
-    assert s.state == "growth"
-
-
-def test_market_reports_the_cached_changes_when_refresh_is_disallowed(monkeypatch):
-    _market_sources(monkeypatch)
-
-    s = market_signal.score(allow_refresh=False)
-
-    assert s.score == _CACHED_DAILY
-    assert s.state == "dip"
-
-
-def test_market_reports_the_live_changes_when_refresh_is_disallowed_but_the_cache_is_empty(monkeypatch):
-    _market_sources(monkeypatch, cached=None)
-
-    s = market_signal.score(allow_refresh=False)
-
-    assert s.score == _LIVE_DAILY
-
-
-def test_market_dip_at_the_exact_threshold_passes():
-    s = _market(MARKET_DIP_THRESHOLD)
-    assert s.state == "dip"
-    assert s.passes is True
-
-
-def test_market_growth_at_the_exact_threshold_fails():
-    s = _market(MARKET_GROWTH_THRESHOLD)
-    assert s.state == "growth"
-    assert s.passes is False
-
-
-@pytest.mark.parametrize(
-    "daily",
-    [
-        MARKET_DIP_THRESHOLD + 0.0001,
-        0.0,
-        MARKET_GROWTH_THRESHOLD - 0.0001,
-    ],
-)
-def test_market_inside_the_band_between_the_thresholds_is_flat(daily):
-    assert _market(daily).state == "flat"
-
-
-def test_market_thresholds_are_asymmetric():
-    assert _market(-MARKET_DIP_THRESHOLD).state == "flat"
+def test_market_score_preserves_allow_refresh_flag():
+    history = pd.DataFrame({name: [100.] * 220 for name in ("SPY", "NASDAQ", "DOW")},
+                           index=pd.bdate_range("2025-01-01", periods=220))
+    with patch("buysignal.signals.market_signal.get_entry_history", return_value=history) as get:
+        market_signal.score(allow_refresh=False)
+    get.assert_called_once_with(allow_refresh=False)
 
 
 def test_market_table_row_order():
-    table = _market(-0.01).table
+    table = _market(-.07).table
     assert table.index("SPY") < table.index("NASDAQ") < table.index("DOW")
 
 
@@ -374,6 +310,10 @@ def _sector_df(growths):
             "industry": [f"Industry {i}" for i in range(len(growths))],
             "market_cap": [1e12 * (i + 1) for i in range(len(growths))],
             "earnings_growth_estimate_1y": growths,
+            "estimate_coverage": [1.] * len(growths),
+            "covered_companies": [8] * len(growths),
+            "sampled_companies": [8] * len(growths),
+            "covered_weight": [.8] * len(growths),
         }
     )
 
@@ -427,17 +367,17 @@ def test_human_cap_units(value, expected):
 
 
 def test_format_industry_trend_icon_positive():
-    row = {"industry": "X", "market_cap": 1e12, "earnings_growth_estimate_1y": 0.1}
+    row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": 0.1}
     assert "📈" in sector_signal._format_industry(row)
 
 
 def test_format_industry_trend_icon_negative():
-    row = {"industry": "X", "market_cap": 1e12, "earnings_growth_estimate_1y": -0.1}
+    row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": -0.1}
     assert "📉" in sector_signal._format_industry(row)
 
 
 def test_format_industry_trend_icon_zero_is_not_growth():
-    row = {"industry": "X", "market_cap": 1e12, "earnings_growth_estimate_1y": 0.0}
+    row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": 0.0}
     assert "📉" in sector_signal._format_industry(row)
 
 
@@ -605,7 +545,7 @@ def test_alert_state_strong(make_subsignal):
 def test_alert_state_soft(make_subsignal):
     subs = [make_subsignal("vix", passes=True)]
     state, _ = _alert_state(subs, ["sector"])
-    assert state == "soft"
+    assert state == "incomplete"
 
 
 def test_alert_state_none_on_any_failure(make_subsignal):
@@ -626,6 +566,7 @@ _SIGNAL_MODULES = {
     "market_signal": "market_dip",
     "sector_signal": "sector",
     "yield_curve_signal": "yield_curve",
+    "credit_signal": "credit",
 }
 
 
@@ -652,6 +593,7 @@ def _compute(monkeypatch, allow_refresh=True, **overrides):
     """
     outcomes = {module: _sub(name) for module, name in _SIGNAL_MODULES.items()}
     outcomes["yield_curve_signal"] = _sub("yield_curve", advisory=True)
+    outcomes["credit_signal"] = _sub("credit", advisory=True)
     outcomes.update(overrides)
 
     for module, outcome in outcomes.items():
@@ -690,7 +632,9 @@ def test_compute_signal_still_shows_a_failing_advisory_signal(monkeypatch):
 
     result = _compute(monkeypatch, yield_curve_signal=failing_curve)
 
-    assert [s.name for s in result.subsignals] == list(_SIGNAL_MODULES.values())
+    expected = list(_SIGNAL_MODULES.values())
+    expected.insert(4, "trend")
+    assert [s.name for s in result.subsignals] == expected
 
 
 def test_compute_signal_stays_strong_when_the_advisory_signal_is_missing(monkeypatch):
@@ -705,12 +649,14 @@ def test_compute_signal_reports_a_missing_advisory_signal(monkeypatch):
     assert result.missing_signals == ["yield_curve"]
 
 
-def test_compute_signal_downgrades_to_soft_when_a_required_signal_is_missing(monkeypatch):
+def test_compute_signal_is_incomplete_when_a_required_signal_is_missing(monkeypatch):
     result = _compute(monkeypatch, vix_signal=RuntimeError("boom"))
 
-    assert result.state == "soft"
+    assert result.state == "incomplete"
     assert result.missing_signals == ["vix"]
-    assert len(result.subsignals) == 5
+    assert len(result.subsignals) == 7
+    assert result.required_count == 5
+    assert result.score == pytest.approx(4/5)
 
 
 def test_compute_signal_reports_every_signal_missing_when_all_of_them_fail(monkeypatch):
@@ -719,8 +665,8 @@ def test_compute_signal_reports_every_signal_missing_when_all_of_them_fail(monke
     result = _compute(monkeypatch, **boom)
 
     assert result.subsignals == []
-    assert result.state == "none"
-    assert sorted(result.missing_signals) == sorted(_SIGNAL_MODULES.values())
+    assert result.state == "incomplete"
+    assert sorted(result.missing_signals) == sorted([*_SIGNAL_MODULES.values(), "trend"])
 
 
 def test_compute_signal_passes_allow_refresh_through_to_the_refetching_signals(monkeypatch):
@@ -766,3 +712,23 @@ def test_rate_past_meeting_is_missing_not_supportive():
     df.loc[df.horizon == "nearest", "meeting_date"] = pd.Timestamp("2026-06-30")
     with pytest.raises(ValueError, match="past meeting"):
         _rate(df)
+
+
+def test_missing_credit_does_not_gate_the_five_conditions(monkeypatch):
+    result = _compute(monkeypatch, credit_signal=RuntimeError("feed unavailable"))
+    assert result.state == "strong"
+    assert result.required_count == 5
+    assert result.passing_count == 5
+    assert result.score == 1
+    assert result.missing_signals == ["credit"]
+
+
+def test_trend_failure_cannot_remove_a_valid_drawdown_condition(monkeypatch):
+    def failed_trend(_):
+        raise ValueError("trend unavailable")
+    monkeypatch.setattr("buysignal.signals.buy_signal.trend_signal.from_market", failed_trend)
+    result = _compute(monkeypatch)
+    assert result.state == "strong"
+    assert result.required_count == 5
+    assert result.missing_signals == ["trend"]
+    assert next(s for s in result.subsignals if s.name == "market_dip").passes

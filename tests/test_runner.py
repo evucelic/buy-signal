@@ -275,6 +275,7 @@ def test_macro_collectors_covers_every_macro_cache_cheapest_first():
     browser that won't start can't cost the three that don't need one.
     """
     assert [c.name for c in runner._macro_collectors()] == [
+        "credit",
         "yield_curve",
         "sector",
         "margin_debt",
