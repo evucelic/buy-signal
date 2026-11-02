@@ -1,4 +1,10 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 NONE = "none"
 SOFT = "soft"
@@ -15,6 +21,9 @@ class SubSignal:
     table: str | None = None  # optional monospace-ready rendering of detail, for multi-row data
     advisory: bool = False    # informational side signal: shown alongside, never gates the checklist
     footer: str | None = None # optional call-out rendered under the table
+    observed_at: str | None = None  # source observation date/time, not cache write time
+    metrics: dict = field(default_factory=dict)  # structured facts used by reports and charts
+    history: pd.DataFrame | None = field(default=None, repr=False, compare=False)
 
 
 def format_table(headers: list[str], rows: list[list[str]]) -> str:

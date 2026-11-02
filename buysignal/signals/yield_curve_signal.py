@@ -114,8 +114,7 @@ def score() -> SubSignal:
             detail += f" | 2y-FFR below fed funds {below} straight 3wk periods, {cuts}"
             if below >= POLICY_SPREAD_NEG_BUCKETS:
                 since = complete.index[-below]
-                footer = f"🔻 Cuts priced in since {since.date()}. First cut historically 4-20mo out."
-    detail += f" | {_BLURBS[state]}"
+                footer = f"🔻 Cuts priced in since {since.date()}."
 
     return SubSignal(
         "yield_curve",
@@ -126,4 +125,6 @@ def score() -> SubSignal:
         table=table,
         advisory=True,
         footer=footer,
+        observed_at=str(latest["date"].date()),
+        history=history.tail(365).copy(),
     )
