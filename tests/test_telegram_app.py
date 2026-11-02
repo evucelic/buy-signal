@@ -11,6 +11,11 @@ import pytest
 
 from buysignal.schedule.journal import RefreshJournal
 from buysignal.telegram_bot import app
+from buysignal.telegram_bot.messages import Report
+
+def _text(reply):
+    return "\n".join(m.text for m in reply.messages) if isinstance(reply, Report) else reply
+
 
 
 @pytest.fixture(autouse=True)
@@ -102,15 +107,15 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, sent, make_subsignal, ma
     assert len(sent) == 0
 
     app.handle_tick(alerting, None)
-    assert len(sent) == 1
+    assert len(sent) == 9
     assert "Watch trigger active" in sent[0]
 
     app.handle_tick(alerting, None)
-    assert len(sent) == 1  # no repeat while sustained
+    assert len(sent) == 9  # no repeat while sustained
 
     app.handle_tick(not_alerting, None)
-    assert len(sent) == 2
-    assert "cleared" in sent[1].lower()
+    assert len(sent) == 10
+    assert "cleared" in sent[-1].lower()
 
 
 def test_handle_tick_records_last_tick_and_error():
@@ -131,8 +136,8 @@ def test_report_is_not_due_an_hour_before_the_report_hour():
     assert app.report_due(_ct(19), last_report_date=None, report_hour=20) is False
 
 
-def test_report_is_not_due_an_hour_after_the_report_hour():
-    assert app.report_due(_ct(21), last_report_date=None, report_hour=20) is False
+def test_report_can_retry_or_start_late_after_the_report_hour():
+    assert app.report_due(_ct(21), last_report_date=None, report_hour=20) is True
 
 
 def test_report_is_not_due_again_on_a_date_already_reported():
@@ -202,7 +207,8 @@ def test_handle_tick_force_refreshes_and_recomputes_before_the_daily_report(
 
     assert calls == [("refresh", True), ("compute",)]
     report = next(s for s in sent if "End of day" in s)
-    assert "fresh-detail" in report and "stale-detail" not in report
+    assert "fresh-detail" in "\n".join(sent)
+    assert "stale-detail" not in "\n".join(sent)
 
 
 def test_handle_tick_sends_the_daily_reports_refresh_failures_in_the_same_tick(
@@ -357,7 +363,7 @@ def test_handle_message_signal(monkeypatch, make_buy_signal):
     fake = make_buy_signal([])
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
     monkeypatch.setattr(app, "market_open", lambda: True)
-    assert "No buy signal" in app.handle_message("/signal")
+    assert "No buy signal" in _text(app.handle_message("/signal"))
 
 
 def test_handle_message_vix_respects_market_open_flag(monkeypatch, make_subsignal):
@@ -515,7 +521,7 @@ def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatc
     monkeypatch.setattr(app.runner, "refresh_macro", lambda force=False, **kw: calls.append(force) or [])
     fake = make_buy_signal([])
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
-    reply = app.handle_message("/refresh")
+    reply = _text(app.handle_message("/refresh"))
     assert calls == [True]
     assert "No buy signal" in reply
 
@@ -526,7 +532,7 @@ def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_
     )
     fake = make_buy_signal([])
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
-    reply = app.handle_message("/refresh")
+    reply = _text(app.handle_message("/refresh"))
     assert "Refresh failed" in reply
     assert "fed_rate" in reply
     assert "ConnectionError: boom" in reply
@@ -546,7 +552,7 @@ def test_handle_message_refresh_leaves_the_failure_for_the_daily_push(
 
     monkeypatch.setattr(app.runner, "refresh_macro", failing_refresh)
 
-    reply = app.handle_message("/refresh")
+    reply = _text(app.handle_message("/refresh"))
     app.handle_tick(None, None, datetime.now(timezone.utc))
 
     assert "Refresh failed" in reply
@@ -573,3 +579,38 @@ def test_start_hands_the_command_handler_to_the_transport(monkeypatch):
     app.start()
 
     assert started == [app.handle_message]
+
+
+def test_daily_report_is_not_marked_complete_after_delivery_failure(monkeypatch, make_buy_signal):
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
+    monkeypatch.setattr(app, "compute_signal", lambda: make_buy_signal([]))
+    attempted = []
+    monkeypatch.setattr(app.transport, "send_report", lambda report: attempted.append(report) and False)
+    app.handle_tick(None, None, now=_ct(20))
+    assert app._state.last_report_date is None
+    monkeypatch.setattr(app.transport, "send_report", lambda report: attempted.append(report) or True)
+    app.handle_tick(None, None, now=_ct(21))
+    assert app._state.last_report_date == _ct(21).date()
+    assert len(attempted) == 2
+
+
+def test_watch_activation_retries_when_report_delivery_failed(monkeypatch, make_buy_signal, make_subsignal):
+    result = make_buy_signal([make_subsignal("market_dip", "dip", passes=True)])
+    monkeypatch.setattr(app.transport, "send_report", lambda report: False)
+    app.handle_tick(result, None)
+    assert app._state.alerting is False
+    monkeypatch.setattr(app.transport, "send_report", lambda report: True)
+    app.handle_tick(result, None)
+    assert app._state.alerting is True
+
+
+def test_chart_rendering_failure_preserves_the_text_report(monkeypatch, make_buy_signal, make_subsignal):
+    signal = make_subsignal("market_dip", "dip", detail="SPY drawdown facts", passes=True)
+    def fail(_):
+        raise ValueError("invalid chart")
+    monkeypatch.setattr(app.signal_charts, "render_signal_chart", fail)
+    report = app._signal_report(make_buy_signal([signal]))
+    market = next(p for p in report.messages if p.key == "market_dip")
+    assert "SPY drawdown facts" in market.text
+    assert "Chart unavailable" in market.text
+    assert market.photo is None

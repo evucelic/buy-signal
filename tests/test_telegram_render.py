@@ -156,7 +156,7 @@ def test_status_message_failed_after_tick():
 
 def test_status_message_names_the_alert_state():
     status = _status(alert_state="strong")
-    assert "STRONG BUY SIGNAL" in render.status_message(status, [], NOW)
+    assert "Entry conditions aligned" in render.status_message(status, [], NOW)
 
 
 def test_status_message_lists_each_collectors_last_attempt():
@@ -249,7 +249,7 @@ _GOLDEN_TABLE = (
 )
 
 _GOLDEN_MESSAGE = (
-    "🟢 <b>STRONG BUY SIGNAL</b> (1/1 conditions met)\n"
+    "🟢 <b>Entry conditions aligned</b> (1/2 conditions met)\n"
     "\n"
     "✅ 🌡️ <b>VIX</b>: 🔴 High fear\n"
     "• VIX 31.2 &gt;= 30.0, high fear\n"

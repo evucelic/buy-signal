@@ -14,19 +14,24 @@ from datetime import datetime, timedelta
 from buysignal.schedule.journal import CollectorStatus
 from buysignal.signals.base import SubSignal, format_table
 from buysignal.signals.buy_signal import BuySignal
+from buysignal.telegram_bot.messages import Report, ReportMessage
+from buysignal.telegram_bot.html_chunks import split_html
 
 # Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
 ALERT_LABELS = {
     "none": ("⚪", "No buy signal"),
     "soft": ("🟡", "Soft signal"),
-    "strong": ("🟢", "STRONG BUY SIGNAL"),
+    "strong": ("🟢", "Entry conditions aligned"),
+    "incomplete": ("⚠️", "Incomplete entry assessment"),
 }
 
 SIGNAL_META = {
     "vix": ("🌡️", "VIX"),
     "fed_rate": ("🏦", "Fed Rate"),
     "margin_debt": ("💳", "Margin Debt"),
-    "market_dip": ("📊", "Market Dip"),
+    "market_dip": ("📊", "SPY Drawdown"),
+    "trend": ("🧭", "Market Trend"),
+    "credit": ("🏦", "Corporate Credit"),
     "sector": ("🏭", "Leading Industries"),
     "yield_curve": ("〽️", "Yield Curve"),
 }
@@ -41,12 +46,21 @@ STATE_LABELS = {
     ("fed_rate", "flat"): "🤔 Mixed",
     ("margin_debt", "deleveraging"): "📉 Deleveraging",
     ("margin_debt", "leveraging"): "📈 Leveraging up",
-    ("market_dip", "dip"): "🔻 Dip",
-    ("market_dip", "flat"): "➡️ Flat",
+    ("trend", "uptrend"): "📈 Established uptrend",
+    ("trend", "under_pressure"): "🟠 Trend under pressure",
+    ("trend", "downtrend"): "📉 Established downtrend",
+    ("trend", "recovering"): "↗️ Above falling SMA200",
+    ("trend", "unknown"): "Unknown",
+    ("credit", "widening"): "🟠 Widening",
+    ("credit", "narrowing"): "🟢 Narrowing",
+    ("credit", "stable"): "➡️ Broadly stable",
+    ("credit", "unknown"): "Insufficient change history",
+    ("market_dip", "dip"): "🔻 DD63 threshold met",
+    ("market_dip", "flat"): "▫️ Drawdown condition not met",
     ("market_dip", "growth"): "📈 Growth",
     ("sector", "growing"): "📈 Growing",
     ("sector", "flat"): "➡️ Flat",
-    ("yield_curve", "steep"): "📈 Steep (supportive)",
+    ("yield_curve", "steep"): "📈 Steep",
     ("yield_curve", "flat"): "➡️ Flat/normal",
     ("yield_curve", "inverted"): "⚠️ Inverted",
     ("yield_curve", "deep_inversion"): "🚨 Deep inversion",
@@ -68,8 +82,10 @@ COMMANDS = [
     {"command": "vix", "description": "VIX level"},
     {"command": "fedrate", "description": "Fed rate trajectory (CME FedWatch)"},
     {"command": "margin", "description": "FINRA margin debt (deleveraging)"},
-    {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
+    {"command": "dip", "description": "SPY drawdown, selloff intensity and index changes"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
+    {"command": "trend", "description": "SPY long-term trend (advisory)"},
+    {"command": "credit", "description": "Corporate credit spreads (advisory)"},
     {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
     {"command": "whattobuy", "description": "Segment valuations: S&P 500 vs world small cap vs Europe"},
     {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
@@ -83,8 +99,10 @@ HELP_TEXT = (
     "/vix: VIX level\n"
     "/fedrate: Fed rate trajectory\n"
     "/margin: FINRA margin debt\n"
-    "/dip: SPY/NASDAQ/DOW % change\n"
+    "/dip: SPY drawdown and selloff intensity\n"
     "/sector: leading industries earnings outlook\n"
+    "/trend: SPY long-term trend (advisory)\n"
+    "/credit: corporate credit spreads (advisory)\n"
     "/curve: 10y-3m yield curve spread (advisory)\n"
     "/whattobuy: segment valuations (S&P 500 / world small cap / Europe)\n"
     "/refresh: force a fresh fetch of all data (bypass cache)\n"
@@ -158,8 +176,80 @@ def signal_message(result: BuySignal, caches: list[tuple[str, datetime | None]],
     return "\n\n".join([header, *blocks])
 
 
+# A full report is intentionally grouped by decision topic rather than chopped
+# at arbitrary character offsets. The final safety split preserves HTML tags.
+_REPORT_SECTIONS = (
+    ("market_dip", "SPY / Trend", ("market_dip", "trend")),
+    ("vix", "VIX", ("vix",)),
+    ("fed_rate", "FedWatch", ("fed_rate",)),
+    ("margin_debt", "FINRA Margin", ("margin_debt",)),
+    ("sector", "Industry EPS", ("sector",)),
+    ("credit", "HY Credit", ("credit",)),
+    ("yield_curve", "Yield Curve", ("yield_curve",)),
+)
+
+
+def _detailed_signal(signal: SubSignal) -> str:
+    block = subsignal_block(signal)
+    # The compact legacy block chooses either a table or detail. In the detailed
+    # report include both, before the explanatory footer.
+    if signal.table:
+        head, _ = block.split("\n", 1)
+        block = head + "\n" + _bullets(signal.detail) + "\n\n<pre>" + esc(signal.table) + "</pre>"
+        if signal.footer:
+            block += "\n\n" + esc(signal.footer)
+    if signal.observed_at:
+        block += "\n\n🕓 Source observation: " + esc(signal.observed_at)
+    return block
+
+
+def signal_report(result: BuySignal, caches: list[tuple[str, datetime | None]], now: datetime) -> Report:
+    by_name = {s.name: s for s in result.subsignals}
+    emoji, label = ALERT_LABELS.get(result.state, ("", result.state.upper()))
+    summary = [
+        f"{emoji} <b>{esc(label)}</b>",
+        f"<b>{result.passing_count}/{result.required_count} entry conditions met</b>",
+    ]
+    for name in ("market_dip", "vix", "fed_rate", "margin_debt", "sector"):
+        signal = by_name.get(name)
+        display = SIGNAL_META[name][1]
+        if signal is None:
+            summary.append(f"❔ {display}: unknown")
+        else:
+            state = STATE_LABELS.get((name, signal.state), signal.state)
+            summary.append(f"{'✅' if signal.passes else '▫️'} {display}: {esc(state)}")
+    if result.missing_signals:
+        summary.append("\n⚠️ Unavailable: " + esc(", ".join(result.missing_signals)))
+    trend = by_name.get("trend")
+    credit = by_name.get("credit")
+    context = []
+    for signal in (trend, credit):
+        if signal is not None:
+            context.append(f"{SIGNAL_META[signal.name][1]}: {STATE_LABELS.get((signal.name, signal.state), signal.state)}")
+    if context:
+        summary.append("\n<b>Context</b>\n" + esc(" · ".join(context)))
+    bodies = [("summary", "Entry overview", "\n".join(summary))]
+    for key, title, names in _REPORT_SECTIONS:
+        blocks = [_detailed_signal(by_name[name]) if name in by_name
+                  else f"❔ {SIGNAL_META[name][1]} unavailable; no current reading"
+                  for name in names]
+        bodies.append((key, title, "\n\n".join(blocks)))
+    bodies.append(("freshness", "Data & refresh times", freshness_table(caches, now)
+                   + "\n\nCache updates · Source dates per section"))
+    parts = []
+    # Split first so numbering reflects any unusually long detail sections.
+    for key, title, body in bodies:
+        for chunk in split_html(body, limit=3500):
+            parts.append((key, title, chunk))
+    total = len(parts)
+    return Report([
+        ReportMessage(f"<b>{index}/{total} · {esc(title)}</b>\n{now:%Y-%m-%d %H:%M UTC}\n\n{body}", key=key)
+        for index, (key, title, body) in enumerate(parts, 1)
+    ])
+
+
 def opportunity_message(opp, easing_obs_needed: int) -> str:
-    """Everything-in-one-place valuation facts; no interpretation beyond the matrix verdict."""
+    """Valuation and rate facts for the clinical Telegram view."""
     rows = [
         [
             TABLE_LABELS.get(s.name, s.label),
@@ -186,7 +276,6 @@ def opportunity_message(opp, easing_obs_needed: int) -> str:
             f"({sequence}, rate support: {support}, need ≥{easing_obs_needed})"
         )
 
-    lines.append(f"Verdict: {opp.verdict}")
     if opp.buy_signal_state is not None:
         label = ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
         lines.append(f"Buy signal (context): {label}")

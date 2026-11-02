@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from buysignal.telegram_bot import render
+from buysignal.signals.buy_signal import BuySignal
 from buysignal.collectors import market, sectors, vix, yield_curve
 from buysignal.signals import market_signal, sector_signal, vix_signal, yield_curve_signal
 
@@ -102,7 +103,7 @@ def test_a_vix_download_reaches_the_signal_through_the_cache(tmp_path):
     with patch("buysignal.collectors.vix._download_close", return_value=_vix_bars([18.0, 33.0])):
         vix.refresh_vix_cache(path)
         with patch(
-            "buysignal.signals.vix_signal.get_latest_vix", new=lambda: vix.get_latest_vix(path)
+            "buysignal.signals.vix_signal.get_latest_vix", new=lambda: vix.get_latest_vix(path, now=pd.Timestamp("2026-01-02 20:00Z"))
         ), patch("buysignal.signals.vix_signal.vix_change_pct", new=lambda: vix.vix_change_pct(path)):
             signal = vix_signal.score()
 
@@ -112,21 +113,23 @@ def test_a_vix_download_reaches_the_signal_through_the_cache(tmp_path):
 
 
 def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
-    path = tmp_path / "market.csv"
-    index = pd.date_range("2026-01-01 14:00", periods=30, freq="D", tz="UTC")
-    closes = [100.0] * 29 + [90.0]
-    frame = pd.DataFrame({"SPY": closes, "NASDAQ": closes, "DOW": closes}, index=index)
-    with patch("buysignal.collectors.market._download_closes", return_value=frame):
-        market.refresh_market_cache(path)
-
-    with patch(
-        "buysignal.signals.market_signal.get_latest_market_changes", new=lambda: market.latest_changes(path)
-    ):
+    from buysignal.collectors import entry
+    path = tmp_path / "marketdaily.csv"
+    index = pd.bdate_range("2025-01-01", periods=250)
+    closes = [100.] * 249 + [90.]
+    frame = pd.DataFrame({"SPY": closes, "^IXIC": closes, "^DJI": closes}, index=index)
+    raw = pd.concat({"Close": frame}, axis=1)
+    with patch.object(entry.yf, "download", return_value=raw), patch.object(entry.time, "sleep"):
+        assert entry.refresh_entry_history(path)
+    with patch.object(market_signal, "get_entry_history", return_value=entry.entry_history(path)):
         signal = market_signal.score()
-
-    assert signal.state == "dip"
-    assert signal.passes is True
-    assert "SPY daily -10.0%" in signal.detail
+    assert signal.passes
+    assert abs(signal.metrics["drawdown"] + .1) < 1e-12
+    report = render.signal_report(
+        BuySignal(1., "strong", 1, [signal]),
+        [], pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
+    )
+    assert any("closing high" in part.text for part in report.messages)
 
 
 def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
@@ -140,7 +143,8 @@ def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
     )
     growth = {"a": 0.2, "b": 0.1, "c": 0.05, "d": -0.1, "e": -0.2}
     with patch("buysignal.collectors.sectors._industry_market_caps", return_value=ranked), patch(
-        "buysignal.collectors.sectors._industry_earnings_growth", new=growth.get
+        "buysignal.collectors.sectors._industry_earnings_data",
+        new=lambda key: {"earnings_growth_estimate_1y": growth[key], "estimate_coverage": 1., "sampled_companies": 8, "covered_companies": 8, "sampled_weight": .8, "covered_weight": .8}
     ):
         assert sectors.update_sector_data(path) is None
 
