@@ -13,12 +13,15 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from buysignal import config
-from buysignal.analysis import chart, opportunity
+from buysignal.resources import force_refreshes
+from buysignal.analysis import chart, opportunity, signal_charts
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
-from buysignal.signals import buy_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, trend_signal, vix_signal, yield_curve_signal
 from buysignal.signals.buy_signal import BuySignal, compute_signal
-from buysignal.telegram_bot import render, transport
+from buysignal.telegram_bot import render, transport, views, interactive
+from buysignal.telegram_bot.snapshots import SnapshotStore
+from buysignal.telegram_bot.messages import Report, ReportMessage
 
 # Per-signal commands: score() called directly (not compute_signal()) so a broken collector
 # can't block checking the others. /vix and /dip are handled separately in handle_message
@@ -28,13 +31,15 @@ _SIGNAL_COMMANDS = {
     "/margin": margin_signal.score,
     "/sector": sector_signal.score,
     "/curve": yield_curve_signal.score,
+    "/credit": credit_signal.score,
 }
 
 # Cache files backing each signal, for the "data as of" freshness table appended to every
 # signal message.
 _FRESHNESS_FILES = {
     "vix": config.VIX_CSV,
-    "market_dip": config.MARKET_CSV,
+    "market_dip": config.MARKET_DAILY_CSV,
+    "credit": config.CREDIT_CSV,
     "fed_rate": config.FEDWATCH_CSV,
     "margin_debt": config.MARGIN_DEBT_CSV,
     "sector": config.SECTORS_CSV,
@@ -56,14 +61,23 @@ class _State:
 
 _state = _State(start_time=datetime.now(timezone.utc))
 _lock = threading.Lock()
+_snapshot_store = SnapshotStore()
 
 
 def _cache_ages() -> list[tuple[str, datetime | None]]:
     return [(name, freshness.last_modified(path)) for name, path in _FRESHNESS_FILES.items()]
 
 
-def _signal_message(result: BuySignal) -> str:
-    return render.signal_message(result, _cache_ages(), datetime.now(timezone.utc))
+def _signal_report(result: BuySignal, heading: str = "", prefix: str = "") -> Report:
+    report = render.signal_report(result, _cache_ages(), datetime.now(timezone.utc))
+    if heading or prefix:
+        report.messages[0].text = heading + prefix + report.messages[0].text
+    try:
+        token = _snapshot_store.save(result, datetime.now(timezone.utc))
+        report.messages[0].keyboard = views.keyboard(token)
+    except (OSError, ValueError):
+        report.messages[0].text += "\nChart buttons unavailable: report snapshot could not be saved."
+    return report
 
 
 def is_alerting(result: BuySignal) -> bool:
@@ -89,7 +103,7 @@ def trigger_reasons(result: BuySignal) -> str:
 
 def report_due(now_ct: datetime, last_report_date: date | None, report_hour: int) -> bool:
     """Whether the daily report is due: the report hour, and not already sent this CT date."""
-    return now_ct.hour == report_hour and last_report_date != now_ct.date()
+    return 0 <= report_hour <= now_ct.hour and last_report_date != now_ct.date()
 
 
 def report_result(
@@ -120,8 +134,6 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
     now_ct = now.astimezone(market_hours.CT)
     with _lock:
         due = report_due(now_ct, _state.last_report_date, config.DAILY_REPORT_HOUR_CT)
-        if due:
-            _state.last_report_date = now_ct.date()
         cached_result = _state.last_result
     if due:
         # Re-scrape before the report; failures are journaled and sent after it.
@@ -133,7 +145,12 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 if error is not None
                 else ""
             )
-            transport.send(f"📅 <b>End of day</b>\n\n{prefix}{_signal_message(reported)}")
+            delivered = transport.send_report(_signal_report(reported, "📅 <b>End of day</b>\n\n", prefix))
+            if delivered:
+                with _lock:
+                    _state.last_report_date = now_ct.date()
+                    _state.last_result = reported
+            result = reported
 
     # Marked reported only once delivered, so an outage delays the notice instead of losing it.
     journal = runner.macro_journal()
@@ -147,22 +164,56 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
     alerting = is_alerting(result)
     with _lock:
         was_alerting = _state.alerting
-        _state.alerting = alerting
 
     if alerting and not was_alerting:
         reasons = trigger_reasons(result)
-        transport.send(f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n{_signal_message(result)}")
-    elif was_alerting and not alerting:
-        transport.send("Watch trigger cleared (VIX/SPY); this does not assess whether market risk is normal.")
+        if not due:
+            delivered = transport.send_report(_signal_report(result, f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n"))
+        else:
+            # The full report already carries this tick's entry conditions.
+            delivered = _state.last_report_date == now_ct.date()
+        if delivered:
+            with _lock:
+                _state.alerting = True
+    elif was_alerting and not alerting and not (
+        any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
+        or set(result.missing_signals) & {'vix', 'market_dip'}
+    ):
+        if transport.send_report(_signal_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n")):
+            with _lock:
+                _state.alerting = False
 
 
-def _single_signal(score_fn) -> str:
+def _single_signal(score_fn) -> str | Report:
     try:
         with buy_signal.SIGNAL_LOCK:
             s = score_fn()
     except Exception as exc:
         return f"⚠️ failed to compute ({render.esc(type(exc).__name__)}: {render.esc(str(exc))})"
-    return render.subsignal_block(s)
+    now = datetime.now(timezone.utc)
+    if s.name == 'trend':
+        return f"<b>SPY trend</b> · {render.esc(s.detail.replace(' | ', ' · '))}\nData {views.stamp(s.observed_at)}\nSent {views.stamp(now)}"
+    result = BuySignal(0, 'none', int(s.passes), [s])
+    store = _snapshot_store
+    try:
+        token = store.save(result, now)
+    except (OSError, ValueError):
+        return views.panel_caption(s, s.name, now.isoformat())
+    manifest = store.load_views(token)
+    item = manifest['views'].get(s.name)
+    if item is None:
+        return views.panel_caption(s, s.name, now.isoformat())
+    key = item['chart_key']
+    png = store.chart_bytes(token, key) if key else None
+    def delivered(panel):
+        file_id = panel.pop('file_id', None)
+        store.remember_media(token, key, file_id)
+        panel['chart_key'] = key if panel.get('photo') else None
+        store.set_panel(token, panel)
+    return Report([ReportMessage(
+        item['caption'], key=s.name, photo=png,
+        keyboard=item['keyboard'], panel=True, on_delivery=delivered,
+    )])
 
 
 def market_open() -> bool:
@@ -201,26 +252,26 @@ def _whattobuy() -> str:
     return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
 
 
-def _refresh() -> str:
-    with buy_signal.SIGNAL_LOCK:
-        failed = runner.refresh_macro(force=True)
-    # These failures stay unreported in the journal even though this reply lists them: the
-    # reply is sent by the poll loop, which can fail like any other send, and a duplicate push
-    # from the next tick is cheaper than a failure nobody ever hears about.
-    reply = _signal_message(compute_signal(allow_refresh=True))
-    return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
+def _refresh() -> Report:
+    with force_refreshes():
+        with buy_signal.SIGNAL_LOCK:
+            failed = runner.refresh_macro(force=True)
+        result = compute_signal(allow_refresh=True)
+    return _signal_report(result, prefix=render.refresh_failures(failed) + "\n\n" if failed else "")
 
 
-def handle_message(text: str) -> str | None:
+def handle_message(text: str) -> str | Report | None:
     text = text.strip()
     # Outside market hours prefer the cache: the data cannot have moved.
     open_now = market_open()
     if text == "/signal":
-        return _signal_message(compute_signal(allow_refresh=open_now))
+        return _signal_report(compute_signal(allow_refresh=open_now))
     if text == "/vix":
         return _single_signal(lambda: vix_signal.score(allow_refresh=open_now))
     if text == "/dip":
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
+    if text == "/trend":
+        return _single_signal(lambda: trend_signal.from_market(market_signal.score(allow_refresh=open_now)))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])
     if text == "/whattobuy":
@@ -234,6 +285,10 @@ def handle_message(text: str) -> str | None:
     return "Unrecognized command, try /help."
 
 
+def handle_callback(query) -> None:
+    interactive.handle_callback(query, _snapshot_store)
+
+
 def start() -> None:
     """Start polling for commands in a background thread."""
-    transport.start(handle_message)
+    transport.start(handle_message, handle_callback)

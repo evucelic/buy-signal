@@ -13,6 +13,7 @@ import pandas as pd
 
 from buysignal.analysis.opportunity import Opportunity
 from buysignal.collectors.valuations import valuations_history
+from buysignal.resources import HEAVY_WORK_LOCK
 
 # Light-mode palette from the validated reference set (dataviz skill): categorical
 # slots 1-4, text tokens for all ink; marks carry color, text never does.
@@ -28,6 +29,11 @@ _HISTORY_PANEL_MIN_OBS = 5  # fwd-P/E time-series panel appears once this many d
 
 
 def render_chart(opportunity: Opportunity, history: pd.DataFrame | None = None) -> bytes:
+    with HEAVY_WORK_LOCK:
+        return _render_chart(opportunity, history)
+
+
+def _render_chart(opportunity: Opportunity, history: pd.DataFrame | None = None) -> bytes:
     """Render the valuation comparison as a PNG (grouped bars; history panel once data exists)."""
     import matplotlib
 

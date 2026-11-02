@@ -5,4 +5,5 @@ data/*.log*
 .venv/
 idea.md
 .env
+data/reports/
 notes/

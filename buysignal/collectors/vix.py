@@ -35,6 +35,8 @@ def _download_close(period: str) -> pd.Series | None:
     close = data["Close"].dropna()
     close.name = "Close"
     close.index = pd.to_datetime(close.index, utc=True)
+    if "High" in data:
+        close.attrs["highs"] = {pd.Timestamp(i).isoformat(): float(v) for i, v in data.High.dropna().items()}
     return close if not close.empty else None
 
 
@@ -43,15 +45,23 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
     filepath = Path(filepath)
     first_run = not filepath.exists()
 
-    new = _download_close(f"{VIX_LOOKBACK_DAYS}d" if first_run else _RECENT_WINDOW)
+    old = None if first_run else pd.read_csv(filepath, index_col=0)
+    needs_highs = old is not None and "High" not in old
+    new = _download_close(f"{VIX_LOOKBACK_DAYS}d" if first_run or needs_highs else _RECENT_WINDOW)
     if new is None:
         log.warning("VIX download returned no data; cache unchanged.")
         return False
 
+    highs = new.attrs.get("highs", {})
+    new = new.to_frame(name="Close")
+    new.attrs.clear()
+    if highs:
+        high = pd.Series(highs, dtype=float)
+        high.index = pd.to_datetime(high.index, utc=True)
+        new["High"] = high.reindex(new.index)
     if first_run:
         filepath.parent.mkdir(parents=True, exist_ok=True)
     else:
-        old = pd.read_csv(filepath, index_col=0)["Close"] # fetch the old data from cache (CSV file on machine)
         old.index = pd.to_datetime(old.index, utc=True)
         new = pd.concat([old, new]) # concat the new and old dataframes
         new = new[~new.index.duplicated(keep="last")].sort_index() # deduplicate indexes if they overlap
@@ -59,8 +69,8 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
     # Keep the provider-supported intraday window bounded on disk.
     cutoff = new.index[-1] - pd.Timedelta(days=VIX_LOOKBACK_DAYS)
     new = new.loc[new.index >= cutoff]
-    write_csv(new.to_frame(name="Close"), filepath, index=True)
-    log.info("VIX cache updated: %d rows, latest %s = %.2f", len(new), new.index[-1], new.iloc[-1])
+    write_csv(new, filepath, index=True)
+    log.info("VIX cache updated: %d rows, latest %s = %.2f", len(new), new.index[-1], new.Close.iloc[-1])
     return True
 
 
@@ -86,7 +96,7 @@ def vix_change_pct(filepath: Path = VIX_CSV) -> float | None:
     df = pd.read_csv(filepath, index_col=0)
     if df.empty or "Close" not in df.columns:
         return None
-    df.index = pd.to_datetime(df.index, utc=True)
+    df.index = pd.to_datetime(df.index, utc=True).tz_convert("America/New_York")
     daily = df["Close"].groupby(df.index.date).last().dropna()
     if len(daily) < 2:
         return None
@@ -132,7 +142,11 @@ def daily_history(filepath: Path | str = VIX_CSV) -> pd.DataFrame:
     frame = pd.read_csv(filepath, index_col=0)
     frame.index = pd.to_datetime(frame.index, utc=True).tz_convert("America/New_York")
     series = frame["Close"].groupby(frame.index.date).last().dropna()
-    return pd.DataFrame({"date": pd.to_datetime(series.index), "vix": series.to_numpy()})
+    result = pd.DataFrame({"date": pd.to_datetime(series.index), "vix": series.to_numpy()})
+    result.attrs["observed_at"] = frame.index[-1].tz_convert("UTC").isoformat()
+    if "High" in frame:
+        result["high"] = frame.High.groupby(frame.index.date).max().reindex(series.index).to_numpy()
+    return result
 
 
 if __name__ == "__main__":

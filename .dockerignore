@@ -1,5 +1,14 @@
 .venv/
-data/*.csv
+data/
 .git/
 __pycache__/
 .env
+
+.pytest_cache/
+**/__pycache__/
+.aws/
+.ssh/
+.agents/
+.codex/
+CLAUDE.md
+STRATEGY_REVIEW.md

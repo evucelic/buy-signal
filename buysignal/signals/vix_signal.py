@@ -28,7 +28,8 @@ def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
                 vix = get_latest_vix()
             elif not _vix_session_is_current(VIX_CSV, pd.Timestamp.now(tz="UTC")):
                 raise ValueError("VIX observation predates the expected session")
-    change = _change_suffix(vix_change_pct())
+    close_change = vix_change_pct()
+    change = _change_suffix(close_change)
 
     if vix >= VIX_STRONG:
         state, detail, passes = STRONG, f"VIX {vix:.1f} >= {VIX_STRONG}, high fear{change}", True
@@ -39,14 +40,18 @@ def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
     else:
         state, detail, passes = NONE, f"VIX {vix:.1f} calm, no signal{change}", False
     history, observed = None, None
-    metrics = {"vix": vix, "soft_threshold": VIX_SOFT, "strong_threshold": VIX_STRONG}
+    metrics = {"vix": vix, "change": close_change, "soft_threshold": VIX_SOFT, "strong_threshold": VIX_STRONG}
     try:
         cached = daily_history()
         if not cached.empty and abs(float(cached.vix.iloc[-1]) - vix) < 0.01:
             history = cached.tail(252).copy()
-            observed = str(cached.date.iloc[-1].date())
-            peak = float(cached.vix.tail(20).max())
+            observed = cached.attrs.get("observed_at", str(cached.date.iloc[-1].date()))
+            use_highs = "high" in cached and len(cached) >= 20 and cached.high.tail(20).notna().all()
+            peak = float((cached.high if use_highs else cached.vix).tail(20).max())
+            metrics["peak_basis"] = "intraday" if use_highs else "closing"
             metrics["recent_peak"] = peak
+            metrics["from_peak"] = vix / peak - 1
+            metrics["at_high"] = vix >= peak - 0.01
             detail += f" | Recent 20-session VIX high {peak:.1f}; latest is {vix / peak - 1:+.1%} from that high"
     except (OSError, ValueError, KeyError):
         pass
