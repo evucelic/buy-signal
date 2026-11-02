@@ -22,9 +22,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # The runner starts the cfbypass container itself (docker is preinstalled on
-      # ubuntu-latest runners) -- the same code path as a local run. Data is
-      # intentionally not persisted (data/*.csv stays gitignored); this just fails
-      # loudly if the Cloudflare bypass or FINRA's page layout breaks.
-      - name: Run one tick
-        run: python -m buysignal.schedule.runner
+      # Test the authoritative workbook directly: no Telegram, unrelated collectors,
+      # or permanently running browser container is required by this job.
+      - name: Validate FINRA workbook
+        run: |
+          python - <<'PY'
+          from tempfile import TemporaryDirectory
+          from pathlib import Path
+          from buysignal.collectors.margin_debt import update_margin_debt_data, margin_history, data_freshness
+          with TemporaryDirectory() as directory:
+              path = Path(directory) / "margin.csv"
+              error = update_margin_debt_data(path)
+              if error:
+                  raise RuntimeError(error)
+              history = margin_history(path)
+              tier, message = data_freshness(history)
+              print(len(history), "monthly observations;", tier, message)
+              if tier == "stale":
+                  raise RuntimeError(message)
+          PY

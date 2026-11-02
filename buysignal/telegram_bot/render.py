@@ -14,19 +14,23 @@ from datetime import datetime, timedelta
 from buysignal.schedule.journal import CollectorStatus
 from buysignal.signals.base import SubSignal, format_table
 from buysignal.signals.buy_signal import BuySignal
+from buysignal.telegram_bot.messages import Report, ReportMessage
 
 # Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
 ALERT_LABELS = {
     "none": ("⚪", "No buy signal"),
     "soft": ("🟡", "Soft signal"),
-    "strong": ("🟢", "STRONG BUY SIGNAL"),
+    "strong": ("🟢", "Entry conditions aligned"),
+    "incomplete": ("⚠️", "Incomplete entry assessment"),
 }
 
 SIGNAL_META = {
     "vix": ("🌡️", "VIX"),
     "fed_rate": ("🏦", "Fed Rate"),
     "margin_debt": ("💳", "Margin Debt"),
-    "market_dip": ("📊", "Market Dip"),
+    "market_dip": ("📊", "SPY Drawdown"),
+    "trend": ("🧭", "Market Trend"),
+    "credit": ("🏦", "Corporate Credit"),
     "sector": ("🏭", "Leading Industries"),
     "yield_curve": ("〽️", "Yield Curve"),
 }
@@ -41,12 +45,21 @@ STATE_LABELS = {
     ("fed_rate", "flat"): "🤔 Mixed",
     ("margin_debt", "deleveraging"): "📉 Deleveraging",
     ("margin_debt", "leveraging"): "📈 Leveraging up",
-    ("market_dip", "dip"): "🔻 Dip",
-    ("market_dip", "flat"): "➡️ Flat",
+    ("trend", "uptrend"): "📈 Established uptrend",
+    ("trend", "under_pressure"): "🟠 Trend under pressure",
+    ("trend", "downtrend"): "📉 Established downtrend",
+    ("trend", "recovering"): "↗️ Above falling SMA200",
+    ("trend", "unknown"): "Unknown",
+    ("credit", "widening"): "🟠 Widening",
+    ("credit", "narrowing"): "🟢 Narrowing",
+    ("credit", "stable"): "➡️ Broadly stable",
+    ("credit", "unknown"): "Insufficient change history",
+    ("market_dip", "dip"): "🔻 DD63 threshold met",
+    ("market_dip", "flat"): "▫️ Drawdown condition not met",
     ("market_dip", "growth"): "📈 Growth",
     ("sector", "growing"): "📈 Growing",
     ("sector", "flat"): "➡️ Flat",
-    ("yield_curve", "steep"): "📈 Steep (supportive)",
+    ("yield_curve", "steep"): "📈 Steep",
     ("yield_curve", "flat"): "➡️ Flat/normal",
     ("yield_curve", "inverted"): "⚠️ Inverted",
     ("yield_curve", "deep_inversion"): "🚨 Deep inversion",
@@ -64,12 +77,14 @@ RATE_STATE_LABELS = {"no_change": "no change"}  # everything else already reads 
 
 # The command menu Telegram renders, and the same list as a message. Keep the two in step.
 COMMANDS = [
-    {"command": "signal", "description": "Full current buy signal (all sub-signals)"},
+    {"command": "signal", "description": "Entry overview with interactive charts"},
     {"command": "vix", "description": "VIX level"},
     {"command": "fedrate", "description": "Fed rate trajectory (CME FedWatch)"},
     {"command": "margin", "description": "FINRA margin debt (deleveraging)"},
-    {"command": "dip", "description": "SPY/NASDAQ/DOW % change (dip watch)"},
+    {"command": "dip", "description": "SPY drawdown, selloff intensity and index changes"},
     {"command": "sector", "description": "Leading industries earnings outlook"},
+    {"command": "trend", "description": "SPY long-term trend (advisory)"},
+    {"command": "credit", "description": "Corporate credit spreads (advisory)"},
     {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
     {"command": "whattobuy", "description": "Segment valuations: S&P 500 vs world small cap vs Europe"},
     {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
@@ -79,12 +94,14 @@ COMMANDS = [
 
 HELP_TEXT = (
     "Commands:\n"
-    "/signal: full current buy signal\n"
+    "/signal: entry overview with chart buttons\n"
     "/vix: VIX level\n"
     "/fedrate: Fed rate trajectory\n"
     "/margin: FINRA margin debt\n"
-    "/dip: SPY/NASDAQ/DOW % change\n"
+    "/dip: SPY drawdown and selloff intensity\n"
     "/sector: leading industries earnings outlook\n"
+    "/trend: SPY long-term trend (advisory)\n"
+    "/credit: corporate credit spreads (advisory)\n"
     "/curve: 10y-3m yield curve spread (advisory)\n"
     "/whattobuy: segment valuations (S&P 500 / world small cap / Europe)\n"
     "/refresh: force a fresh fetch of all data (bypass cache)\n"
@@ -158,8 +175,13 @@ def signal_message(result: BuySignal, caches: list[tuple[str, datetime | None]],
     return "\n\n".join([header, *blocks])
 
 
+def signal_report(result: BuySignal, caches: list[tuple[str, datetime | None]], now: datetime) -> Report:
+    from buysignal.telegram_bot.views import overview
+    return Report([ReportMessage(overview(result, caches, now), key="summary")])
+
+
 def opportunity_message(opp, easing_obs_needed: int) -> str:
-    """Everything-in-one-place valuation facts; no interpretation beyond the matrix verdict."""
+    """Valuation and rate facts for the clinical Telegram view."""
     rows = [
         [
             TABLE_LABELS.get(s.name, s.label),
@@ -186,7 +208,6 @@ def opportunity_message(opp, easing_obs_needed: int) -> str:
             f"({sequence}, rate support: {support}, need ≥{easing_obs_needed})"
         )
 
-    lines.append(f"Verdict: {opp.verdict}")
     if opp.buy_signal_state is not None:
         label = ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
         lines.append(f"Buy signal (context): {label}")
@@ -263,5 +284,5 @@ def stale_collector_notes(
 
 def refresh_failures(failed: list[tuple[str, str]]) -> str:
     """The "⚠️ Refresh failed" block shared by the pushes and the command replies."""
-    lines = "\n".join(f"• {esc(name)}: {esc(error)}" for name, error in failed)
+    lines = "\n".join(f"• {esc(name)}: {esc(str(error).splitlines()[0][:160])}" for name, error in failed)
     return f"⚠️ <b>Refresh failed</b>\n{lines}"

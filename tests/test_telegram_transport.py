@@ -14,6 +14,8 @@ from buysignal.telegram_bot import transport
 def credentials(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(transport.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(transport, "_last_delivery_at", 0)
 
 
 def test_notify_started(monkeypatch):
@@ -69,7 +71,7 @@ def test_send_swallows_request_exception(monkeypatch, caplog):
 
     monkeypatch.setattr(transport.requests, "post", boom)
     transport.send("hi")  # must not raise
-    assert "Telegram send failed" in caplog.text
+    assert "Telegram sendMessage failed" in caplog.text
 
 
 def test_send_photo_swallows_request_exception(monkeypatch, caplog):
@@ -105,6 +107,11 @@ class _FakeThread:
 
 def _ok():
     class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
         def raise_for_status(self):
             return None
 
