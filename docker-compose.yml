@@ -2,21 +2,19 @@ services:
   cfbypass:
     image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
     container_name: cfbypass
+    profiles: [finra-browser]
     ports:
-      - "8000:8000"   # host-published for local bare-metal testing; not internet-reachable
+      - "127.0.0.1:8000:8000"   # host-published for local bare-metal testing; not internet-reachable
     environment:
       - WORKERS=1
-    shm_size: 2g
+    shm_size: 256m
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '1.5'
+          memory: ${FINRA_BROWSER_MEMORY_LIMIT:-1g}
+          cpus: ${FINRA_BROWSER_CPUS:-0.5}
     init: true
-    # Nothing noticed when this stopped answering: margin_debt just went stale a day before
-    # the other caches did. This only makes that visible (`docker compose ps`, and the bot
-    # waits for it on startup) - compose restarts on exit, not on "unhealthy", so a hung-but-
-    # alive service still needs the collector's own precondition check to catch it.
+    # Optional browser fallback. The default FINRA path uses the official workbook directly.
     healthcheck:
       # A TCP connect, the same thing runner._cf_bypass_ready() treats as "reachable": any
       # HTTP status means the service is answering, so don't make the check depend on a route.
@@ -38,22 +36,22 @@ services:
     container_name: buysignal-bot
     env_file: .env
     environment:
+      - TELEGRAM_CHARTS=${TELEGRAM_CHARTS:-1}
+      - TELEGRAM_CHART_DPI=${TELEGRAM_CHART_DPI:-120}
+      - CHART_CACHE_MAX_MB=${CHART_CACHE_MAX_MB:-8}
+      - LIVE_CACHE_TTL_SEC=${LIVE_CACHE_TTL_SEC:-300}
       - CF_BYPASS_HOST=cfbypass   # compose's internal DNS; config.py defaults to localhost otherwise
     volumes:
       - ./data:/app/data   # persists the CSV caches, the refresh journal and the log across redeploys
     # Catch a leak before it degrades the host, without firing on legitimate work: the bot
     # holds pandas/matplotlib and then drives a headless Chrome over five MSCI pages.
-    mem_limit: 2g
+    mem_limit: ${BOT_MEMORY_LIMIT:-1g}
+    cpus: ${BOT_CPUS:-0.75}
     pids_limit: 512
     # tini as PID 1: a crashed Chrome tab orphans its helper processes onto PID 1, and python
     # never reaps them - the zombies filled pids_limit and Chrome stopped starting at all
     # ("session not created: Chrome instance exited") until the container was restarted.
     init: true
-    depends_on:
-      # Ordering only, deliberately not condition: service_healthy - margin_debt is the only
-      # collector that needs cfbypass and already degrades to a recorded failure without it,
-      # so an unhealthy cfbypass must not cost the other five signals their bot.
-      - cfbypass
     logging:
       driver: json-file
       options:
