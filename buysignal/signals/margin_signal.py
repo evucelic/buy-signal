@@ -36,6 +36,6 @@ def score() -> SubSignal:
     return SubSignal(
         "margin_debt", latest_change_pct, state, detail, passes=deleveraging,
         observed_at=str(history["month"].iloc[-1].date()), history=history.tail(36).copy(),
-        metrics={"latest": float(debt.iloc[-1]), "change": float(latest_change_pct)},
+        metrics={"latest": float(debt.iloc[-1]), "change": float(latest_change_pct), "freshness": tier},
         footer="FINRA · USD millions · Monthly",
     )

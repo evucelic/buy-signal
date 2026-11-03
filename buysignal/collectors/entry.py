@@ -18,7 +18,7 @@ import pandas as pd
 import yfinance as yf
 
 from buysignal.collectors.cache import write_csv
-from buysignal.config import INDEX_TICKERS, MARKET_DAILY_CSV, MARKET_DAILY_PERIOD, MARKET_BOOTSTRAP_PERIOD, FETCH_JITTER_SEC, LIVE_CACHE_TTL_SEC, YAHOO_TIMEOUT_SEC
+from buysignal.config import INDEX_TICKERS, OPTIONAL_INDEX_TICKERS, MARKET_DAILY_CSV, MARKET_DAILY_PERIOD, MARKET_BOOTSTRAP_PERIOD, FETCH_JITTER_SEC, LIVE_CACHE_TTL_SEC, YAHOO_TIMEOUT_SEC
 from buysignal.resources import FORCE_REFRESH
 from buysignal.schedule.market_hours import _NYSE
 
@@ -37,7 +37,15 @@ def _normalize(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Daily index history is empty or missing an index")
     if frame.index.isna().any() or frame["SPY"].dropna().empty:
         raise ValueError("Daily history is missing SPY observations or dates")
-    frame = frame[list(INDEX_TICKERS)].apply(pd.to_numeric, errors="raise")
+    for name in OPTIONAL_INDEX_TICKERS:
+        if name in frame:
+            numeric = pd.to_numeric(frame[name], errors="coerce")
+            valid = numeric.dropna()
+            if valid.empty or not np.isfinite(valid).all() or (valid <= 0).any():
+                frame = frame.drop(columns=[name])
+                log.warning("Optional index %s unavailable or invalid", name)
+    columns = [name for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS) if name in frame]
+    frame = frame[columns].apply(pd.to_numeric, errors="raise")
     values = frame.to_numpy(dtype=float)
     present = ~np.isnan(values)
     if not np.isfinite(values[present]).all() or (values[present] <= 0).any():
@@ -48,11 +56,17 @@ def _normalize(frame: pd.DataFrame) -> pd.DataFrame:
 def _merge_adjusted(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
     """Rebase the retained prefix using two stable, completed overlap observations."""
     result = old.copy()
-    for name in INDEX_TICKERS:
+    for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
+        if name not in old or name not in new:
+            continue
         common = old[name].dropna().index.intersection(new[name].dropna().index)
         # The last bar may still be changing. Never use it as an adjustment anchor.
         common = common[common < max(old.index[-1], new.index[-1])]
         if len(common) < 2:
+            if name in OPTIONAL_INDEX_TICKERS:
+                # Reconcile this optional series on the next daily full request.
+                new = new.drop(columns=[name])
+                continue
             raise ValueError("Insufficient completed overlap for adjusted-price reconciliation")
         anchors = common[:2]
         ratios = new.loc[anchors, name] / old.loc[anchors, name]
@@ -60,7 +74,7 @@ def _merge_adjusted(old: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
             raise ValueError("Nonuniform price revision; full reconciliation required")
         result[name] *= float(ratios.iloc[0])
     # A failed ticker must not silently turn into today's partial snapshot.
-    if new[list(INDEX_TICKERS)].isna().any().any():
+    if new.loc[new.SPY.notna(), list(INDEX_TICKERS)].isna().any().any():
         raise ValueError("Incremental index download is incomplete")
     return _normalize(pd.concat([result.loc[result.index < new.index[0]], new]))
 
@@ -79,17 +93,18 @@ def refresh_entry_history(filepath: Path | str = MARKET_DAILY_CSV) -> bool:
     except (OSError, ValueError):
         old = None
     bootstrap = old is None or metadata.get("bootstrap_scope") != MARKET_BOOTSTRAP_PERIOD
-    full = bootstrap or FORCE_REFRESH.get() or metadata.get("full_refresh_date") != today
+    full = (bootstrap or FORCE_REFRESH.get() or metadata.get("full_refresh_date") != today
+            or metadata.get("optional_indexes") != list(OPTIONAL_INDEX_TICKERS))
     try:
         def download(period):
             time.sleep(random.uniform(*FETCH_JITTER_SEC))
             raw = yf.download(
-                list(INDEX_TICKERS.values()), period=period, interval="1d", auto_adjust=True,
+                [*INDEX_TICKERS.values(), *OPTIONAL_INDEX_TICKERS.values()], period=period, interval="1d", auto_adjust=True,
                 progress=False, threads=False, timeout=YAHOO_TIMEOUT_SEC,
             )
             if raw is None or raw.empty:
                 raise ValueError("Daily index download returned no data")
-            return _normalize(raw["Close"].rename(columns={v: k for k, v in INDEX_TICKERS.items()}))
+            return _normalize(raw["Close"].rename(columns={v: k for k, v in (INDEX_TICKERS | OPTIONAL_INDEX_TICKERS).items()}))
         new = download(MARKET_BOOTSTRAP_PERIOD if bootstrap else MARKET_DAILY_PERIOD if full else "5d")
         if full:
             frame = new
@@ -107,7 +122,7 @@ def refresh_entry_history(filepath: Path | str = MARKET_DAILY_CSV) -> bool:
                 full = True
         if len(frame.dropna(subset=["SPY"])) < 220:
             raise ValueError("Daily index download contains fewer than 220 SPY sessions")
-        if frame[list(INDEX_TICKERS)].tail(22).isna().any().any():
+        if frame.loc[frame.SPY.notna(), list(INDEX_TICKERS)].tail(22).isna().any().any():
             raise ValueError("Daily index download has missing recent index observations")
         if old is not None and frame.index[-1] < old.index[-1]:
             raise ValueError("Daily index download moved backwards")
@@ -117,7 +132,8 @@ def refresh_entry_history(filepath: Path | str = MARKET_DAILY_CSV) -> bool:
             # another full reconciliation; the data file was already published atomically.
             temporary = metadata_path.with_suffix(".tmp")
             try:
-                temporary.write_text(json.dumps({"full_refresh_date": today, "bootstrap_scope": MARKET_BOOTSTRAP_PERIOD}))
+                temporary.write_text(json.dumps({"full_refresh_date": today, "bootstrap_scope": MARKET_BOOTSTRAP_PERIOD,
+                                                  "optional_indexes": list(OPTIONAL_INDEX_TICKERS)}))
                 temporary.replace(metadata_path)
             except OSError:
                 temporary.unlink(missing_ok=True)

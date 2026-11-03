@@ -72,6 +72,7 @@ CF_BYPASS_TIMEOUT_SEC = 180
 
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}
+OPTIONAL_INDEX_TICKERS = {"EURO50": "^STOXX50E"}
 MARKET_PRIMARY_INDEX = "SPY"
 MARKET_INTERVAL = "1h"              # same cadence as VIX, for live intraday daily-change tracking
 MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly lookback)

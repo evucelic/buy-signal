@@ -9,7 +9,7 @@ import pandas as pd
 
 from buysignal.collectors.entry import get_entry_history
 from buysignal.config import (
-    INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_DRAWDOWN_SESSIONS,
+    INDEX_TICKERS, OPTIONAL_INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_DRAWDOWN_SESSIONS,
     MARKET_VOLATILITY_SESSIONS, MARKET_SELLOFF_SESSIONS,
     MARKET_TREND_SESSIONS, MARKET_TREND_SLOPE_SESSIONS,
 )
@@ -64,7 +64,9 @@ def analyze_history(history: pd.DataFrame) -> dict:
 
 def _changes_table(history: pd.DataFrame) -> str:
     rows = []
-    for name in INDEX_TICKERS:
+    for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
+        if name not in history:
+            continue
         closes = history[name].dropna()
         if len(closes) < 22:
             rows.append([name, "n/a", "n/a", "n/a"])
@@ -77,6 +79,17 @@ def _changes_table(history: pd.DataFrame) -> str:
 def score(allow_refresh: bool = True) -> SubSignal:
     history = get_entry_history(allow_refresh=allow_refresh)
     facts = analyze_history(history)
+    facts["refresh_failed"] = bool(history.attrs.get("refresh_failed"))
+    facts["index_changes"] = {}
+    for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
+        if name not in history:
+            continue
+        closes = history[name].dropna()
+        if len(closes) >= 22:
+            facts["index_changes"][name] = {
+                "changes": [float(closes.iloc[-1] / closes.iloc[-1-n] - 1) for n in (1, 5, 21)],
+                "date": str(closes.index[-1].date()),
+            }
     drawdown = facts["drawdown"]
     passes = drawdown <= MARKET_DIP_THRESHOLD + 1e-12
     detail = (
