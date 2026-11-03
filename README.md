@@ -32,19 +32,17 @@ The standard deviation uses 20 returns ending before the five-session move. For 
 
 ## Telegram reports
 
-`/signal`, `/refresh`, watch-trigger activation and end-of-day pushes produce nine numbered text sections:
+`/signal`, `/refresh`, watch-trigger changes and end-of-day pushes send **one numeric overview** with inline buttons. It includes drawdown, VIX and its changes, the Fed target/probability path, monthly margin debt, EPS growth count, credit spreads, yield-curve spreads and index returns. Source observations and last successful cache refreshes are distinct columns. The sent timestamp and refresh timezone are absolute; `TELEGRAM_TIMEZONE` defaults to `Europe/Zagreb` and handles daylight-saving changes.
 
-1. Entry overview
-2. Price concession and trend
-3. Fear and opportunity
-4. Fed outlook and changing expectations
-5. Investor leverage
-6. Leading-industry earnings
-7. Corporate credit conditions
-8. Yield-curve context
-9. Data and refresh times
+Tap a section to open one silent chart panel. Further navigation edits that panel in place; **Close panel** removes it while keeping the overview. Index buttons switch between SPY, Nasdaq, Dow and optional EURO STOXX 50. The optional **Trend & intensity** button contains the long-term average and volatility-scaled move, with short definitions; these stay out of the main overview. Each index uses its own observations and trading sessions; differing observation dates are shown. A missing optional European feed does not invalidate US evidence. Daily bars can be in progress.
 
-A PNG follows each section with suitable source history (up to seven charts). All text remains available if a chart cannot render or upload. Only the overview triggers a notification; the remaining parts are silent. Batches are serialized, paced and split into balanced HTML chunks below Telegram's message limit. Rate-limit responses are retried using Telegram's `retry_after`.
+Charts render only when requested. FedWatch shows a probability chart and source time; **Probability changes** opens clearly labelled percentage-point changes with the comparison timestamp. **Estimate details** shows the Yahoo Finance analyst-consensus source, industry market caps, covered versus sampled company counts, sampled-weight coverage and analyst-count ranges. Analyst names are not supplied by this feed. Long detail captions have page buttons rather than spilling into more messages. FINRA charts use USD millions, every month is labelled, and the publication lag is explicit. Credit levels and changes use basis points consistently.
+
+VIX reports its level, change versus the previous close, and distance from the 20-session high, marking a current high. Hourly bar highs come from the existing download. Legacy close-only caches are refreshed once to acquire highs; closing-high fallbacks are labelled explicitly.
+
+Button data is saved as bounded JSON in `data/reports/` (at most 32 snapshots, two MiB each, 14-day validity). Price history is trimmed to the 460 rows needed for charts. Old buttons keep their report's observations across bot restarts; expired buttons direct you to `/signal`. Navigation never refreshes sources or substitutes current observations into historical reports. The existing data-volume mount persists these snapshots. Only the configured Telegram chat can invoke navigation. No extra Telegram framework, plugin or service is required.
+
+Individual signal commands open the same compact chart views. Delivery remains paced and serialized, with Telegram `retry_after` handling. Graph failures leave the overview available.
 
 Individual commands: `/vix`, `/dip`, `/trend`, `/fedrate`, `/margin`, `/sector`, `/credit`, `/curve`, `/whattobuy`, `/status`, `/help`.
 

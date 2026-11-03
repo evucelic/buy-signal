@@ -91,29 +91,47 @@ def build_preview(output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     assessment = sample_assessment()
     report = signal_report(assessment, [(s.name, NOW) for s in assessment.subsignals], NOW)
-    signals = {s.name: s for s in assessment.subsignals}
-    cards = []
-    for message in report.messages:
-        image = ""
-        if message.key in signals:
-            png = render_signal_chart(signals[message.key])
-            if png is not None:
-                filename = f"{message.key}.png"
+    by_name = {s.name: s for s in assessment.subsignals}
+    content = {}
+    rendered = set()
+    for view in sorted(views.VIEWS - {"close"}):
+        name = ('market_dip' if view.startswith('index_') or view == 'market_info' else 'sector' if view == 'eps_info'
+                else 'fed_rate' if view == 'fed_changes' else view)
+        signal = by_name[name]
+        index = view.removeprefix('index_') if view.startswith('index_') else 'SPY'
+        if name == 'market_dip':
+            signal = replace(signal, metrics={**signal.metrics, 'chart_index': index})
+        filename = f"{name}_{index if name == 'market_dip' else 'chart'}.png"
+        if filename not in rendered:
+            png = render_signal_chart(signal)
+            if png:
                 (output / filename).write_bytes(png)
-                image = f'<img src="{filename}" alt="{message.key} chart">'
-        cards.append('<article><div class="text">' + message.text.replace("\n", "<br>\n") + '</div>' + image + '</article>')
-    page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BuySignal report preview — illustrative data</title><style>
-body{margin:0;background:#eaf0f6;color:#17293e;font:16px/1.6 system-ui,sans-serif}main{max-width:780px;margin:40px auto;padding:0 16px}
-h1{font-size:28px;line-height:1.2}.notice{padding:16px;background:#fff5d9;border-radius:12px;margin:24px 0}
-article{background:#fff;border:1px solid #dbe3ed;border-radius:18px;margin:20px 0;box-shadow:0 3px 12px #18334b08;overflow:hidden}.text{padding:24px}
-pre{font-size:13px;line-height:1.7;background:#f4f7fb;padding:14px;border-radius:9px;overflow-x:auto;white-space:pre}pre br{display:none}
-img{display:block;width:100%;border-top:1px solid #e3e9f0}b{font-weight:650}
-</style><main><h1>Entry report · Telegram preview</h1><div class="notice"><b>Illustrative preview — all values are synthetic.</b><br>This demonstrates the message layout and charts, not today's market or a validated investment recommendation.</div>'''
-    page += "\n".join(cards) + "</main></html>"
-    (output / "index.html").write_text(page)
-    (output / "telegram_messages.txt").write_text("\n\n".join(m.text for m in report.messages))
-    return output / "index.html"
+            rendered.add(filename)
+        chunks = views.caption_pages(views.panel_caption(signal, view, NOW.isoformat()))
+        for i, caption in enumerate(chunks):
+            markup = views.keyboard('preview', view)
+            if len(chunks) > 1:
+                markup['inline_keyboard'].insert(0, [{'text': f'Details {j+1}/{len(chunks)}', 'callback_data': f'r:preview:{view}~{j}'} for j in range(len(chunks))])
+            entry = {'caption': caption, 'image': filename, 'keyboard': markup}
+            content[f'{view}~{i}'] = entry
+            if i == 0:
+                content[view] = entry
+    payload = json.dumps({'views': content, 'keyboard': views.keyboard('preview')}).replace('<', r'\u003c')
+    page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BuySignal · interactive preview</title><style>
+body{margin:0;background:#eaf0f6;color:#17293e;font:16px/1.4 system-ui,sans-serif}*{box-sizing:border-box}main{max-width:440px;margin:24px auto;padding:0 10px}
+h1{font-size:21px}.notice{color:#617085;font-size:12px;margin-bottom:18px}
+article{background:#fff;border:1px solid #dbe3ed;border-radius:14px;margin:16px 0;overflow:hidden;box-shadow:0 3px 12px #18334b08}.text{padding:12px;white-space:pre-wrap}
+pre{font:13px/1.5 monospace;white-space:pre;overflow-x:auto;margin:8px 0}img{display:block;width:100%}.buttons{padding:0 8px 8px}.row{display:flex;gap:4px;margin-top:5px}button{flex:1;cursor:pointer;border:0;border-radius:6px;background:#edf4fc;color:#2864dc;min-width:0;white-space:nowrap;padding:10px 4px;font:600 14px system-ui}button:hover,button:focus{background:#dceaff}b{font-weight:650}
+</style><main><h1>Entry overview</h1><div class="notice">Interactive local preview · synthetic data · nothing sent to Telegram.</div><article><div class="text">''' + report.messages[0].text + '''</div><div id="overview" class="buttons"></div></article><article id="panel" hidden><img id="chart" alt="Selected signal chart"><div id="caption" class="text"></div><div id="navigation" class="buttons"></div></article></main><script id="data" type="application/json">''' + payload + '''</script><script>
+const data=JSON.parse(document.getElementById('data').textContent);
+function buttons(target,keyboard){target.replaceChildren();for(const row of keyboard.inline_keyboard){const r=document.createElement('div');r.className='row';for(const b of row){const el=document.createElement('button');el.textContent=b.text;el.onclick=()=>openView(b.callback_data.split(':')[2]);r.append(el)}target.append(r)}}
+function openView(key){const panel=document.getElementById('panel');if(key==='close'){panel.hidden=true;return}const view=data.views[key];if(!view)return;document.getElementById('caption').innerHTML=view.caption;document.getElementById('chart').src=view.image;buttons(document.getElementById('navigation'),view.keyboard);panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'})}
+buttons(document.getElementById('overview'),data.keyboard);
+</script></html>'''
+    (output / 'index.html').write_text(page)
+    (output / 'telegram_messages.txt').write_text(report.messages[0].text)
+    return output / 'index.html'
 
 
 if __name__ == "__main__":
