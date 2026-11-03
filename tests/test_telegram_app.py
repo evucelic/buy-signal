@@ -24,6 +24,7 @@ def reset_state(monkeypatch, tmp_path):
     journal on tmp_path so no test reads or writes the real one.
     """
     app._state = app._State(start_time=datetime.now(timezone.utc))
+    monkeypatch.setattr(app, "_snapshot_store", app.SnapshotStore(tmp_path / "reports"))
     monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", -1)
     journal = RefreshJournal(tmp_path / "buysignal.schedule.journal.json")
     monkeypatch.setattr(app.runner, "macro_journal", lambda: journal)
@@ -35,7 +36,7 @@ def reset_state(monkeypatch, tmp_path):
 def sent(monkeypatch):
     """Everything the app hands to the transport, in order, all of it delivered."""
     messages = []
-    monkeypatch.setattr(app.transport, "send", lambda text: messages.append(text) or True)
+    monkeypatch.setattr(app.transport, "send", lambda text, **kwargs: messages.append(text) or True)
     return messages
 
 
@@ -43,7 +44,7 @@ def sent(monkeypatch):
 def undeliverable(monkeypatch):
     """A transport that swallows everything, the way it does when Telegram is unreachable."""
     attempts = []
-    monkeypatch.setattr(app.transport, "send", lambda text: attempts.append(text) and False)
+    monkeypatch.setattr(app.transport, "send", lambda text, **kwargs: attempts.append(text) and False)
     return attempts
 
 
@@ -107,14 +108,14 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, sent, make_subsignal, ma
     assert len(sent) == 0
 
     app.handle_tick(alerting, None)
-    assert len(sent) == 9
+    assert len(sent) == 1
     assert "Watch trigger active" in sent[0]
 
     app.handle_tick(alerting, None)
-    assert len(sent) == 9  # no repeat while sustained
+    assert len(sent) == 1  # no repeat while sustained
 
     app.handle_tick(not_alerting, None)
-    assert len(sent) == 10
+    assert len(sent) == 2
     assert "cleared" in sent[-1].lower()
 
 
@@ -207,7 +208,8 @@ def test_handle_tick_force_refreshes_and_recomputes_before_the_daily_report(
 
     assert calls == [("refresh", True), ("compute",)]
     report = next(s for s in sent if "End of day" in s)
-    assert "fresh-detail" in "\n".join(sent)
+    assert app._state.last_result is fresh
+    assert len(sent) == 1
     assert "stale-detail" not in "\n".join(sent)
 
 
@@ -396,26 +398,26 @@ def test_handle_message_fedrate(monkeypatch, make_subsignal):
     # _SIGNAL_COMMANDS binds these score functions at import time, so patching
     # app.rate_signal.score wouldn't reach the already-bound dict entry -- patch the entry itself.
     monkeypatch.setitem(app._SIGNAL_COMMANDS, "/fedrate", lambda: make_subsignal("fed_rate", "flat", "x", passes=True))
-    assert "Fed Rate" in app.handle_message("/fedrate")
+    assert "FedWatch" in _text(app.handle_message("/fedrate"))
 
 
 def test_handle_message_margin(monkeypatch, make_subsignal):
     monkeypatch.setitem(
         app._SIGNAL_COMMANDS, "/margin", lambda: make_subsignal("margin_debt", "deleveraging", "x", passes=True)
     )
-    assert "Margin Debt" in app.handle_message("/margin")
+    assert "Margin" in _text(app.handle_message("/margin"))
 
 
 def test_handle_message_sector(monkeypatch, make_subsignal):
     monkeypatch.setitem(app._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
-    assert "Leading Industries" in app.handle_message("/sector")
+    assert "Industry EPS" in _text(app.handle_message("/sector"))
 
 
 def test_handle_message_curve(monkeypatch, make_subsignal):
     monkeypatch.setitem(
         app._SIGNAL_COMMANDS, "/curve", lambda: make_subsignal("yield_curve", "flat", "x", advisory=True)
     )
-    assert "Yield Curve" in app.handle_message("/curve")
+    assert "Yield curve" in _text(app.handle_message("/curve"))
 
 
 def test_single_signal_handles_exception():
@@ -574,11 +576,11 @@ def test_market_open_false_when_closed(monkeypatch):
 
 def test_start_hands_the_command_handler_to_the_transport(monkeypatch):
     started = []
-    monkeypatch.setattr(app.transport, "start", lambda handler: started.append(handler))
+    monkeypatch.setattr(app.transport, "start", lambda handler, callback: started.append((handler, callback)))
 
     app.start()
 
-    assert started == [app.handle_message]
+    assert started == [(app.handle_message, app.handle_callback)]
 
 
 def test_daily_report_is_not_marked_complete_after_delivery_failure(monkeypatch, make_buy_signal):
@@ -604,13 +606,13 @@ def test_watch_activation_retries_when_report_delivery_failed(monkeypatch, make_
     assert app._state.alerting is True
 
 
-def test_chart_rendering_failure_preserves_the_text_report(monkeypatch, make_buy_signal, make_subsignal):
-    signal = make_subsignal("market_dip", "dip", detail="SPY drawdown facts", passes=True)
+def test_overview_never_renders_charts(monkeypatch, make_buy_signal, make_subsignal):
+    signal = make_subsignal("market_dip", "dip", detail="Verbose facts", passes=True)
     def fail(_):
-        raise ValueError("invalid chart")
+        raise AssertionError("Overview must not eagerly render a chart")
     monkeypatch.setattr(app.signal_charts, "render_signal_chart", fail)
     report = app._signal_report(make_buy_signal([signal]))
-    market = next(p for p in report.messages if p.key == "market_dip")
-    assert "SPY drawdown facts" in market.text
-    assert "Chart unavailable" in market.text
-    assert market.photo is None
+    assert len(report.messages) == 1
+    assert report.messages[0].photo is None
+    assert report.messages[0].keyboard
+    assert "Verbose facts" not in report.messages[0].text

@@ -129,7 +129,7 @@ def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
         BuySignal(1., "strong", 1, [signal]),
         [], pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
     )
-    assert any("closing high" in part.text for part in report.messages)
+    assert any("63-session high" in part.text for part in report.messages)
 
 
 def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):

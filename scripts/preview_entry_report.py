@@ -7,6 +7,8 @@ All observations are synthetic and visibly labelled as such in the HTML preview.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +22,7 @@ from buysignal.signals import market_signal, trend_signal, rate_signal, margin_s
 from buysignal.signals.base import SubSignal
 from buysignal.signals.buy_signal import BuySignal
 from buysignal.telegram_bot.render import signal_report
+from buysignal.telegram_bot import views
 
 NOW = datetime(2026, 11, 2, 19, 0, tzinfo=timezone.utc)
 
@@ -29,15 +32,17 @@ def sample_assessment() -> BuySignal:
     index = np.arange(300)
     prices = np.linspace(65, 100, 300) + 1.25 * np.sin(index * 1.1)
     prices[-6:] = [100, 98.8, 96.5, 94, 92.8, 93.4]
-    frame = pd.DataFrame({"SPY": prices, "NASDAQ": prices*1.3, "DOW": prices*.9}, index=dates)
+    frame = pd.DataFrame({"SPY": prices, "NASDAQ": prices*1.3, "DOW": prices*.9, "EURO50": prices*40}, index=dates)
     with patch.object(market_signal, "get_entry_history", return_value=frame):
         market = market_signal.score()
     trend = trend_signal.from_market(market)
     vix_history = pd.DataFrame({"date": dates, "vix": 19 + 3*np.sin(index/14)})
     vix_history.loc[vix_history.index[-6:], "vix"] = [21, 24, 28, 31, 27, 25]
+    vix_history["high"] = vix_history.vix
     vix = SubSignal(
         "vix", 25, "soft", "VIX 25.0: elevated fear; below the recent high of 31.0",
         passes=True, observed_at="2026-11-02", history=vix_history,
+        metrics={"vix": 25., "change": 25/27-1, "recent_peak": 31., "from_peak": 25/31-1, "at_high": False, "peak_basis": "intraday"},
         footer="Illustrative observations",
     )
     fed = pd.DataFrame([
@@ -64,6 +69,9 @@ def sample_assessment() -> BuySignal:
     sectors["covered_companies"] = 8
     sectors["sampled_companies"] = 8
     sectors["covered_weight"] = .8
+    sectors["analysts_min"] = 12
+    sectors["analysts_max"] = 40
+    sectors["fetched_at"] = NOW.isoformat()
     with patch.object(sector_signal, "sector_performance", return_value=sectors):
         earnings = sector_signal.score()
     credit = pd.DataFrame({"date": dates, "spread": 3.5 + .15*np.sin(index/15)})

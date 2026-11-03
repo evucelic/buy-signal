@@ -19,8 +19,9 @@ from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, trend_signal, vix_signal, yield_curve_signal
 from buysignal.signals.buy_signal import BuySignal, compute_signal
-from buysignal.telegram_bot import render, transport
-from buysignal.telegram_bot.messages import Report
+from buysignal.telegram_bot import render, transport, views, interactive
+from buysignal.telegram_bot.snapshots import SnapshotStore
+from buysignal.telegram_bot.messages import Report, ReportMessage
 
 # Per-signal commands: score() called directly (not compute_signal()) so a broken collector
 # can't block checking the others. /vix and /dip are handled separately in handle_message
@@ -60,33 +61,22 @@ class _State:
 
 _state = _State(start_time=datetime.now(timezone.utc))
 _lock = threading.Lock()
+_snapshot_store = SnapshotStore()
 
 
 def _cache_ages() -> list[tuple[str, datetime | None]]:
     return [(name, freshness.last_modified(path)) for name, path in _FRESHNESS_FILES.items()]
 
 
-def _signal_message(result: BuySignal) -> str:
-    return render.signal_message(result, _cache_ages(), datetime.now(timezone.utc))
-
-
 def _signal_report(result: BuySignal, heading: str = "", prefix: str = "") -> Report:
     report = render.signal_report(result, _cache_ages(), datetime.now(timezone.utc))
     if heading or prefix:
         report.messages[0].text = heading + prefix + report.messages[0].text
-    by_name = {signal.name: signal for signal in result.subsignals}
-    charted = set()
-    for message in report.messages:
-        signal = by_name.get(message.key)
-        if not config.TELEGRAM_CHARTS or signal is None or message.key in charted:
-            continue
-        charted.add(message.key)
-        try:
-            message.photo = signal_charts.render_signal_chart(signal)
-            message.caption = f"{render.SIGNAL_META[signal.name][1]} · source {signal.observed_at or 'see text'}"
-        except Exception as exc:
-            # A visualization must never prevent the numbers reaching the owner.
-            message.text += f"\n\nChart unavailable ({render.esc(type(exc).__name__)})."
+    try:
+        token = _snapshot_store.save(result, datetime.now(timezone.utc))
+        report.messages[0].keyboard = views.keyboard(token)
+    except (OSError, ValueError):
+        report.messages[0].text += "\nChart buttons unavailable: report snapshot could not be saved."
     return report
 
 
@@ -195,18 +185,39 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             with _lock:
                 _state.alerting = True
     elif was_alerting and not alerting:
-        if transport.send("Watch trigger cleared (VIX/SPY)."):
+        if transport.send_report(_signal_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n")):
             with _lock:
                 _state.alerting = False
 
 
-def _single_signal(score_fn) -> str:
+def _single_signal(score_fn) -> str | Report:
     try:
         with buy_signal.SIGNAL_LOCK:
             s = score_fn()
     except Exception as exc:
         return f"⚠️ failed to compute ({render.esc(type(exc).__name__)}: {render.esc(str(exc))})"
-    return render.subsignal_block(s)
+    now = datetime.now(timezone.utc)
+    if s.name == 'trend':
+        return f"<b>SPY trend</b> · {render.esc(s.detail.replace(' | ', ' · '))}\nData {views.stamp(s.observed_at)}\nSent {views.stamp(now)}"
+    result = BuySignal(0, 'none', int(s.passes), [s])
+    store = _snapshot_store
+    try:
+        token = store.save(result, now)
+    except (OSError, ValueError):
+        return views.panel_caption(s, s.name, now.isoformat())
+    try:
+        png = signal_charts.render_signal_chart(s) if config.TELEGRAM_CHARTS else None
+    except Exception:
+        png = None
+    available = [name for name in views.INDEXES if s.history is not None and name in s.history and s.history[name].notna().any()]
+    def delivered(panel):
+        panel['chart_key'] = s.name + (':SPY' if s.name == 'market_dip' else ':') if panel.get('photo') else None
+        store.set_panel(token, panel)
+    return Report([ReportMessage(
+        views.panel_caption(s, s.name, now.isoformat()), key=s.name, photo=png,
+        keyboard=views.keyboard(token, s.name, available, sections={s.name}),
+        panel=True, on_delivery=delivered,
+    )])
 
 
 def market_open() -> bool:
@@ -279,6 +290,10 @@ def handle_message(text: str) -> str | Report | None:
     return "Unrecognized command, try /help."
 
 
+def handle_callback(query) -> None:
+    interactive.handle_callback(query, _snapshot_store)
+
+
 def start() -> None:
     """Start polling for commands in a background thread."""
-    transport.start(handle_message)
+    transport.start(handle_message, handle_callback)
