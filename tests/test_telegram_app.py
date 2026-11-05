@@ -576,6 +576,7 @@ def test_market_open_false_when_closed(monkeypatch):
 
 def test_start_hands_the_command_handler_to_the_transport(monkeypatch):
     started = []
+    monkeypatch.setattr(app, "_start_personal", lambda: None)
     monkeypatch.setattr(app.transport, "start", lambda handler, callback: started.append((handler, callback)))
 
     app.start()

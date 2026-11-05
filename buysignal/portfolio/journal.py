@@ -36,6 +36,10 @@ class PortfolioStore:
                     recorded_at TEXT NOT NULL, source_key TEXT UNIQUE, voided_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS quotes (symbol TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS notifications (
+                    exchange TEXT NOT NULL, session_date TEXT NOT NULL, sent_at TEXT NOT NULL,
+                    PRIMARY KEY (exchange,session_date)
+                );
             ''')
 
     @contextmanager
@@ -95,3 +99,13 @@ class PortfolioStore:
     def save_quote(self, symbol, payload):
         with self.connection() as db:
             db.execute('INSERT OR REPLACE INTO quotes VALUES (?,?)', (symbol, json.dumps(payload, allow_nan=False)))
+
+    def delivered(self, exchange, session_date):
+        with self.connection() as db:
+            return db.execute('SELECT 1 FROM notifications WHERE exchange=? AND session_date=?',
+                              (exchange, session_date)).fetchone() is not None
+
+    def mark_delivered(self, sessions, now):
+        with self.connection() as db:
+            db.executemany('INSERT OR IGNORE INTO notifications VALUES (?,?,?)',
+                           [(s.exchange, str(s.session_date), now.isoformat()) for s in sessions])

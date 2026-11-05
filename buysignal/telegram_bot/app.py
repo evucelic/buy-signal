@@ -14,8 +14,11 @@ from datetime import date, datetime, timezone
 
 from buysignal import config
 from buysignal.resources import force_refreshes
-from buysignal.portfolio import commands as portfolio_commands, quotes as personal_quotes, presentation as personal_presentation
+from buysignal.portfolio import commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
 from buysignal.portfolio.journal import PortfolioStore
+from buysignal.portfolio.service import PrecloseService
+import os
+import logging
 from buysignal.analysis import chart, opportunity, signal_charts
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
@@ -65,7 +68,14 @@ _state = _State(start_time=datetime.now(timezone.utc))
 _lock = threading.Lock()
 _snapshot_store = SnapshotStore()
 _portfolio_store = None
+_personal_service = None
 _portfolio_lock = threading.Lock()
+_notification_lock = threading.RLock()
+log = logging.getLogger(__name__)
+
+
+def _utc_now():
+    return datetime.now(timezone.utc)
 
 
 def _get_portfolio_store():
@@ -74,6 +84,64 @@ def _get_portfolio_store():
         if _portfolio_store is None:
             _portfolio_store = PortfolioStore()
         return _portfolio_store
+
+
+def _deliver_report(result, heading='', prefix='', *, now=None, preclose=None):
+    now = now or _utc_now()
+    with _notification_lock:
+        upcoming = preclose
+        if upcoming is None and _personal_service is not None:
+            upcoming = personal_sessions.due(now, _get_portfolio_store())
+        if upcoming:
+            prices = personal_quotes.all_quotes(_get_portfolio_store(), now=now)
+            heading = personal_presentation.preclose_heading(upcoming) + heading
+            prefix = personal_presentation.quote_block(prices) + '\n\n' + prefix
+        report = _signal_report(result, heading, prefix)
+        if preclose and (_personal_service is not None and _personal_service.stopped.is_set()
+                         or all(s.closes <= _utc_now() for s in preclose)):
+            return False
+        delivered = transport.send_report(report)
+        if delivered and upcoming and preclose is None:
+            _get_portfolio_store().mark_delivered(upcoming, _utc_now())
+        return delivered
+
+
+def _deliver_preclose(sessions, now):
+    try:
+        result = compute_signal(allow_refresh=True)
+        prefix = ''
+    except Exception:
+        log.exception('Pre-close global assessment failed')
+        with _lock:
+            cached = _state.last_result
+        if cached is None:
+            result = BuySignal(0, 'incomplete', 0, [], missing_signals=['vix','fed_rate','margin_debt','market_dip','sector'])
+        else:
+            from dataclasses import replace
+            result = replace(cached, state='incomplete')
+        prefix = '⚠️ Global assessment refresh failed; showing available cached data.\n\n'
+    delivered = _deliver_report(result, prefix=prefix, now=now, preclose=sessions)
+    if delivered:
+        with _lock:
+            _state.last_result = result
+            if is_alerting(result):
+                _state.alerting = True
+    return delivered
+
+
+def _start_personal():
+    global _personal_service
+    if _personal_service is not None and not _personal_service.stopped.is_set():
+        return
+    if os.environ.get('PRECLOSE_ENABLED', '1') == '0':
+        return
+    _personal_service = PrecloseService(_get_portfolio_store(), _deliver_preclose, lock=_notification_lock)
+    _personal_service.start()
+
+
+def stop():
+    if _personal_service is not None:
+        _personal_service.stop()
 
 
 def _cache_ages() -> list[tuple[str, datetime | None]]:
@@ -164,7 +232,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 if error is not None
                 else ""
             )
-            delivered = transport.send_report(_signal_report(reported, "📅 <b>End of day</b>\n\n", prefix))
+            delivered = _deliver_report(reported, "📅 <b>End of day</b>\n\n", prefix, now=now)
             if delivered:
                 with _lock:
                     _state.last_report_date = now_ct.date()
@@ -182,27 +250,28 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
     if result is None:
         return
 
-    alerting = is_alerting(result)
-    with _lock:
-        was_alerting = _state.alerting
+    with _notification_lock:
+        alerting = is_alerting(result)
+        with _lock:
+            was_alerting = _state.alerting
 
-    if alerting and not was_alerting:
-        reasons = trigger_reasons(result)
-        if not due:
-            delivered = transport.send_report(_signal_report(result, f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n"))
-        else:
-            # The full report already carries this tick's entry conditions.
-            delivered = _state.last_report_date == now_ct.date()
-        if delivered:
-            with _lock:
-                _state.alerting = True
-    elif was_alerting and not alerting and not (
-        any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
-        or set(result.missing_signals) & {'vix', 'market_dip'}
-    ):
-        if transport.send_report(_signal_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n")):
-            with _lock:
-                _state.alerting = False
+        if alerting and not was_alerting:
+            reasons = trigger_reasons(result)
+            if not due:
+                delivered = _deliver_report(result, f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n", now=now)
+            else:
+                # The full report already carries this tick's entry conditions.
+                delivered = _state.last_report_date == now_ct.date()
+            if delivered:
+                with _lock:
+                    _state.alerting = True
+        elif was_alerting and not alerting and not (
+            any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
+            or set(result.missing_signals) & {'vix', 'market_dip'}
+        ):
+            if _deliver_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n", now=now):
+                with _lock:
+                    _state.alerting = False
 
 
 def _single_signal(score_fn) -> str | Report:
@@ -321,3 +390,8 @@ def handle_callback(query) -> None:
 def start() -> None:
     """Start polling for commands in a background thread."""
     transport.start(handle_message, handle_callback)
+    try:
+        _start_personal()
+    except Exception:
+        log.exception('Personal pre-close service could not start')
+        transport.notice('Personal pre-close updates could not start. Existing market reports remain active.')

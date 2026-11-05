@@ -67,3 +67,9 @@ def holdings_block(holdings, quotes=()):
 def portfolio_message(quotes, holdings, now=None):
     now = now or datetime.now(timezone.utc)
     return quote_block(quotes) + f'\nSent {stamp(now)}\n\n' + holdings_block(holdings, quotes)
+
+
+def preclose_heading(sessions):
+    closes = sorted(set(stamp(s.closes) for s in sessions))
+    names = ' / '.join('London' if s.exchange == 'LSE' else 'IBIS2/Xetra' for s in sessions)
+    return '<b>⏳ Exchange pre-close update</b>\n' + esc(names + ' · regular close ' + ' / '.join(closes)) + '\n\n'
