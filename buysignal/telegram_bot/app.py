@@ -208,18 +208,20 @@ def _single_signal(score_fn) -> str | Report:
         token = store.save(result, now)
     except (OSError, ValueError):
         return views.panel_caption(s, s.name, now.isoformat())
-    try:
-        png = signal_charts.render_signal_chart(s) if config.TELEGRAM_CHARTS else None
-    except Exception:
-        png = None
-    available = [name for name in views.INDEXES if s.history is not None and name in s.history and s.history[name].notna().any()]
+    manifest = store.load_views(token)
+    item = manifest['views'].get(s.name)
+    if item is None:
+        return views.panel_caption(s, s.name, now.isoformat())
+    key = item['chart_key']
+    png = store.chart_bytes(token, key) if key else None
     def delivered(panel):
-        panel['chart_key'] = s.name + (':SPY' if s.name == 'market_dip' else ':') if panel.get('photo') else None
+        file_id = panel.pop('file_id', None)
+        store.remember_media(token, key, file_id)
+        panel['chart_key'] = key if panel.get('photo') else None
         store.set_panel(token, panel)
     return Report([ReportMessage(
-        views.panel_caption(s, s.name, now.isoformat()), key=s.name, photo=png,
-        keyboard=views.keyboard(token, s.name, available, sections={s.name}),
-        panel=True, on_delivery=delivered,
+        item['caption'], key=s.name, photo=png,
+        keyboard=item['keyboard'], panel=True, on_delivery=delivered,
     )])
 
 

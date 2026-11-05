@@ -122,10 +122,19 @@ def test_poll_loop_delivers_prepared_report_replies(monkeypatch):
     from unittest.mock import Mock
     report = Report([ReportMessage("overview"), ReportMessage("details")])
     updates = response(payload={"ok": True, "result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "/signal"}}]})
-    getter = Mock(side_effect=[updates, KeyboardInterrupt()])
+    import threading
+    delivered_event = threading.Event()
+    def get(*args, **kwargs):
+        if not get.called:
+            get.called = True
+            return updates
+        assert delivered_event.wait(2)
+        raise KeyboardInterrupt()
+    get.called = False
+    getter = get
     monkeypatch.setattr(transport.requests, "get", getter)
     delivered = []
-    monkeypatch.setattr(transport, "send_report", lambda value: delivered.append(value) or True)
+    monkeypatch.setattr(transport, "send_report", lambda value: delivered.append(value) or delivered_event.set() or True)
     with pytest.raises(KeyboardInterrupt):
         transport.poll_forever(lambda text: report)
     assert delivered == [report]

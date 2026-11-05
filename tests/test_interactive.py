@@ -6,7 +6,7 @@ import json
 import pandas as pd
 import pytest
 
-from buysignal.telegram_bot import app, interactive, transport, views
+from buysignal.telegram_bot import app, interactive, transport, views, prepared
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.signals.base import SubSignal
 from buysignal.signals.buy_signal import BuySignal
@@ -30,7 +30,6 @@ def wire(monkeypatch):
     monkeypatch.setattr(transport, 'show_panel', show)
     monkeypatch.setattr(transport, 'answer_callback', lambda ident, text=None: notices.append(text))
     monkeypatch.setattr(transport, 'notice', notices.append)
-    monkeypatch.setattr(interactive.signal_charts, 'render_signal_chart', lambda s: b'png:' + s.name.encode() + s.metrics.get('chart_index', '').encode())
     return shown, notices
 
 
@@ -57,9 +56,28 @@ def test_snapshot_survives_restart_and_keeps_original_values(saved, wire):
     interactive.handle_callback(query(token, 'vix'), reloaded)
     assert '25.0' in wire[0][0][0] and '999' not in wire[0][0][0]
     assert '2026-11-02' in wire[0][0][0]
-    restored = reloaded.signals(reloaded.load(token))
-    pd.testing.assert_index_equal(restored['market_dip'].history.index, result.subsignals[3].history.tail(460).index, check_names=False, check_exact=False)
-    assert pd.api.types.is_datetime64_any_dtype(restored['fed_rate'].history.meeting_date)
+    assert 'signals' not in reloaded.load(token)
+    assert reloaded.chart_bytes(token, 'market_dip:SPY') == store.chart_bytes(token, 'market_dip:SPY')
+
+
+def test_legacy_report_prepares_once_without_downloading(tmp_path, wire, monkeypatch):
+    store = SnapshotStore(tmp_path)
+    result = sample_assessment()
+    signals = []
+    for signal in result.subsignals:
+        values = {k: v for k, v in vars(signal).items() if k != 'history'}
+        frame = signal.history
+        values['history'] = None if frame is None else frame.tail(460).to_json(orient='split', date_format='iso')
+        values['datetime_index'] = frame is not None and isinstance(frame.index, pd.DatetimeIndex)
+        signals.append(values)
+    import time
+    token = 'abcdef123456'
+    store._write(token, {'created': time.time(), 'sent_at': NOW.isoformat(), 'signals': signals, 'panel': None})
+    monkeypatch.setattr(app, 'compute_signal', lambda **kw: pytest.fail('Legacy navigation must not collect'))
+    interactive.handle_callback(query(token, 'vix'), store)
+    monkeypatch.setattr(store, 'signals', lambda *a: pytest.fail('Legacy history must only be decoded once'))
+    interactive.handle_callback(query(token, 'fed_rate'), store)
+    assert len(wire[0]) == 2
 
 
 def test_switching_index_uses_selected_series_and_buttons(saved, wire):
@@ -67,7 +85,7 @@ def test_switching_index_uses_selected_series_and_buttons(saved, wire):
     interactive.handle_callback(query(token, 'index_NASDAQ'), store)
     caption, markup, png, _ = wire[0][0]
     assert '<b>NASDAQ</b>' in caption
-    assert png.endswith(b'NASDAQ')
+    assert png == store.chart_bytes(token, 'market_dip:NASDAQ')
     labels = [b['text'] for row in markup['inline_keyboard'] for b in row]
     assert 'SPY' in labels and 'Dow' in labels and 'Euro50' in labels
 
@@ -86,7 +104,7 @@ def test_analyst_details_have_source_caps_and_explained_counts(saved, wire, monk
     store, token, _ = saved
     interactive.handle_callback(query(token, 'sector'), store)
     # The detail toggle only changes the caption; no rendering/upload needed.
-    monkeypatch.setattr(interactive.signal_charts, 'render_signal_chart', lambda s: pytest.fail('Same chart should be retained'))
+    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', lambda s: pytest.fail('Same chart should be retained'))
     interactive.handle_callback(query(token, 'eps_info'), store)
     caption, markup, png, _ = wire[0][-1]
     assert 'Yahoo Finance analyst consensus' in caption
@@ -254,13 +272,12 @@ def test_command_panel_delivery_binds_buttons_to_its_message(telegram, tmp_path,
     assert panel == {'message_id':123,'photo':True,'chart_key':'fed_rate:'}
 
 
-def test_callback_answers_once_before_rendering_and_preserves_overview_on_failure(saved, wire, monkeypatch):
+def test_callback_uses_prepared_view_without_rendering_or_history_parsing(saved, wire, monkeypatch):
     store, token, _ = saved
-    def fail(signal):
-        assert wire[1] == [None]
-        raise ValueError('bad chart')
-    monkeypatch.setattr(interactive.signal_charts, 'render_signal_chart', fail)
+    def fail(*args):
+        raise AssertionError('Buttons must not render or parse histories')
+    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', fail)
+    monkeypatch.setattr(store, 'signals', fail)
+    monkeypatch.setattr(store, 'load', fail)
     interactive.handle_callback(query(token, 'vix'), store)
-    assert not wire[0]
-    assert wire[1] == [None, 'Chart could not render. Try another section.']
-    assert store.load(token)['panel'] is None
+    assert len(wire[0]) == 1 and wire[1] == [None]
