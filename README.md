@@ -36,21 +36,48 @@ The standard deviation uses 20 returns ending before the five-session move. For 
 
 Tap a section to open one silent chart panel. Further navigation edits that panel in place; **Close panel** removes it while keeping the overview. Index buttons switch between SPY, Nasdaq, Dow and optional EURO STOXX 50. The optional **Trend & intensity** button contains the long-term average and volatility-scaled move, with short definitions; these stay out of the main overview. Each index uses its own observations and trading sessions; differing observation dates are shown. A missing optional European feed does not invalidate US evidence. Daily bars can be in progress.
 
-Charts render only when requested. FedWatch shows a probability chart and source time; **Probability changes** opens clearly labelled percentage-point changes with the comparison timestamp. **Estimate details** shows the Yahoo Finance analyst-consensus source, industry market caps, covered versus sampled company counts, sampled-weight coverage and analyst-count ranges. Analyst names are not supplied by this feed. Long detail captions have page buttons rather than spilling into more messages. FINRA charts use USD millions, every month is labelled, and the publication lag is explicit. Credit levels and changes use basis points consistently.
+Captions, keyboards and unique charts are prepared once before the overview is sent. Button presses read the prepared views without scoring, reading price CSVs, reconstructing dataframes or plotting. An image is uploaded on its first visit; subsequent visits reuse Telegram file IDs. Text-only detail toggles update only the caption. Long collection commands run on one bounded background worker so polling can continue to handle buttons. FedWatch shows a probability chart and source time; **Probability changes** opens clearly labelled percentage-point changes with the comparison timestamp. **Estimate details** shows the Yahoo Finance analyst-consensus source, industry market caps, covered versus sampled company counts, sampled-weight coverage and analyst-count ranges. Analyst names are not supplied by this feed. Long detail captions have page buttons rather than spilling into more messages. FINRA charts use USD millions, every month is labelled, and the publication lag is explicit. Credit levels and changes use basis points consistently.
 
 VIX reports its level, change versus the previous close, and distance from the 20-session high, marking a current high. Hourly bar highs come from the existing download. Legacy close-only caches are refreshed once to acquire highs; closing-high fallbacks are labelled explicitly.
 
-Button data is saved as bounded JSON in `data/reports/` (at most 32 snapshots, two MiB each, 14-day validity). Price history is trimmed to the 460 rows needed for charts. Old buttons keep their report's observations across bot restarts; expired buttons direct you to `/signal`. Navigation never refreshes sources or substitutes current observations into historical reports. The existing data-volume mount persists these snapshots. Only the configured Telegram chat can invoke navigation. No extra Telegram framework, plugin or service is required.
+Button data is saved in `data/reports/` (at most 32 snapshots, two MiB of JSON each, 14-day validity). Reports store prepared views and PNGs, without duplicating source histories. PNG storage is capped at 64 MiB globally and eight MiB per report; the manifest cache holds eight reports. Price histories used in preparation retain up to 500 rows. Legacy snapshots are prepared once when first opened. Old buttons keep their report's observations across bot restarts; expired buttons direct you to `/signal`. Navigation never refreshes sources or substitutes current observations into historical reports. The existing data-volume mount persists these snapshots. Only the configured Telegram chat can invoke navigation. No extra Telegram framework, plugin or service is required.
 
-Individual signal commands open the same compact chart views. Delivery remains paced and serialized, with Telegram `retry_after` handling. Graph failures leave the overview available.
+The main command menu contains the eight everyday tasks; detailed signal shortcuts remain in `/help` and the chart buttons. Individual signal commands open the same compact chart views. New messages remain paced and serialized; in-place edits use a shorter 150 ms minimum interval and respect Telegram `retry_after`. Transient edit failures retry safely, deleted panels are recreated, expired file IDs are re-uploaded from the saved PNG, and API rejection descriptions are logged with credentials redacted. After an uncertain edit failure, the next click restores the selected image explicitly. Graph failures leave the overview available.
 
 Individual commands: `/vix`, `/dip`, `/trend`, `/fedrate`, `/margin`, `/sector`, `/credit`, `/curve`, `/whattobuy`, `/status`, `/help`.
 
 Missing required evidence produces an **incomplete assessment** and keeps that condition in the denominator. Missing advisory evidence does not weaken otherwise complete checklist alignment. Observation dates are distinct from cache-write times; the latest daily price bar may still be in progress.
 
+## Exchanges and purchase journal
+
+The personal watchlist uses the confirmed listings: **VUAA.L / London / USD**, **VWCG.DE / IBIS2 (Xetra) / EUR**, and **AVWS.DE / IBIS2 (Xetra) / EUR**. Trading currencies come from those listings, separately from fund base currencies. Sources: [Vanguard VWCG listing table](https://fund-docs.vanguard.com/FTSE_Developed_Europe_UCITS_ETF_EUR_Accumulating_9681_EU_GERMAN_EN.pdf), [Avantis AVWS listings](https://www.avantisinvestors.com/ucitsetf/avantis-global-small-cap-value-ucits-etf/), [London VUAA listing](https://www.londonstockexchange.com/en/quote/etps/VUAA/vanguard-funds-plc).
+
+An independent calendar clock sends an extra update **60 minutes before the regular close**. On normal days that is **16:30 Europe/Zagreb**, before London and Xetra close at 17:30 Zagreb time. Their coincident deadlines are combined into one message containing ETF prices/source times and the usual global overview/buttons. Exchange holidays, daylight-saving changes and London half-days use the exchange calendars. The regular Xetra close is the default; broker-dependent extended retail hours are a separate session. Sources: [LSE business days](https://www.londonstockexchange.com/equities-trading/business-days), [Xetra regular and extended hours](https://www.cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours).
+
+A watch alert that already includes the pre-close context during that window covers the scheduled ping. Earlier alerts still leave the later pre-close snapshot due. Delivery is remembered across restarts; failures retry while the exchanges remain open. A late start can catch up before the close, and a report that finishes preparing after the close is skipped. Existing US/end-of-day reports and out-of-hours signals continue on their current schedule.
+
+ETF quotes use five-minute Yahoo bars with individual source timestamps, a five-minute cache and daily-bar fallback. One listing's failure preserves its cached price or shows that listing as unavailable; the other ETFs and global report remain available. The extra clock does not poll market data throughout the day. `PRECLOSE_ENABLED=0` disables the extra ping; `PRECLOSE_MINUTES=60` controls the lead time.
+
+Record purchases through Telegram, one per message:
+
+```text
+bought 10 VUAA @ 151.25 USD on 2026-11-05 fees 1.00
+/buy 2 AVWS @ 25.50 EUR
+bought 3 VWCG @ 60.75 yesterday
+```
+
+An omitted date means today in `TELEGRAM_TIMEZONE`; an omitted currency uses the confirmed listing's currency. Prices and quantities must be explicit; fees use the purchase currency. Use decimal points and ISO dates (`YYYY-MM-DD`). A repeated delivery of the same Telegram message cannot duplicate a purchase. No initial quantities or execution prices are assumed.
+
+- `/portfolio`: watched ETF prices, recorded quantities, average cost and market values in each listing's currency.
+- `/holdings`: recorded quantities and fee-inclusive average cost/invested amounts; currency totals stay separate.
+- `/trades`: the latest 30 purchase records with IDs.
+- `/voidtrade ID`: archive an incorrect purchase and recalculate the recorded position. The original record remains in the journal.
+
+The purchase journal uses exact decimal arithmetic and SQLite transactions in `data/portfolio.sqlite3`. It is persisted by the existing data-volume mount and excluded from Git. These are manually recorded purchases; the journal starts empty until actual purchases are entered. To back it up while running, use SQLite's backup API; alternatively copy it with the bot stopped.
+
 ## Data and migration
 
-Existing hourly price caches remain available. The new `data/marketdaily.csv` bootstraps all available adjusted daily index history and bootstraps on the first entry assessment. The latest five years are reconciled once per New York calendar day, retaining and rebasing the earlier archive. Intraday requests fetch five days and rebase retained adjusted history using completed overlap observations; inconsistent anchors trigger a full reconciliation. A five-minute cache prevents duplicate live requests, and `/refresh` bypasses it. Stale market sessions are rejected using the NYSE calendar; a prior session is valid before the next open and over holidays/weekends.
+Existing hourly price caches remain available. The new `data/marketdaily.csv` bootstraps all available adjusted daily index history and bootstraps on the first entry assessment. The latest five years are reconciled once per New York calendar day, retaining and rebasing the earlier archive. Intraday requests fetch five days and reconcile each index independently using completed overlap observations. Missing or delayed US bars get targeted single-symbol retries. Inconsistent adjustment anchors trigger a full reconciliation for that symbol only. Nasdaq, Dow or European outages retain their own last-known series and observation dates without invalidating fresh SPY evidence. A five-minute cache prevents duplicate live requests, and `/refresh` bypasses it. The NYSE calendar determines expected sessions; a prior session is valid before the next open and over holidays/weekends. A provider outage keeps valid last-known prices, tables and graphs visible, with an explicit cached-through date. Stale SPY observations cannot pass the entry gate, and keep the assessment incomplete without removing its numbers. Failed or unchanged stale responses do not advance the last successful price-refresh timestamp. A one-minute retry cooldown prevents repeated commands from hammering an unavailable price feed. Unknown price evidence does not falsely clear an existing watch.
 
 `data/credit.csv` retains older local observations when the provider serves a shorter rolling window. FRED currently documents a three-year window for this ICE series; longer research history requires a permitted source. `data/fedwatch_history.csv` archives successful source observations separately from the replaceable current snapshot. A first comparable follow-up refresh is needed before probability changes can be shown.
 
@@ -99,6 +126,14 @@ Offline resource check, with no network or credentials:
 docker run --rm --memory=512m --cpus=0.75 --network=none \
   --entrypoint python ghcr.io/evucelic/buy-signal:latest -m scripts.benchmark_report
 ```
+
+Navigation benchmark with all Telegram HTTP calls simulated (no messages are sent):
+
+```sh
+MPLCONFIGDIR=/tmp/buysignal-mpl .venv/bin/python -m scripts.benchmark_navigation
+```
+
+It reports one-time preparation, saved asset size, local callback time and first-visit versus repeat image uploads. Network latency and Telegram pacing are excluded from the local callback timing. A local production-image run with networking disabled and limits of 1 GiB / 0.75 CPU prepared ten charts in 8.0 seconds once, averaged 8.1 ms of local handling per click, and performed no repeated image uploads. The ten-view report occupied about 0.94 MB on disk; container peak memory was 243,638,272 bytes (about 232 MiB). This measures the offline report workload, not an AWS host or simultaneous live source collection.
 
 Source access check from the deployment host, isolated from production caches and Telegram:
 

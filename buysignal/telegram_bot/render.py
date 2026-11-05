@@ -75,37 +75,31 @@ TABLE_LABELS = {
 
 RATE_STATE_LABELS = {"no_change": "no change"}  # everything else already reads fine as-is
 
-# The command menu Telegram renders, and the same list as a message. Keep the two in step.
+# Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
-    {"command": "signal", "description": "Entry overview with interactive charts"},
-    {"command": "vix", "description": "VIX level"},
-    {"command": "fedrate", "description": "Fed rate trajectory (CME FedWatch)"},
-    {"command": "margin", "description": "FINRA margin debt (deleveraging)"},
-    {"command": "dip", "description": "SPY drawdown, selloff intensity and index changes"},
-    {"command": "sector", "description": "Leading industries earnings outlook"},
-    {"command": "trend", "description": "SPY long-term trend (advisory)"},
-    {"command": "credit", "description": "Corporate credit spreads (advisory)"},
-    {"command": "curve", "description": "10y-3m yield curve spread (advisory)"},
-    {"command": "whattobuy", "description": "Segment valuations: S&P 500 vs world small cap vs Europe"},
-    {"command": "refresh", "description": "Force a fresh fetch of all data (bypass cache)"},
-    {"command": "status", "description": "Runner uptime and health"},
-    {"command": "help", "description": "List available commands"},
+    {"command": "signal", "description": "Entry overview and chart buttons"},
+    {"command": "portfolio", "description": "Your ETF prices and recorded positions"},
+    {"command": "whattobuy", "description": "Compare segment valuations"},
+    {"command": "buy", "description": "Record a purchase: /buy 10 VUAA @ 151.25"},
+    {"command": "trades", "description": "Purchase journal and record IDs"},
+    {"command": "refresh", "description": "Fetch fresh data"},
+    {"command": "status", "description": "Data collection and bot health"},
+    {"command": "help", "description": "Commands and purchase examples"},
 ]
 
 HELP_TEXT = (
     "Commands:\n"
-    "/signal: entry overview with chart buttons\n"
-    "/vix: VIX level\n"
-    "/fedrate: Fed rate trajectory\n"
-    "/margin: FINRA margin debt\n"
-    "/dip: SPY drawdown and selloff intensity\n"
-    "/sector: leading industries earnings outlook\n"
-    "/trend: SPY long-term trend (advisory)\n"
-    "/credit: corporate credit spreads (advisory)\n"
-    "/curve: 10y-3m yield curve spread (advisory)\n"
-    "/whattobuy: segment valuations (S&P 500 / world small cap / Europe)\n"
-    "/refresh: force a fresh fetch of all data (bypass cache)\n"
-    "/status: runner uptime and health"
+    "/signal — entry overview and charts\n"
+    "/portfolio — your ETF prices and positions\n"
+    "/whattobuy — segment valuations\n"
+    "/trades — purchase history\n"
+    "/refresh — fresh data\n"
+    "/status — bot and data health\n\n"
+    "Record a purchase:\n"
+    "bought 10 VUAA @ 151.25\n"
+    "or /buy 10 VUAA @ 151.25 USD on 2026-11-05 fees 1.00\n"
+    "No date = today. /voidtrade ID corrects a record.\n\n"
+    "Shortcuts: /holdings /vix /dip /fedrate /margin /sector /curve /credit /trend"
 )
 
 _STATUS_ERROR_WIDTH = 40  # a stack-trace-shaped error still has to fit a phone screen
