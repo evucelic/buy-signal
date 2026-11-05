@@ -14,6 +14,8 @@ from datetime import date, datetime, timezone
 
 from buysignal import config
 from buysignal.resources import force_refreshes
+from buysignal.portfolio import commands as portfolio_commands, quotes as personal_quotes, presentation as personal_presentation
+from buysignal.portfolio.journal import PortfolioStore
 from buysignal.analysis import chart, opportunity, signal_charts
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
@@ -62,6 +64,16 @@ class _State:
 _state = _State(start_time=datetime.now(timezone.utc))
 _lock = threading.Lock()
 _snapshot_store = SnapshotStore()
+_portfolio_store = None
+_portfolio_lock = threading.Lock()
+
+
+def _get_portfolio_store():
+    global _portfolio_store
+    with _portfolio_lock:
+        if _portfolio_store is None:
+            _portfolio_store = PortfolioStore()
+        return _portfolio_store
 
 
 def _cache_ages() -> list[tuple[str, datetime | None]]:
@@ -271,6 +283,13 @@ def _refresh() -> Report:
 
 def handle_message(text: str) -> str | Report | None:
     text = text.strip()
+    if text.lower().startswith(('/buy', 'bought ', 'buy ', '/voidtrade', '/trades', '/holdings')):
+        reply = portfolio_commands.handle(text, _get_portfolio_store(), source_key=transport.current_message_key())
+        if reply is not None:
+            return reply
+    if text == '/portfolio':
+        store = _get_portfolio_store()
+        return personal_presentation.portfolio_message(personal_quotes.all_quotes(store), store.holdings())
     # VIX/market_dip refetch on every call; prefer the cache while the market's closed (e.g.
     # weekends) instead of paying the fetch + anti-bot jitter delay for data that can't have moved.
     open_now = market_open()

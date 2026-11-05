@@ -43,8 +43,11 @@ def _api() -> str:
 # A report is sent as a batch: command replies and scheduled pushes cannot interleave.
 _delivery_lock = threading.RLock()
 _delivery_state = threading.local()
+_message_context = threading.local()
 
 
+def current_message_key():
+    return getattr(_message_context, "source_key", None)
 _last_delivery_at = 0.0
 
 
@@ -325,13 +328,18 @@ def poll_forever(handle_message: Callable[[str], str | Report | None], handle_ca
                 if not message or str(message["chat"]["id"]) != str(chat_id()):
                     continue
                 text = message.get('text', '').strip()
-                if text.split(' ', 1)[0] in {'/signal', '/refresh', '/whattobuy', '/vix', '/dip', '/trend', '/fedrate', '/margin', '/sector', '/curve', '/credit'}:
+                message_key = f"telegram:{message['chat']['id']}:{message['message_id']}" if message.get('message_id') is not None else None
+                if text.split(' ', 1)[0] in {'/signal', '/refresh', '/whattobuy', '/vix', '/dip', '/trend', '/fedrate', '/margin', '/sector', '/curve', '/credit', '/portfolio'}:
                     if worker is None:
                         worker = _CommandWorker(handle_message)
                     if not worker.submit(text):
                         notice('A command is already running; the current report buttons remain available.')
                 else:
-                    _deliver(handle_message(text))
+                    _message_context.source_key = message_key
+                    try:
+                        _deliver(handle_message(text))
+                    finally:
+                        _message_context.source_key = None
         except (KeyboardInterrupt, SystemExit):
             if worker:
                 worker.close()
