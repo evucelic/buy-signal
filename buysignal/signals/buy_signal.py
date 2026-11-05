@@ -38,7 +38,7 @@ class BuySignal:
 
 
 def _alert_state(required: list[SubSignal], missing_signals: list[str]) -> tuple[str, str]:
-    if missing_signals:
+    if missing_signals or any(signal.metrics.get("stale") for signal in required):
         return "incomplete", "INCOMPLETE: required evidence is unavailable; no complete entry assessment."
     if not required or any(not signal.passes for signal in required):
         return "none", "NONE: one or more required signals failed."

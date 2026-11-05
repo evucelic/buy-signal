@@ -90,13 +90,15 @@ def overview(result: BuySignal, caches, now: datetime):
     lines = [f"{icon} <b>{esc(label)}</b> · {result.passing_count}/{result.required_count}", f"Sent {stamp(now)}", ""]
     for key, _ in SECTIONS:
         signal = by_name.get(key)
-        mark = "·" if signal and signal.advisory else "✅" if signal and signal.passes else "▫️" if signal else "❔"
+        mark = "⚠️" if signal and signal.metrics.get("stale") else "·" if signal and signal.advisory else "✅" if signal and signal.passes else "▫️" if signal else "❔"
         value = numeric_line(signal) if signal else "unknown"
         lines.append(f"{mark} <b>{SIGNAL_META[key][1]}</b>: {esc(value)}")
     market = by_name.get("market_dip")
     if market:
         m = market.metrics
-        if m.get("refresh_failed"):
+        if m.get("stale"):
+            lines.append(f"⚠️ Prices cached through {esc(market.observed_at or 'unknown')}; expected {esc(m.get('expected_session') or 'latest session')}.")
+        elif m.get("refresh_failed"):
             lines.append("⚠️ Price refresh failed; showing cached observations.")
         if market.table:
             lines.extend(["", "<pre>" + esc(market.table) + "</pre>"])
@@ -110,7 +112,8 @@ def overview(result: BuySignal, caches, now: datetime):
     for key, label in SECTIONS:
         signal = by_name.get(key)
         observation = signal.observed_at if signal else None
-        rows.append([_SHORT_LABELS.get(key, label), "FY+1" if key == 'sector' and signal else stamp(observation, short=True), stamp(cache_map.get(key), short=True)])
+        refreshed = signal.metrics.get('retrieved_at') if signal and key == 'market_dip' else None
+        rows.append([_SHORT_LABELS.get(key, label), "FY+1" if key == 'sector' and signal else stamp(observation, short=True), stamp(refreshed or cache_map.get(key), short=True)])
     lines.extend(["", "<b>Data / last successful refresh</b>", "<pre>" + esc(format_table(["", "Data", "Refreshed"], rows)) + "</pre>",
                   "Refresh times: " + esc(pd.Timestamp(now).tz_convert(ZoneInfo(os.environ.get('TELEGRAM_TIMEZONE', 'Europe/Zagreb'))).strftime('%Z')),
                   "FINRA: monthly, published with a lag. EPS: snapshot of forecasts."])

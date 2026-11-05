@@ -184,7 +184,10 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
         if delivered:
             with _lock:
                 _state.alerting = True
-    elif was_alerting and not alerting:
+    elif was_alerting and not alerting and not (
+        any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
+        or set(result.missing_signals) & {'vix', 'market_dip'}
+    ):
         if transport.send_report(_signal_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n")):
             with _lock:
                 _state.alerting = False

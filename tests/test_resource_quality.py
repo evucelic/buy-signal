@@ -15,6 +15,11 @@ from buysignal.signals import sector_signal
 from buysignal.signals.base import SubSignal
 
 
+@pytest.fixture(autouse=True)
+def source_clock(monkeypatch):
+    monkeypatch.setattr(entry, '_utc_now', lambda: pd.Timestamp('2026-10-30 21:00Z'))
+
+
 def frame(values):
     return pd.DataFrame({name: values for name in ("SPY", "NASDAQ", "DOW")}, index=pd.bdate_range(end="2026-10-30", periods=len(values)))
 
@@ -24,10 +29,10 @@ def test_incremental_prices_rebase_the_retained_prefix_after_a_dividend():
     new = old.tail(5).copy() * .98
     # Today's price move is not an adjustment anchor.
     new.iloc[-1] = old.iloc[-1] * 1.05
-    merged = entry._merge_adjusted(old, new)
+    merged = entry._merge_series(old.SPY, new.SPY)
     assert len(merged) == 250
-    assert merged.SPY.iloc[0] == pytest.approx(old.SPY.iloc[0] * .98)
-    assert merged.SPY.iloc[-1] == pytest.approx(old.SPY.iloc[-1] * 1.05)
+    assert merged.iloc[0] == pytest.approx(old.SPY.iloc[0] * .98)
+    assert merged.iloc[-1] == pytest.approx(old.SPY.iloc[-1] * 1.05)
 
 
 def test_nonuniform_price_revision_requires_full_download():
@@ -35,7 +40,7 @@ def test_nonuniform_price_revision_requires_full_download():
     new = old.tail(5).copy()
     new.iloc[0] *= .98
     with pytest.raises(ValueError, match="Nonuniform"):
-        entry._merge_adjusted(old, new)
+        entry._merge_series(old.SPY, new.SPY)
 
 
 def test_recent_valid_daily_history_skips_a_repeat_network_request(tmp_path):

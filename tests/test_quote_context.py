@@ -5,8 +5,14 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from buysignal.collectors import entry, vix
+
+
+@pytest.fixture(autouse=True)
+def source_clock(monkeypatch):
+    monkeypatch.setattr(entry, '_utc_now', lambda: pd.Timestamp('2026-11-03 21:00Z'))
 
 
 def test_optional_european_calendar_does_not_invalidate_us_observations(tmp_path):
