@@ -6,3 +6,4 @@ data/*.log*
 idea.md
 .env
 data/reports/
+data/*.sqlite3*

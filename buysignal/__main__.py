@@ -32,4 +32,5 @@ if __name__ == "__main__":
     try:
         run_forever(on_tick=telegram_bot.handle_tick)
     finally:
+        telegram_bot.stop()
         telegram_bot.notify_stopped()
