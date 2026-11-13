@@ -226,9 +226,26 @@ def test_opportunity_message_is_rendered_from_the_opportunity_alone(make_opportu
     message = render.opportunity_message(make_opportunity(), easing_obs_needed=1)
 
     assert "What to buy" in message
-    assert "20.0" in message
-    assert "Small-cap band: candidate" in message
-    assert "FedWatch: 1/3 easing (ease → no change → no change, rate support: yes, need ≥1)" in message
+    assert "20.0" in message and "-25%" in message
+    assert "Fed rate at the next meeting: lower (78%)" in message
+    # Jargon and internal labels stay out of the message.
+    for term in ("Small-cap band", "rate support", "relZ", "z-score"):
+        assert term not in message
+
+
+def test_opportunity_message_leads_with_the_owners_etfs_and_their_own_dips(make_opportunity):
+    opp = make_opportunity()
+    opp.segments[0].etf, opp.segments[2].etf = "VUAA", "VWCG"
+    opp.segments[2].fwd_z = 1.4
+    dips = {"VUAA": {"drawdown": -.031}, "VWCG": {"drawdown": 0., "refresh_failed": True}}
+    message = render.opportunity_message(opp, 1, dips)
+    table = message.split("<pre>")[1].split("</pre>")[0].splitlines()
+    assert [line.split()[0] for line in table[1:]] == ["VUAA", "VWCG", "Small"]
+    assert table[1].split() == ["VUAA", "20.0", "—", "-3.1%"]
+    assert table[2].split() == ["VWCG", "16.0", "-20%", "at", "high"]
+    assert max(map(len, table)) <= 33
+    assert "Against its own past: VWCG cheap" in message
+    assert "Dip from cached prices: VWCG" in message
 
 
 def test_opportunity_message_names_the_buy_signal_context(make_opportunity):

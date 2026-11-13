@@ -37,6 +37,7 @@ class SegmentView:
     ratio_vs_spx: float | None = None   # fwd_pe / US large cap fwd_pe
     discount_vs_spx: float | None = None  # 1 - ratio_vs_spx
     rel_z: float | None = None          # cheapness z of log(fwd ratio vs US large caps)
+    etf: str | None = None              # the owner's ETF this index stands in for, if any
 
 
 @dataclass
@@ -158,7 +159,7 @@ def analyze() -> Opportunity:
 
     segments = []
     for name, spec in OPPORTUNITY_SEGMENTS.items():
-        view = SegmentView(name, spec["label"])
+        view = SegmentView(name, spec["label"], etf=spec.get("etf"))
         rows = history[history["segment"] == name]
         if not rows.empty:
             latest = rows.iloc[-1]
@@ -187,8 +188,7 @@ def analyze() -> Opportunity:
     obs = len(_monthly_series(history, "sp500"))
     if obs < VALUATION_Z_MIN_OBS:
         notes.append(
-            f"z-scores need {VALUATION_Z_MIN_OBS} monthly MSCI observations, have {obs} "
-            "(shown as n/a until enough history accumulates)"
+            f"Own-history comparison needs {VALUATION_Z_MIN_OBS} monthly readings; {obs} so far"
         )
 
     rate = _rate_view()

@@ -22,8 +22,8 @@ import logging
 from buysignal.analysis import chart, opportunity, signal_charts
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
-from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, trend_signal, vix_signal, yield_curve_signal
-from buysignal.signals.buy_signal import BuySignal, compute_signal
+from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
+from buysignal.signals.buy_signal import BuySignal, assess, compute_signal
 from buysignal.telegram_bot import render, transport, views, interactive
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.telegram_bot.messages import Report, ReportMessage
@@ -115,10 +115,10 @@ def _deliver_preclose(sessions, now):
         with _lock:
             cached = _state.last_result
         if cached is None:
-            result = BuySignal(0, 'incomplete', 0, [], missing_signals=['vix','fed_rate','margin_debt','market_dip','sector'])
+            result = assess([], [*buy_signal.REQUIRED_SIGNALS, *buy_signal.CONTEXT_SIGNALS])
         else:
             from dataclasses import replace
-            result = replace(cached, state='incomplete')
+            result = replace(cached, state=buy_signal.INCOMPLETE)
         prefix = '⚠️ Global assessment refresh failed; showing available cached data.\n\n'
     delivered = _deliver_report(result, prefix=prefix, now=now, preclose=sessions)
     if delivered:
@@ -164,7 +164,7 @@ def is_alerting(result: BuySignal) -> bool:
     by_name = {s.name: s for s in result.subsignals}
     vix = by_name.get("vix")
     dip = by_name.get("market_dip")
-    return (vix is not None and vix.passes) or (dip is not None and dip.passes) or result.state in ("soft", "strong")
+    return (vix is not None and vix.passes) or (dip is not None and dip.passes) or result.state == "strong"
 
 
 def trigger_reasons(result: BuySignal) -> str:
@@ -176,8 +176,8 @@ def trigger_reasons(result: BuySignal) -> str:
     dip = by_name.get("market_dip")
     if dip is not None and dip.passes:
         reasons.append("SPY dip")
-    if result.state in ("soft", "strong"):
-        reasons.append(f"checklist {result.state}")
+    if result.state == "strong":
+        reasons.append("checklist strong")
     return ", ".join(reasons)
 
 
@@ -251,7 +251,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             if not due:
                 delivered = _deliver_report(result, f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n", now=now)
             else:
-                # The full report already carries this tick's entry conditions.
+                # The full report already carries this tick's read.
                 delivered = _state.last_report_date == now_ct.date()
             if delivered:
                 with _lock:
@@ -272,9 +272,7 @@ def _single_signal(score_fn) -> str | Report:
     except Exception as exc:
         return f"⚠️ failed to compute ({render.esc(type(exc).__name__)}: {render.esc(str(exc))})"
     now = datetime.now(timezone.utc)
-    if s.name == 'trend':
-        return f"<b>SPY trend</b> · {render.esc(s.detail.replace(' | ', ' · '))}\nData {views.stamp(s.observed_at)}\nSent {views.stamp(now)}"
-    result = BuySignal(0, 'none', int(s.passes), [s])
+    result = assess([s])
     store = _snapshot_store
     try:
         token = store.save(result, now)
@@ -325,11 +323,17 @@ def _whattobuy() -> str:
         last_result = _state.last_result
     opp.buy_signal_state = last_result.state if last_result is not None else None
     try:
-        transport.send_photo(chart.render_chart(opp), "Segment valuations")
+        # Each ETF's own distance below its high; a failed listing is simply left blank.
+        dips = personal_quotes.dips(_get_portfolio_store())
+    except Exception:
+        log.exception('ETF dip context unavailable')
+        dips = {}
+    try:
+        transport.send_photo(chart.render_chart(opp, dips=dips), "Forward P/E by market")
     except Exception as exc:
         opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
 
-    reply = render.opportunity_message(opp, config.SMALL_CAP_EASING_OBS)
+    reply = render.opportunity_message(opp, config.SMALL_CAP_EASING_OBS, dips)
     return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
 
 
@@ -356,10 +360,9 @@ def handle_message(text: str) -> str | Report | None:
         return _signal_report(compute_signal(allow_refresh=open_now))
     if text == "/vix":
         return _single_signal(lambda: vix_signal.score(allow_refresh=open_now))
-    if text == "/dip":
+    if text in ("/dip", "/trend"):
+        # Trend and move size now sit in each index's own panel.
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
-    if text == "/trend":
-        return _single_signal(lambda: trend_signal.from_market(market_signal.score(allow_refresh=open_now)))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])
     if text == "/whattobuy":

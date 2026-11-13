@@ -1,4 +1,4 @@
-"""Decide WHEN to act, then compute and report the buy signal.
+"""Decide WHEN to act, then compute and report the entry checklist.
 
 One tick() per call: hourly, the highest frequency any signal needs (VIX and market_dip
 refresh every tick). `python -m buysignal.schedule.runner` does a single tick, for an external
@@ -37,7 +37,7 @@ from buysignal.schedule.market_hours import (
     stamp,
     vix_active_window,
 )
-from buysignal.signals.buy_signal import compute_signal
+from buysignal.signals.buy_signal import REQUIRED_SIGNALS, compute_signal
 
 log = logging.getLogger(__name__)
 
@@ -83,11 +83,12 @@ class MacroCollector:
 
 def _macro_collectors() -> list[MacroCollector]:
     """Collectors in run order, cheapest first, so a browser that won't start costs only the two that need it."""
-    from buysignal.collectors import credit, fed_rate, margin_debt, sectors, valuations, yield_curve
+    from buysignal.collectors import credit, fed_rate, margin_debt, sectors, valuations, vix_history, yield_curve
 
     return [
-        MacroCollector("credit", credit.update_credit_data),
+        MacroCollector("credit", credit.update_credit_data, credit.demands_refresh),
         MacroCollector("yield_curve", yield_curve.update_yield_curve_data, yield_curve.demands_refresh),
+        MacroCollector("vix_history", vix_history.update_vix_history),
         MacroCollector("sector", sectors.update_sector_data, sectors.demands_refresh),
         MacroCollector(
             "margin_debt",
@@ -205,16 +206,12 @@ def tick(now: datetime | None = None):
 def report(result, session: str, now: datetime | None = None) -> None:
     now = now_et(now)
     log.info("[%s] session=%s", stamp(now), session)
-    log.info(
-        "  Alert: %s  (passing %d/%d; score %+.2f)",
-        result.state.upper(), result.passing_count, result.required_count, result.score,
-    )
-    log.info("  Rule: %s", result.detail)
+    log.info("  Checklist: %s  (%s)", result.label, result.detail)
     if result.missing_signals:
         log.info("  Missing: %s", ", ".join(result.missing_signals))
     for s in result.subsignals:
-        status = "PASS" if s.passes else "FAIL"
-        log.info("    - %-12s %-4s %-11s %s", s.name, status, s.state, s.detail)
+        status = result.status(s.name) if s.name in REQUIRED_SIGNALS else "context"
+        log.info("    - %-12s %-10s %-14s %s", s.name, status, s.state, s.detail)
 
 
 def _seconds_until_next_boundary(interval_sec: float) -> float:

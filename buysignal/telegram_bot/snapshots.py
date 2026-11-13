@@ -1,6 +1,7 @@
 """Bounded, atomic JSON snapshots keep buttons tied to the original report after restart."""
 from __future__ import annotations
 
+from dataclasses import fields
 from datetime import datetime
 from collections import OrderedDict
 from copy import deepcopy
@@ -18,7 +19,7 @@ import pandas as pd
 
 from buysignal import config
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal
+from buysignal.signals.buy_signal import BuySignal, assess
 
 _LOCK = threading.RLock()
 MAX_SNAPSHOTS = 32
@@ -99,7 +100,9 @@ class SnapshotStore:
                     if column in frame:
                         frame[column] = pd.to_datetime(frame[column])
                 values['history'] = frame
-            result[values['name']] = SubSignal(**values)
+            # Snapshots written by older versions may carry fields that no longer exist.
+            known = {f.name for f in fields(SubSignal)}
+            result[values['name']] = SubSignal(**{k: v for k, v in values.items() if k in known})
         return result
 
     def _remove(self, token):
@@ -179,7 +182,7 @@ class SnapshotStore:
         # Legacy snapshots migrate once. No source download is part of this path.
         source = self.load(token)
         signals = list(self.signals(source).values())
-        self.prepare(token, BuySignal(0, 'none', 0, signals), source['sent_at'])
+        self.prepare(token, assess(signals), source['sent_at'])
         return self.load_views(token)
 
     def chart_bytes(self, token, key):

@@ -82,3 +82,50 @@ def all_quotes(store, *, now=None, refresh=True):
             log.warning('Personal quote cache unavailable for %s (%s)', instrument.symbol, type(exc).__name__)
             result.append({'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None})
     return result
+
+
+_DIP_TTL_SEC = 3600  # daily closes: an hour-old reading is as current as the data
+
+
+def _fetch_dip(instrument, now):
+    """This listing's distance below its own 3-month high, in its trading currency."""
+    from buysignal.signals.market_signal import analyze_series
+    frame = yf.Ticker(instrument.yahoo).history(period='1y', interval='1d', auto_adjust=True, timeout=YAHOO_TIMEOUT_SEC)
+    if frame is None or frame.empty or 'Close' not in frame:
+        raise ValueError('No daily price history')
+    closes = pd.to_numeric(frame.Close, errors='coerce').dropna()
+    index = pd.to_datetime(closes.index)
+    closes.index = pd.DatetimeIndex(index.tz_localize(None) if index.tz is not None else index).normalize()
+    closes = closes[~closes.index.duplicated(keep='last')].sort_index()
+    if closes.index[-1] > now.tz_localize(None).normalize() + pd.Timedelta(days=1):
+        raise ValueError('Future price observation')
+    facts = analyze_series(closes, instrument.symbol)
+    return {'symbol': instrument.symbol, 'drawdown': facts['drawdown'], 'monthly': facts['monthly'],
+            'observed_at': facts['observed_at'], 'peak_date': facts['peak_date'], 'retrieved_at': now.isoformat()}
+
+
+def dips(store, *, now=None, refresh=True):
+    """{symbol: dip facts} for the listings whose history is available; a failure omits only that one."""
+    now = pd.Timestamp(now or datetime.now(timezone.utc))
+    now = now.tz_localize('UTC') if now.tzinfo is None else now.tz_convert('UTC')
+    result = {}
+    for instrument in INSTRUMENTS:
+        key = instrument.symbol + ':dip'
+        cached = None
+        try:
+            with _LOCK:
+                cached = store.quote(key)
+                age = (now - pd.Timestamp(cached['retrieved_at'])).total_seconds() if cached else None
+                if cached and (not refresh or 0 <= age < _DIP_TTL_SEC):
+                    result[instrument.symbol] = cached
+                    continue
+                if not refresh:
+                    continue
+                fresh = _fetch_dip(instrument, now)
+                store.save_quote(key, fresh)
+                result[instrument.symbol] = fresh
+        except Exception as exc:
+            log.warning('Dip history failed for %s (%s)', instrument.yahoo, type(exc).__name__)
+            if cached:
+                result[instrument.symbol] = {**cached, 'refresh_failed': True}
+    return result

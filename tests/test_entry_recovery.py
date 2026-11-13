@@ -8,10 +8,9 @@ import pytest
 
 from buysignal.collectors import entry
 from buysignal.signals import market_signal
-from buysignal.signals.buy_signal import _alert_state
 from buysignal.signals.base import SubSignal
 from buysignal.telegram_bot import render
-from buysignal.signals.buy_signal import BuySignal
+from buysignal.signals.buy_signal import BuySignal, assess
 
 NOW = pd.Timestamp('2026-11-05 02:02Z')  # Nov 4, 20:02 Chicago; user's end-of-day case
 
@@ -66,7 +65,7 @@ def test_nasdaq_outage_does_not_hide_fresh_spy_or_erase_nasdaq_cache(tmp_path):
     assert signal.passes and not signal.metrics['stale']
     assert signal.metrics['index_changes']['NASDAQ']['date']=='2026-11-03'
     assert result.NASDAQ.dropna().iloc[-1] == 93.
-    assert 'NASDAQ' in signal.table
+    assert signal.metrics['index_facts']['NASDAQ']['price'] == 93.
 
 
 def test_total_provider_failure_keeps_cached_numbers_and_does_not_pass_stale_gate(tmp_path):
@@ -80,10 +79,10 @@ def test_total_provider_failure_keeps_cached_numbers_and_does_not_pass_stale_gat
     with patch.object(market_signal,'get_entry_history',return_value=result):
         signal=market_signal.score()
     assert signal.score==pytest.approx(-.07) and not signal.passes
-    assert _alert_state([signal],[])[0]=='incomplete'
-    text=render.signal_report(BuySignal(0,'incomplete',0,[signal]),[],NOW.to_pydatetime()).messages[0].text
+    assert assess([signal]).state=='incomplete'
+    text=render.signal_report(assess([signal]),[],NOW.to_pydatetime()).messages[0].text
     assert '-7.0%' in text and 'Prices cached through 2026-11-03' in text
-    assert 'SPY Drawdown</b>: unknown' not in text and 'NASDAQ' in text
+    assert 'SPY vs high' in text and 'line -5%' in text and 'Nasdaq' in text
 
 
 def test_retry_cooldown_prevents_multiple_full_attempts_during_outage(tmp_path):
@@ -111,6 +110,6 @@ def test_unknown_prices_do_not_clear_an_existing_watch(monkeypatch):
     report=patch.object(app.transport,'send_report')
     with report as sent:
         stale=SubSignal('market_dip',-.07,'flat','',metrics={'stale':True})
-        app.handle_tick(BuySignal(0,'incomplete',0,[stale]),None,NOW.to_pydatetime())
+        app.handle_tick(assess([stale]),None,NOW.to_pydatetime())
     sent.assert_not_called()
     assert app._state.alerting

@@ -21,10 +21,10 @@ ET = ZoneInfo("America/New_York")
 
 def _fake_result(vix_passes):
     from buysignal.signals.base import SubSignal
-    from buysignal.signals.buy_signal import BuySignal
+    from buysignal.signals.buy_signal import BuySignal, assess
 
     subs = [SubSignal("vix", 20.0, "none", "x", passes=vix_passes)]
-    return BuySignal(score=0, state="none", passing_count=int(vix_passes), subsignals=subs)
+    return assess(subs)
 
 
 def test_tick_returns_none_and_skips_compute_when_closed():
@@ -49,9 +49,9 @@ def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
     pre-market included: the five macro caches then sat frozen until someone ran /refresh.
     """
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    from buysignal.signals.buy_signal import BuySignal
+    from buysignal.signals.buy_signal import BuySignal, assess
 
-    vixless = BuySignal(score=0, state="none", passing_count=0, subsignals=[])
+    vixless = assess([])
     with patch("buysignal.schedule.runner.compute_signal", return_value=vixless), patch(
         "buysignal.schedule.runner._any_due", return_value=False
     ), patch("buysignal.schedule.runner.refresh_macro", return_value=[]) as mock_refresh:
@@ -277,6 +277,7 @@ def test_macro_collectors_covers_every_macro_cache_cheapest_first():
     assert [c.name for c in runner._macro_collectors()] == [
         "credit",
         "yield_curve",
+        "vix_history",
         "sector",
         "margin_debt",
         "fed_rate",

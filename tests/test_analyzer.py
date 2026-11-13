@@ -225,7 +225,7 @@ def test_analyze_missing_valuations_cache_degrades_with_note():
 def test_analyze_notes_insufficient_z_history():
     opp = _analyze_with(_one_day_history())
     assert opp.history_obs == 1
-    assert any("z-scores" in n and "monthly" in n for n in opp.notes)
+    assert any("Own-history comparison" in n and "monthly" in n for n in opp.notes)
     assert all(s.fwd_z is None for s in opp.segments)
 
 
@@ -244,7 +244,7 @@ def test_analyze_z_scores_appear_with_enough_history(monkeypatch):
     assert small.fwd_z == pytest.approx(1.0)  # 14 vs mean 15, std 1 -> cheaper than norm
     assert small.rel_z is not None
     assert small.rel_z > 0
-    assert not any("z-scores" in n for n in opp.notes)
+    assert not any("Own-history comparison" in n for n in opp.notes)
 
 
 def test_analyze_repeated_daily_snapshots_of_same_month_count_once(monkeypatch):

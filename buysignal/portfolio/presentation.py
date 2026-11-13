@@ -58,6 +58,9 @@ def holdings_block(holdings, quotes=()):
         if quote and quote.get('price') is not None:
             value = Decimal(str(quote['price'])) * item['quantity']
             detail += f' · value {value:,.2f} {instrument.currency}'
+            if item['cost'] > 0:
+                # Against fee-inclusive cost, in the listing's own currency.
+                detail += f' · {float(value / item["cost"] - 1):+.1%}'
         lines.append(detail)
         totals[instrument.currency] = totals.get(instrument.currency, Decimal(0)) + item['cost']
     lines.append('Invested, fees included: ' + ' / '.join(f'{value:,.2f} {currency}' for currency, value in totals.items()))

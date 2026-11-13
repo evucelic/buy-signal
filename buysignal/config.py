@@ -10,12 +10,13 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 
 VIX_CSV = DATA_DIR / "vixdata.csv"
+VIX_HISTORY_CSV = DATA_DIR / "vixhistory.csv"  # long daily closes, context only
 FEDWATCH_CSV = DATA_DIR / "fedwatch.csv"
 MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 MARKET_DAILY_CSV = DATA_DIR / "marketdaily.csv"
-CREDIT_CSV = DATA_DIR / "credit.csv"
+CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread; the older credit.csv holds a different series and is left alone
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
 CHROMEDRIVER_LOG = DATA_DIR / "chromedriver.log"  # latest Selenium session only, for "Chrome instance exited"
@@ -25,6 +26,7 @@ REFRESH_JOURNAL_JSON = DATA_DIR / "buysignal.schedule.journal.json"  # how each 
 VIX_TICKER = "^VIX"
 VIX_INTERVAL = "1h"
 VIX_LOOKBACK_DAYS = 729   # Yahoo caps 1h intraday history at ~730 days
+VIX_HISTORY_SERIES = "VIXCLS"  # Cboe daily close via FRED, from 1990
 
 # VIX thresholds (#1): higher VIX = more fear = potential buying dip
 VIX_STRONG = 30.0      # strong "fear" signal
@@ -94,7 +96,7 @@ SECTOR_MIN_ESTIMATE_COVERAGE = 0.60  # covered weight / sampled top-constituent 
 SECTOR_MAX_CACHE_AGE_HOURS = 96
 SECTOR_TOP_CONSTITUENTS = 8   # top-weighted companies per industry sampled for earnings growth
 
-# --- Yield curve (#7): 10y-3m Treasury spread, advisory-only recession context ---
+# Yield curve (#7): 10y-3m Treasury spread, context only
 FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # no API key needed
 YIELD_CURVE_SERIES = "T10Y3M"
 YIELD_CURVE_STEEP = 1.0            # bucket avg spread (pp) at/above this = supportive regime
@@ -112,9 +114,14 @@ YIELD_CURVE_BUCKET_DAYS = 21
 # fires in 44 years, still landing a median 26 days before each sustained episode began.
 POLICY_SPREAD_NEG_BUCKETS = 2
 
-# --- Credit market context: advisory; never a sixth checklist condition --------
-CREDIT_SERIES = "BAMLH0A0HYM2"      # ICE BofA US high-yield option-adjusted spread, percentage points
+# Credit context, never a checklist condition
+# Moody's Baa corporate yield minus the 10-year Treasury, daily since 1986. The
+# high-yield series used before has only three years on FRED, too short to judge "stressed".
+CREDIT_SERIES = "BAA10Y"
 CREDIT_CHANGE_SESSIONS = (5, 21)
+CREDIT_STRESS_PERCENTILE = 0.80    # stressed = at or above this share of its own recent readings
+CREDIT_STRESS_WINDOW = 2520        # about 10 years of sessions
+CREDIT_STRESS_MIN_OBS = 1260       # fewer than about 5 years cannot define "stressed"
 CREDIT_ELEVATED_SPREAD = 5.0       # descriptive threshold, not an optimized entry rule
 CREDIT_CHANGE_NOISE_BP = 10.0     # smaller monthly moves described as broadly stable
 CREDIT_MAX_OBSERVATION_AGE_DAYS = 7  # calendar-day tolerance for weekends/holidays
@@ -129,6 +136,7 @@ OPPORTUNITY_SEGMENTS = {
     "sp500": {
         "label": "MSCI USA",
         "msci_code": "984000",
+        "etf": "VUAA",  # S&P 500; MSCI USA is the closest index MSCI publishes ratios for
     },
     "world_small": {
         "label": "World Small Cap",
@@ -137,10 +145,12 @@ OPPORTUNITY_SEGMENTS = {
     "world_small_value": {
         "label": "World SC Value",
         "msci_code": "139549",  # MSCI World Small Cap Value Weighted, closest index to AVWS
+        "etf": "AVWS",
     },
     "europe": {
         "label": "Europe",
         "msci_code": "990500",
+        "etf": "VWCG",  # FTSE Developed Europe; MSCI Europe is the valuation proxy
     },
 }
 MSCI_INDEX_URL = "https://www.msci.com/indexes/index/{code}"

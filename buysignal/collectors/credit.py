@@ -1,4 +1,4 @@
-"""Daily corporate-credit spread context from FRED, retained across rolling source windows."""
+"""Daily corporate-credit spread from FRED, shown as context: Baa yield minus the 10-year Treasury."""
 
 from pathlib import Path
 import logging
@@ -49,3 +49,8 @@ def update_credit_data(filepath: Path | str = CREDIT_CSV) -> str | None:
     except (ValueError, KeyError, TypeError) as exc:
         return f"Invalid credit snapshot: {exc}"
     return None
+
+
+def demands_refresh(filepath: Path | str = CREDIT_CSV) -> bool:
+    """Fetch as soon as the file is missing: the context row is blank without it."""
+    return not Path(filepath).exists()

@@ -28,13 +28,23 @@ def score() -> SubSignal:
         f"{MARGIN_DELEVERAGE_MONTHS}mo (latest {debt.iloc[-1]:,.0f}, {latest_change_pct:+.1%} m/m)"
     )
     tier, _ = data_freshness(history)
+    monthly = debt.pct_change().dropna()
+    yearly = float(debt.iloc[-1] / debt.iloc[-13] - 1) if len(debt) > 12 else None
+    falling_months = 0
+    for value in reversed(monthly.tolist()):
+        if value >= 0:
+            break
+        falling_months += 1
+    # How often a monthly decline has occurred: the rule's own base frequency.
+    falling_share = float((monthly < 0).mean()) if len(monthly) >= 24 else None
     flag = _TIER_FLAG.get(tier)
     if flag:
         detail += f" | {flag}"
 
     return SubSignal(
         "margin_debt", latest_change_pct, state, detail, passes=deleveraging,
-        observed_at=str(history["month"].iloc[-1].date()), history=history.tail(36).copy(),
-        metrics={"latest": float(debt.iloc[-1]), "change": float(latest_change_pct), "freshness": tier},
-        footer="FINRA · USD millions · Monthly",
+        observed_at=str(history["month"].iloc[-1].date()), history=history.copy(),
+        metrics={"latest": float(debt.iloc[-1]), "change": float(latest_change_pct), "freshness": tier,
+                 "yearly": yearly, "falling_months": falling_months, "falling_share": falling_share,
+                 "since": str(history["month"].iloc[0].date())},
     )

@@ -53,5 +53,4 @@ def score() -> SubSignal:
     return SubSignal(
         "sector", growing / SECTOR_TOP_N, state, detail, passes=passes, history=df.copy(),
         metrics={"growing": growing, "sample_size": len(df), "qualified": int(qualified.sum()), "unknown": unknown},
-        footer=f"FY+1 · Estimate coverage ≥{SECTOR_MIN_ESTIMATE_COVERAGE:.0%} of sampled weight · Qualified {int(qualified.sum())}/{len(df)}",
     )

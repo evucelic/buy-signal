@@ -50,13 +50,13 @@ def test_delivery_retries_and_survives_restart_without_duplicate_ping(store):
     assert len(attempts)==2
 
 def test_preclose_combines_personal_quotes_and_global_overview_once(store,monkeypatch):
-    from buysignal.signals.buy_signal import BuySignal
+    from buysignal.signals.buy_signal import BuySignal, assess
     monkeypatch.setattr(app,'_portfolio_store',store)
     monkeypatch.setattr(app,'_utc_now',lambda:NOW)
     monkeypatch.setattr(app,'_signal_report',lambda result,heading='',prefix='': Report([ReportMessage(heading+prefix+'GLOBAL OVERVIEW')]))
     monkeypatch.setattr(app.personal_quotes,'all_quotes',lambda *a,**kw:[{'symbol':'VUAA','price':150.,'change':.01,'currency':'USD','interval':'5m','observed_at':'2026-11-05T15:25Z'}])
     sent=[]; monkeypatch.setattr(app.transport,'send_report',lambda report:sent.append(report) or True)
-    service=PrecloseService(store,lambda group,now:app._deliver_report(BuySignal(0,'none',0,[]),now=now,preclose=group))
+    service=PrecloseService(store,lambda group,now:app._deliver_report(assess([]),now=now,preclose=group))
     assert service.check(NOW)
     assert not service.check(NOW)
     assert len(sent)==1
@@ -65,14 +65,14 @@ def test_preclose_combines_personal_quotes_and_global_overview_once(store,monkey
     assert 'VUAA' in text and 'GLOBAL OVERVIEW' in text
 
 def test_regular_watch_during_preclose_window_covers_the_scheduled_ping(store,monkeypatch):
-    from buysignal.signals.buy_signal import BuySignal
+    from buysignal.signals.buy_signal import BuySignal, assess
     monkeypatch.setattr(app,'_portfolio_store',store)
     monkeypatch.setattr(app,'_personal_service',Mock())
     monkeypatch.setattr(app,'_utc_now',lambda:NOW)
     monkeypatch.setattr(app,'_signal_report',lambda *a: Report([ReportMessage('combined')]))
     monkeypatch.setattr(app.personal_quotes,'all_quotes',lambda *a,**kw:[])
     monkeypatch.setattr(app.transport,'send_report',lambda report:True)
-    assert app._deliver_report(BuySignal(0,'none',0,[]),'Watch trigger',now=NOW)
+    assert app._deliver_report(assess([]),'Watch trigger',now=NOW)
     assert not sessions.due(NOW,store)
 
 def test_personal_service_startup_failure_does_not_stop_existing_bot(monkeypatch):
