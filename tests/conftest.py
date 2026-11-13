@@ -8,33 +8,24 @@ that actually send need a token, and they set their own.
 import pytest
 
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal
+from dataclasses import replace
+
+from buysignal.signals.buy_signal import assess
 
 
 @pytest.fixture
 def make_subsignal():
-    def _make(
-        name, state="none", detail="", passes=False, table=None, score=0.0, advisory=False, footer=None
-    ):
-        return SubSignal(
-            name, score, state, detail, passes=passes, table=table, advisory=advisory, footer=footer
-        )
+    def _make(name, state="none", detail="", passes=False, score=0.0, advisory=False):
+        return SubSignal(name, score, state, detail, passes=passes, advisory=advisory)
 
     return _make
 
 
 @pytest.fixture
 def make_buy_signal():
-    def _make(subsignals, state="none", missing_signals=None):
-        required = [s for s in subsignals if not s.advisory]
-        passing = sum(1 for s in required if s.passes)
-        return BuySignal(
-            score=passing / len(required) if required else 0.0,
-            state=state,
-            passing_count=passing,
-            subsignals=subsignals,
-            missing_signals=missing_signals or [],
-        )
+    def _make(subsignals, state=None, missing_signals=None):
+        result = assess(subsignals, missing_signals or [])
+        return result if state is None else replace(result, state=state)
 
     return _make
 
@@ -65,6 +56,6 @@ def make_opportunity():
         )
         return az.Opportunity(segments=segments, rate=rate, small_cap_band="candidate",
                               verdict="small caps: valuation + rate conditions both met (candidate)",
-                              notes=["z-scores need 12 monthly MSCI observations, have 1"], history_obs=1)
+                              notes=["Own-history comparison needs 12 monthly readings; 1 so far"], history_obs=1)
 
     return _make

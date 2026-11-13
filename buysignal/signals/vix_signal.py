@@ -2,6 +2,8 @@
 
 import pandas as pd
 
+from buysignal.analysis.context import describe
+from buysignal.collectors.vix_history import with_long_history
 from buysignal.collectors.vix import _vix_session_is_current, daily_history, get_latest_vix, load_latest_cached_vix, vix_change_pct
 from buysignal.config import VIX_CSV, VIX_OPTIMISTIC, VIX_SOFT, VIX_STRONG
 from buysignal.signals.base import NONE, SOFT, STRONG, SubSignal
@@ -44,7 +46,10 @@ def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
     try:
         cached = daily_history()
         if not cached.empty and abs(float(cached.vix.iloc[-1]) - vix) < 0.01:
-            history = cached.tail(252).copy()
+            # The rule reads the hourly cache above; decades of daily closes only give it a scale.
+            history = with_long_history(cached)
+            metrics.update(describe(history.vix, vix, history.date))
+            metrics["rule_share"] = float((history.vix >= VIX_SOFT).mean())
             observed = cached.attrs.get("observed_at", str(cached.date.iloc[-1].date()))
             use_highs = "high" in cached and len(cached) >= 20 and cached.high.tail(20).notna().all()
             peak = float((cached.high if use_highs else cached.vix).tail(20).max())
@@ -58,5 +63,4 @@ def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
     return SubSignal(
         "vix", vix, state, detail, passes=passes, observed_at=observed,
         metrics=metrics, history=history,
-        footer=f"Rule ≥{VIX_SOFT:g} · High ≥{VIX_STRONG:g}",
     )

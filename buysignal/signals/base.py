@@ -13,14 +13,12 @@ STRONG = "strong"
 
 @dataclass
 class SubSignal:
-    name: str             # "vix", "fed_rate", "margin_debt", "sector"
+    name: str             # "vix", "fed_rate", "margin_debt", "market_dip", "sector", "credit", ...
     score: float          # signal-specific numeric diagnostic
     state: str            # free-form label, e.g. none/soft/strong (vix) or cutting/flat/hiking (fed)
-    detail: str           # human-readable reason
+    detail: str           # one-line account for the log
     passes: bool = False
-    table: str | None = None  # optional monospace-ready rendering of detail, for multi-row data
-    advisory: bool = False    # informational side signal: shown alongside, never gates the checklist
-    footer: str | None = None # optional call-out rendered under the table
+    advisory: bool = False    # context: shown beside the checklist, never one of its conditions
     observed_at: str | None = None  # source observation date/time, not cache write time
     metrics: dict = field(default_factory=dict)  # structured facts used by reports and charts
     history: pd.DataFrame | None = field(default=None, repr=False, compare=False)

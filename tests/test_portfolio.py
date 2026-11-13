@@ -138,3 +138,29 @@ def test_personal_quote_table_stays_narrow_and_marks_cached_source_dates():
     assert max(map(len,table.splitlines()))<=33
     assert '* Cached: VWCG' in text and 'VWCG 2026-11-04' in text
     assert '151.25 USD' in text
+
+
+def test_recorded_position_shows_gain_against_fee_inclusive_cost(store):
+    from buysignal.portfolio.presentation import holdings_block
+    store.record('VUAA', '10', '100', date(2026, 11, 3), fees='10')
+    text = holdings_block(store.holdings(), [{'symbol': 'VUAA', 'price': 111.1}])
+    assert 'Cost 1,010.00 USD · value 1,111.00 USD · +10.0%' in text
+
+
+def test_each_etf_reports_its_own_dip_and_one_failure_blanks_only_that_listing(store):
+    closes = pd.Series([100.] * 80 + [94.], index=pd.bdate_range(end='2026-11-05', periods=81, tz='Europe/London'))
+    def ticker(symbol):
+        item = Mock()
+        if symbol == 'VWCG.DE':
+            item.history.side_effect = TimeoutError('provider unavailable')
+        else:
+            item.history.return_value = pd.DataFrame({'Close': closes})
+        return item
+    with patch.object(quotes.yf, 'Ticker', side_effect=ticker) as created:
+        result = quotes.dips(store, now=NOW)
+        assert set(result) == {'VUAA', 'AVWS'}
+        assert result['VUAA']['drawdown'] == pytest.approx(-.06) and result['VUAA']['observed_at'] == '2026-11-05'
+        # Daily closes are cached for an hour: a second call fetches only the listing that failed.
+        quotes.dips(store, now=NOW)
+        assert [call.args[0] for call in created.call_args_list].count('VUAA.L') == 1
+        assert [call.args[0] for call in created.call_args_list].count('VWCG.DE') == 2

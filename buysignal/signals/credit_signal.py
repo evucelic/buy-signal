@@ -1,18 +1,24 @@
-"""Credit risk appetite: extra yield demanded for lending to riskier US companies."""
+"""Credit context: how much more interest US companies pay than the Treasury (Baa minus 10-year)."""
 
 from __future__ import annotations
 
 import pandas as pd
 
+from buysignal.analysis.context import describe
 from buysignal.collectors.credit import credit_history
 from buysignal.config import (
-    CREDIT_CHANGE_SESSIONS, CREDIT_ELEVATED_SPREAD, CREDIT_CHANGE_NOISE_BP,
-    CREDIT_MAX_OBSERVATION_AGE_DAYS,
+    CREDIT_CHANGE_SESSIONS, CREDIT_MAX_OBSERVATION_AGE_DAYS, CREDIT_STRESS_MIN_OBS,
+    CREDIT_STRESS_PERCENTILE, CREDIT_STRESS_WINDOW,
 )
-from buysignal.signals.base import SubSignal, format_table
+from buysignal.signals.base import SubSignal
 
 
 def score(asof: pd.Timestamp | None = None) -> SubSignal:
+    """Calm below the stress line, stressed at or above it.
+
+    The line is the 80th percentile of the spread's own last ten years, so "stressed" means
+    unusually wide for the current era rather than against a fixed number chosen once.
+    """
     history = credit_history()
     today = asof if asof is not None else pd.Timestamp.now(tz="America/New_York").tz_localize(None)
     if today.tzinfo is not None:
@@ -21,26 +27,22 @@ def score(asof: pd.Timestamp | None = None) -> SubSignal:
     age = (today.normalize() - latest.date.normalize()).days
     if age < 0 or age > CREDIT_MAX_OBSERVATION_AGE_DAYS:
         raise ValueError(f"Credit observation {latest.date.date()} is outside the freshness budget")
+    window = history.spread.tail(CREDIT_STRESS_WINDOW)
+    if len(window) < CREDIT_STRESS_MIN_OBS:
+        raise ValueError(f"Credit history has {len(window)} observations; the stress line needs {CREDIT_STRESS_MIN_OBS}")
     spread = float(latest.spread)
+    stress = float(window.quantile(CREDIT_STRESS_PERCENTILE))
+    calm = spread < stress
     changes = {}
     for n in CREDIT_CHANGE_SESSIONS:
-        changes[n] = (spread - float(history.spread.iloc[-1-n])) * 100 if len(history) > n else None
-    monthly = changes[CREDIT_CHANGE_SESSIONS[-1]]
-    state = "unknown" if monthly is None else (
-        "widening" if monthly >= CREDIT_CHANGE_NOISE_BP else
-        "narrowing" if monthly <= -CREDIT_CHANGE_NOISE_BP else "stable"
-    )
-    level = "elevated" if spread >= CREDIT_ELEVATED_SPREAD else "below the elevated threshold"
+        changes[n] = (spread - float(history.spread.iloc[-1 - n])) * 100 if len(history) > n else None
     detail = (
-        f"High-yield option-adjusted spread {spread:.2f} percentage points ({spread*100:.0f} bp); {level}"
-        f" | Elevated ≥{CREDIT_ELEVATED_SPREAD:.1f}pp; direction band ±{CREDIT_CHANGE_NOISE_BP:.0f}bp / 21 observations"
+        f"Baa corporate yield minus 10-year Treasury {spread:.2f} points; "
+        f"stress line {stress:.2f} ({CREDIT_STRESS_PERCENTILE:.0%} of the last {len(window)} observations sit below it)"
     )
-    rows = [[f"{n} obs", f"{v:+.0f} bp" if v is not None else "n/a"] for n, v in changes.items()]
     return SubSignal(
-        "credit", spread, state, detail, advisory=True,
-        table=format_table(["Change over", "Spread change"], rows),
-        observed_at=str(latest.date.date()),
-        metrics={"spread": spread, "changes_bp": changes, "elevated": spread >= CREDIT_ELEVATED_SPREAD},
-        history=history.copy(),
-        footer="ICE BofA / FRED · HY OAS · Daily close",
+        "credit", spread, "calm" if calm else "stressed", detail, passes=calm, advisory=True,
+        observed_at=str(latest.date.date()), history=history.copy(),
+        metrics={"spread": spread, "stress": stress, "changes_bp": changes,
+                 **describe(history.spread, spread, history.date)},
     )

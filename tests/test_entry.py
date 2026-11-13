@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from buysignal.collectors import entry
-from buysignal.signals import market_signal, trend_signal
+from buysignal.signals import market_signal
 
 
 def prices(values):
@@ -82,16 +82,14 @@ def test_zero_baseline_volatility_is_unknown_not_infinite():
     (np.r_[np.linspace(80, 120, 239), 90], "under_pressure"),
     (np.r_[np.linspace(120, 80, 239), 115], "recovering"),
 ])
-def test_trend_classifications_are_advisory(values, state):
-    trend = trend_signal.from_market(score(values))
-    assert trend.state == state
-    assert trend.advisory
+def test_trend_is_described_in_the_index_facts(values, state):
+    assert score(values).metrics["trend"] == state
 
 
 def test_short_trend_history_does_not_remove_valid_drawdown():
     signal = score([100.] * 63 + [94.])
     assert signal.passes
-    assert trend_signal.from_market(signal).state == "unknown"
+    assert signal.metrics["trend"] == "unknown"
 
 
 def test_cached_daily_data_is_valid_over_a_weekend():

@@ -73,8 +73,6 @@ TABLE_LABELS = {
     "europe": "Europe",
 }
 
-RATE_STATE_LABELS = {"no_change": "no change"}  # everything else already reads fine as-is
-
 # Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
     {"command": "signal", "description": "Entry overview and chart buttons"},
@@ -174,55 +172,57 @@ def signal_report(result: BuySignal, caches: list[tuple[str, datetime | None]], 
     return Report([ReportMessage(overview(result, caches, now), key="summary")])
 
 
-def opportunity_message(opp, easing_obs_needed: int) -> str:
-    """Valuation and rate facts for the clinical Telegram view."""
-    rows = [
-        [
-            TABLE_LABELS.get(s.name, s.label),
-            fmt(s.fwd_pe),
-            fmt(s.trailing_pe),
-            fmt(s.ratio_vs_spx, ".2f"),
-            fmt(s.fwd_z, "+.1f"),
-            fmt(s.rel_z, "+.1f"),
-        ]
-        for s in opp.segments
-    ]
-    table = "<pre>" + esc(format_table(["Segment", "Fwd", "Trail", "vsUS", "z", "relZ"], rows)) + "</pre>"
+_RATE_WORDS = {"ease": "lower", "no_change": "the same", "hike": "higher"}
+
+
+def _own_history_word(z: float) -> str:
+    return "cheap" if z >= 1 else "rich" if z <= -1 else "usual"
+
+
+def opportunity_message(opp, easing_obs_needed: int, dips: dict | None = None) -> str:
+    """Forward valuations of the markets behind the owner's ETFs, with each ETF's own dip."""
+    dips = dips or {}
+    rows = [("", "P/E", "vs US", "Dip")]
+    # The owner's ETFs first, then indexes shown only for comparison.
+    for s in sorted(opp.segments, key=lambda view: view.etf is None):
+        name = s.etf or TABLE_LABELS.get(s.name, s.label)
+        versus = "—" if s.name == "sp500" or s.discount_vs_spx is None else f"{-s.discount_vs_spx:+.0%}"
+        dip = dips.get(s.etf, {}).get("drawdown") if s.etf else None
+        rows.append((name, fmt(s.fwd_pe), versus, "" if dip is None else "at high" if dip == 0 else f"{dip:+.1%}"))
+    table = "<pre>" + esc("\n".join(f"{name:<10}{pe:>5}{versus:>7}{dip:>8}".rstrip() for name, pe, versus, dip in rows)) + "</pre>"
 
     lines = []
-    if opp.small_cap_band is not None:
-        lines.append(f"Small-cap band: {opp.small_cap_band}")
-
+    judged = [(s.etf or TABLE_LABELS.get(s.name, s.label), s.fwd_z) for s in opp.segments if s.fwd_z is not None]
+    if judged:
+        lines.append("Against its own past: " + " · ".join(f"{name} {_own_history_word(z)}" for name, z in judged))
     rate = opp.rate
     if rate.horizons:
-        sequence = " → ".join(RATE_STATE_LABELS.get(h.state, h.state) for h in rate.horizons)
-        support = "yes" if rate.rate_support else "no"
-        lines.append(
-            f"FedWatch: {rate.consecutive_easing}/{len(rate.horizons)} easing "
-            f"({sequence}, rate support: {support}, need ≥{easing_obs_needed})"
-        )
-
+        nearest = rate.horizons[0]
+        odds = {"ease": nearest.ease, "no_change": nearest.no_change, "hike": nearest.hike}
+        if nearest.state in _RATE_WORDS:
+            lines.append(f"Fed rate at the next meeting: {_RATE_WORDS[nearest.state]} ({odds[nearest.state]:.0%})")
+        else:
+            lines.append("Fed rate at the next meeting: no clear favourite")
     if opp.buy_signal_state is not None:
-        label = ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1]
-        lines.append(f"Buy signal (context): {label}")
-    facts = "\n".join(f"• {esc(line)}" for line in lines)
+        lines.append("Market read: " + ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1])
 
     asofs = {s.asof for s in opp.segments if s.asof}
     if len(asofs) == 1:
-        footer = f"🕓 MSCI data as of {esc(asofs.pop())} (updates monthly)"
+        lines.append(f"MSCI index data, {asofs.pop()} · updates monthly")
     elif asofs:
-        per_segment = ", ".join(f"{s.label} {s.asof}" for s in opp.segments if s.asof)
-        footer = f"🕓 MSCI data as of: {esc(per_segment)} (updates monthly)"
-    else:
-        footer = ""
-    notes = "\n".join(f"• {esc(note)}" for note in opp.notes)
+        lines.append("MSCI index data: " + ", ".join(f"{s.etf or s.label} {s.asof}" for s in opp.segments if s.asof))
+    stale = [symbol for symbol, item in dips.items() if item.get("refresh_failed")]
+    if stale:
+        lines.append("⚠️ Dip from cached prices: " + ", ".join(stale))
+    lines.extend("⚠️ " + note for note in opp.notes)
 
-    blocks = ["🧭 <b>What to buy: segment valuations</b>", table, facts]
-    if footer:
-        blocks.append(footer)
-    if notes:
-        blocks.append(f"⚠️ <b>Notes</b>\n{notes}")
-    return "\n\n".join(blocks)
+    blocks = [
+        "<b>What to buy</b> · how each market is priced",
+        table,
+        "<i>P/E = price ÷ next year's expected earnings; lower is cheaper. Dip = below the ETF's own 3-month high.</i>",
+        "\n".join(esc(line) for line in lines),
+    ]
+    return "\n".join(block for block in blocks if block)
 
 
 def collector_table(statuses: list[CollectorStatus], now: datetime) -> str:

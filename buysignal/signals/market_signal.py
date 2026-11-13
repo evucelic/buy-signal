@@ -1,4 +1,4 @@
-"""SPY drawdown gate with volatility-scaled selloff and trend context."""
+"""SPY drawdown (the dip) with volatility-scaled selloff and trend context."""
 
 from __future__ import annotations
 
@@ -7,51 +7,58 @@ import math
 import numpy as np
 import pandas as pd
 
+from buysignal.analysis.context import share_at_or_below
 from buysignal.collectors.entry import get_entry_history
 from buysignal.config import (
     INDEX_TICKERS, OPTIONAL_INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_DRAWDOWN_SESSIONS,
     MARKET_VOLATILITY_SESSIONS, MARKET_SELLOFF_SESSIONS,
     MARKET_TREND_SESSIONS, MARKET_TREND_SLOPE_SESSIONS,
 )
-from buysignal.signals.base import SubSignal, format_table
+from buysignal.signals.base import SubSignal
 
 
-def analyze_history(history: pd.DataFrame) -> dict:
-    """Compute facts using only the rows in this observation snapshot."""
-    spy = history["SPY"].dropna()
+def drawdown_series(closes: pd.Series) -> pd.Series:
+    """Distance below the highest close of the prior sessions, zero when at a new high."""
+    peak = closes.shift(1).rolling(MARKET_DRAWDOWN_SESSIONS).max()
+    return (closes / peak - 1).clip(upper=0).dropna()
+
+
+def analyze_series(closes: pd.Series, name: str = "SPY") -> dict:
+    """Drawdown, move size and trend facts for one index, from its own sessions only."""
+    closes = closes.dropna()
     needed = MARKET_DRAWDOWN_SESSIONS + 1
-    if len(spy) < needed:
-        raise ValueError(f"SPY drawdown needs {needed} sessions; have {len(spy)}")
-    if (spy <= 0).any() or not np.isfinite(spy).all():
-        raise ValueError("SPY prices must be positive and finite")
-    latest = float(spy.iloc[-1])
-    prior = spy.iloc[-1 - MARKET_DRAWDOWN_SESSIONS:-1]
+    if len(closes) < needed:
+        raise ValueError(f"{name} drawdown needs {needed} sessions; have {len(closes)}")
+    if (closes <= 0).any() or not np.isfinite(closes).all():
+        raise ValueError(f"{name} prices must be positive and finite")
+    latest = float(closes.iloc[-1])
+    prior = closes.iloc[-1 - MARKET_DRAWDOWN_SESSIONS:-1]
     peak = float(prior.max())
     # Prefer the most recent occurrence when closing highs tie.
     peak_date = prior.loc[prior == peak].index[-1]
     facts = {
         "price": latest, "peak": peak, "peak_date": str(peak_date.date()),
         "drawdown": min(0.0, latest / peak - 1),
-        "observed_at": str(spy.index[-1].date()),
-        "daily": latest / float(spy.iloc[-2]) - 1,
-        "weekly": latest / float(spy.iloc[-6]) - 1,
-        "monthly": latest / float(spy.iloc[-22]) - 1,
+        "observed_at": str(closes.index[-1].date()),
+        "daily": latest / float(closes.iloc[-2]) - 1,
+        "weekly": latest / float(closes.iloc[-6]) - 1,
+        "monthly": latest / float(closes.iloc[-22]) - 1,
         "intensity": None, "daily_volatility": None,
         "ma200": None, "ma_slope": None, "trend": "unknown",
     }
     # Log returns are additive. The 20-return baseline ends at the START of
     # the five-session move, so the shock cannot inflate its own denominator.
-    returns = np.log(spy).diff()
+    returns = np.log(closes).diff()
     n, window = MARKET_SELLOFF_SESSIONS, MARKET_VOLATILITY_SESSIONS
     baseline = returns.iloc[-n-window:-n]
     if len(baseline.dropna()) == window:
         volatility = float(baseline.std(ddof=1))
         if volatility > 1e-10:
             facts["daily_volatility"] = volatility
-            facts["intensity"] = float(math.log(latest / float(spy.iloc[-1-n])) / (volatility * math.sqrt(n)))
-    ma = spy.rolling(MARKET_TREND_SESSIONS).mean()
+            facts["intensity"] = float(math.log(latest / float(closes.iloc[-1-n])) / (volatility * math.sqrt(n)))
+    ma = closes.rolling(MARKET_TREND_SESSIONS).mean()
     slope_back = MARKET_TREND_SLOPE_SESSIONS
-    if len(spy) >= MARKET_TREND_SESSIONS + slope_back:
+    if len(closes) >= MARKET_TREND_SESSIONS + slope_back:
         current, previous = float(ma.iloc[-1]), float(ma.iloc[-1-slope_back])
         facts["ma200"], facts["ma_slope"] = current, current / previous - 1
         above, rising = latest >= current, current >= previous
@@ -59,21 +66,17 @@ def analyze_history(history: pd.DataFrame) -> dict:
             "uptrend" if above and rising else "under_pressure" if rising
             else "recovering" if above else "downtrend"
         )
+    # How unusual this distance below the high has been in this index's own past.
+    past = drawdown_series(closes)
+    facts["history_since"] = str(past.index[0].date()) if len(past) else None
+    facts["drawdown_share"] = share_at_or_below(past, facts["drawdown"]) if facts["drawdown"] < 0 else None
+    facts["rule_share"] = share_at_or_below(past, MARKET_DIP_THRESHOLD)
     return facts
 
 
-def _changes_table(history: pd.DataFrame) -> str:
-    rows = []
-    for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
-        if name not in history:
-            continue
-        closes = history[name].dropna()
-        if len(closes) < 22:
-            rows.append([name, "n/a", "n/a", "n/a"])
-            continue
-        latest = float(closes.iloc[-1])
-        rows.append([name, *[f"{latest / float(closes.iloc[-1-n]) - 1:+.1%}" for n in (1, 5, 21)]])
-    return format_table(["Index", "Daily", "5 sess", "21 sess"], rows)
+def analyze_history(history: pd.DataFrame) -> dict:
+    """Compute facts using only the rows in this observation snapshot."""
+    return analyze_series(history["SPY"], "SPY")
 
 
 def score(allow_refresh: bool = True) -> SubSignal:
@@ -84,6 +87,7 @@ def score(allow_refresh: bool = True) -> SubSignal:
     facts["expected_session"] = history.attrs.get("expected_session")
     facts["retrieved_at"] = history.attrs.get("retrieved_at")
     facts["index_changes"] = {}
+    facts["index_facts"] = {}
     for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
         if name not in history:
             continue
@@ -93,6 +97,11 @@ def score(allow_refresh: bool = True) -> SubSignal:
                 "changes": [float(closes.iloc[-1] / closes.iloc[-1-n] - 1) for n in (1, 5, 21)],
                 "date": str(closes.index[-1].date()),
             }
+        try:
+            # Each index is described from its own sessions; the dip line is defined for SPY only.
+            facts["index_facts"][name] = analyze_series(closes, name)
+        except ValueError:
+            continue
     drawdown = facts["drawdown"]
     condition_met = drawdown <= MARKET_DIP_THRESHOLD + 1e-12
     passes = condition_met and not facts["stale"]
@@ -121,7 +130,5 @@ def score(allow_refresh: bool = True) -> SubSignal:
         detail += f" | Cached through {facts['observed_at']}; expected {facts['expected_session']}"
     return SubSignal(
         "market_dip", drawdown, "dip" if passes else "flat", detail, passes=passes,
-        table=_changes_table(history), observed_at=facts["observed_at"], metrics=facts,
-        history=history.copy(),
-        footer="Adjusted daily close · Latest session may be partial",
+        observed_at=facts["observed_at"], metrics=facts, history=history.copy(),
     )

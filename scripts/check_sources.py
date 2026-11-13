@@ -11,7 +11,7 @@ import resource
 from tempfile import TemporaryDirectory
 import time
 
-from buysignal.collectors import credit, entry, fed_rate, margin_debt, sectors
+from buysignal.collectors import credit, entry, fed_rate, margin_debt, sectors, vix_history
 
 
 def main():
@@ -29,6 +29,7 @@ def main():
         result['prices'] = {'rows': len(history), 'first': str(history.index[0].date()), 'last': str(history.index[-1].date())}
         for name, update, read, date_column in (
             ('credit', credit.update_credit_data, credit.credit_history, 'date'),
+            ('vix_history', vix_history.update_vix_history, vix_history.vix_long_history, 'date'),
             ('margin', margin_debt.update_margin_debt_data, margin_debt.margin_history, 'month'),
         ):
             error = update(root/f'{name}.csv')

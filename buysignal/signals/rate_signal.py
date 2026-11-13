@@ -87,13 +87,12 @@ def score(asof: pd.Timestamp | None = None) -> SubSignal:
     nearest = meetings["nearest"]
     if pd.notna(nearest.get("reference_lower_bps")) and pd.notna(nearest.get("reference_upper_bps")):
         detail += f" | Reference target range {nearest['reference_lower_bps']/100:.2f}–{nearest['reference_upper_bps']/100:.2f}%"
-    detail += " | " + (f"Rate-path gate failed: higher-rate risk leads or ties at {', '.join(blocking)}"
-                       if blocking else "Rate-path gate passed: hikes do not lead at nearest, 6m or 1y")
+    detail += " | " + (f"Higher rates lead or tie at {', '.join(blocking)}"
+                       if blocking else "Higher rates do not lead at nearest, 6m or 1y")
     observed = nearest.get("source_asof")
     observed = str(observed) if pd.notna(observed) else None
     return SubSignal(
         "fed_rate", max(p[2] for p in probabilities.values()), state, detail,
         passes=not blocking, observed_at=observed, history=df.copy(),
         metrics={"blocking_horizons": blocking},
-        footer="CME FedWatch · Current target range · Probability Δ in pp",
     )

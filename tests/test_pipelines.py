@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from buysignal.telegram_bot import render
-from buysignal.signals.buy_signal import BuySignal
+from buysignal.telegram_bot import render, views
+from buysignal.signals.buy_signal import BuySignal, assess
 from buysignal.collectors import market, sectors, vix, yield_curve
 from buysignal.signals import market_signal, sector_signal, vix_signal, yield_curve_signal
 
@@ -59,10 +59,10 @@ def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     _write_pre_schema_cache(path)
 
-    message = render.subsignal_block(_score_against(path))
+    caption = views.panel_caption(_score_against(path), "yield_curve")
 
-    assert "10y-3m" in message
-    assert "2y-FFR" not in message
+    assert "10y − 3m" in caption
+    assert "2y − Fed rate" not in caption and "2y−Fed" not in caption
 
 
 def test_a_cache_predating_the_policy_column_demands_a_refresh_however_recent_it_is(tmp_path):
@@ -78,10 +78,10 @@ def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_
 
     assert _refresh(path) is None
 
-    message = render.subsignal_block(_score_against(path))
+    caption = views.panel_caption(_score_against(path), "yield_curve")
 
-    assert "2y-FFR" in message
-    assert f"{_TWO_YEAR - _FED_FUNDS:+.2f}pp" in message
+    assert "2y−Fed" in caption
+    assert f"2y − Fed rate   {_TWO_YEAR - _FED_FUNDS:+.2f} pp" in caption
 
 
 def test_a_refreshed_cache_no_longer_demands_a_refresh(tmp_path):
@@ -126,10 +126,10 @@ def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
     assert signal.passes
     assert abs(signal.metrics["drawdown"] + .1) < 1e-12
     report = render.signal_report(
-        BuySignal(1., "strong", 1, [signal]),
+        assess([signal]),
         [], pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
     )
-    assert any("63-session high" in part.text for part in report.messages)
+    assert any("SPY vs high" in part.text and "-10.0%" in part.text for part in report.messages)
 
 
 def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):

@@ -149,7 +149,7 @@ def _refresh_entry_history(path: Path) -> bool:
     for name in (*INDEX_TICKERS, *OPTIONAL_INDEX_TICKERS):
         previous = old[name].dropna() if old is not None and name in old else empty
         fresh = new[name].dropna() if name in new else empty
-        # Only SPY is an entry gate. Peer outages are repaired independently.
+        # Only SPY defines the dip. Peer outages are repaired independently.
         needs_repair = name in INDEX_TICKERS and (fresh.empty or fresh.index[-1] < expected)
         if needs_repair:
             try:

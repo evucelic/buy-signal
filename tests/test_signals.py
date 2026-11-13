@@ -8,7 +8,7 @@ import pytest
 from buysignal.signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from buysignal.config import MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, YIELD_CURVE_BUCKET_DAYS
 from buysignal.signals.base import NONE, SOFT, STRONG, SubSignal
-from buysignal.signals.buy_signal import SIGNAL_LOCK, _alert_state, compute_signal
+from buysignal.signals.buy_signal import SIGNAL_LOCK, assess, compute_signal
 
 # --- vix_signal ---------------------------------------------------------------
 
@@ -183,9 +183,8 @@ def test_rate_zero_distribution_is_rejected():
         _rate(_fedwatch(ease=0.0, no_change=0.0, hike=0.0))
 
 
-def test_rate_carries_its_horizons_in_the_detail_string_instead_of_a_table():
+def test_rate_carries_its_horizons_in_the_detail_string():
     s = _rate(_fedwatch(ease=0.0, no_change=0.3, hike=0.7))
-    assert s.table is None
     assert "nearest" in s.detail
     assert "hike 70.0%" in s.detail
 
@@ -296,9 +295,8 @@ def test_market_score_preserves_allow_refresh_flag():
     get.assert_called_once_with(allow_refresh=False)
 
 
-def test_market_table_row_order():
-    table = _market(-.07).table
-    assert table.index("SPY") < table.index("NASDAQ") < table.index("DOW")
+def test_market_index_changes_keep_the_index_order():
+    assert list(_market(-.07).metrics["index_changes"])[:3] == ["SPY", "NASDAQ", "DOW"]
 
 
 # --- sector_signal ---------------------------------------------------------------
@@ -469,10 +467,10 @@ def test_yield_curve_is_advisory():
     assert s.name == "yield_curve"
 
 
-def test_yield_curve_table_marks_the_filling_bucket():
-    s = _curve([0.5, 0.8])
-    assert "2026-02-11*" in s.table
-    assert "2026-01-21 " in s.table
+def test_yield_curve_averages_mark_the_filling_bucket():
+    buckets = _curve([0.5, 0.8]).metrics["buckets"]
+    assert [(b["thru"], b["partial"]) for b in buckets] == [("2026-01-21", False), ("2026-02-11", True)]
+    assert [b["spread"] for b in buckets] == pytest.approx([0.5, 0.8])
 
 
 def test_yield_curve_detail_has_latest_spread_and_bucket_avg():
@@ -487,21 +485,19 @@ def test_yield_curve_single_filling_bucket_defaults_to_flat():
 
 def test_policy_spread_fires_after_two_complete_negative_buckets():
     s = _curve([0.5, 0.5, 0.5], policy=[-0.2, -0.41, -0.5])
-    assert s.footer is not None
-    assert "Cuts priced in since 2026-01-01" in s.footer
-    assert "2y-FFR" in s.table
-    assert "-0.41pp" in s.table
+    assert s.metrics["cuts_priced"] and s.metrics["cuts_since"] == "2026-01-01"
+    assert [b["policy_spread"] for b in s.metrics["buckets"]] == pytest.approx([-0.2, -0.41, -0.5])
 
 
 def test_policy_spread_silent_below_the_confirmation_threshold():
     s = _curve([0.5, 0.5, 0.5], policy=[0.3, -0.41, -0.5])
-    assert s.footer is None
+    assert s.metrics["cuts_priced"] is False and s.metrics["cuts_since"] is None
     assert "no cuts priced in" in s.detail
 
 
 def test_policy_spread_ignores_the_filling_bucket():
     s = _curve([0.5, 0.5, 0.5, 0.5], policy=[0.3, 0.3, -0.41, -0.5])
-    assert s.footer is None
+    assert s.metrics["cuts_priced"] is False
 
 
 def test_policy_spread_gap_breaks_the_run_instead_of_collapsing():
@@ -512,20 +508,20 @@ def test_policy_spread_gap_breaks_the_run_instead_of_collapsing():
     with patch("buysignal.signals.yield_curve_signal.yield_curve_history", return_value=history):
         s = yield_curve_signal.score()
 
-    assert s.footer is None
+    assert s.metrics["cuts_priced"] is None
     assert "missing for the latest 3wk period" in s.detail
 
 
 def test_policy_spread_silent_when_positive():
     s = _curve([0.5, 0.5, 0.5], policy=[0.3, 0.25, 0.2])
-    assert s.footer is None
+    assert s.metrics["cuts_priced"] is False
     assert "no cuts priced in" in s.detail
 
 
 def test_policy_spread_omitted_when_cache_predates_the_column():
     s = _curve([0.5, 0.5])
-    assert s.footer is None
-    assert "2y-FFR" not in s.table
+    assert s.metrics["cuts_priced"] is None
+    assert all(b["policy_spread"] is None for b in s.metrics["buckets"])
     assert "2y-FFR" not in s.detail
 
 
@@ -536,27 +532,57 @@ def test_policy_spread_does_not_change_the_curve_state():
 # --- buy_signal ---------------------------------------------------------------
 
 
-def test_alert_state_strong(make_subsignal):
-    subs = [make_subsignal("vix", passes=True)]
-    state, _ = _alert_state(subs, [])
-    assert state == "strong"
+REQUIRED = ("vix", "fed_rate", "margin_debt", "market_dip", "sector")
 
 
-def test_alert_state_soft(make_subsignal):
-    subs = [make_subsignal("vix", passes=True)]
-    state, _ = _alert_state(subs, ["sector"])
-    assert state == "incomplete"
+def _checklist(passing=REQUIRED, missing=(), stale=(), context=()):
+    """The five conditions: those in `passing` pass, `missing` are left out, `stale` are marked stale."""
+    subs = [SubSignal(name, 0.0, "x", "", passes=name in passing, metrics={"stale": True} if name in stale else {})
+            for name in REQUIRED if name not in missing]
+    return assess([*subs, *context])
 
 
-def test_alert_state_none_on_any_failure(make_subsignal):
-    subs = [make_subsignal("vix", passes=True), make_subsignal("sector", passes=False)]
-    state, _ = _alert_state(subs, [])
-    assert state == "none"
+@pytest.mark.parametrize("passing,count,state", [
+    (REQUIRED, 5, "strong"),
+    (("vix", "margin_debt", "sector"), 3, "none"),
+    ((), 0, "none"),
+])
+def test_checklist_counts_the_conditions_that_pass(passing, count, state):
+    result = _checklist(passing)
+    assert (result.passing_count, result.required_count, result.state) == (count, 5, state)
+    assert result.label == f"{count} of 5"
 
 
-def test_alert_state_none_when_empty():
-    state, _ = _alert_state([], [])
-    assert state == "none"
+def test_a_missing_condition_stays_in_the_denominator():
+    result = _checklist(missing=("fed_rate",))
+    assert (result.passing_count, result.required_count, result.state) == (4, 5, "incomplete")
+    assert result.label == "4 of 5 incomplete"
+    assert result.status("fed_rate") == "incomplete"
+    assert "fed_rate" in result.detail
+
+
+def test_a_stale_condition_cannot_pass_and_marks_the_checklist_incomplete():
+    result = _checklist(stale=("margin_debt",))
+    assert (result.passing_count, result.state) == (4, "incomplete")
+    assert result.status("margin_debt") == "incomplete"
+    assert result.status("vix") == "pass"
+
+
+def test_context_readings_never_change_the_count():
+    context = [SubSignal(name, 0.0, "x", "", passes=False, advisory=True) for name in ("credit", "yield_curve")]
+    assert _checklist(context=context).label == "5 of 5"
+    assert _checklist().label == "5 of 5"
+
+
+def test_checklist_with_no_evidence_is_incomplete():
+    result = assess([])
+    assert (result.passing_count, result.required_count, result.state) == (0, 5, "incomplete")
+
+
+def test_required_signals_are_not_advisory_and_context_ones_are():
+    assert _margin([100, 90]).advisory is False
+    assert _market(MARKET_DIP_THRESHOLD - .01).advisory is False
+    assert _curve([1.5, 1.5]).advisory is True
 
 
 _SIGNAL_MODULES = {
@@ -565,8 +591,8 @@ _SIGNAL_MODULES = {
     "margin_signal": "margin_debt",
     "market_signal": "market_dip",
     "sector_signal": "sector",
-    "yield_curve_signal": "yield_curve",
     "credit_signal": "credit",
+    "yield_curve_signal": "yield_curve",
 }
 
 
@@ -587,13 +613,11 @@ def _scoring(outcome):
 
 
 def _compute(monkeypatch, allow_refresh=True, **overrides):
-    """Compute a signal with every sub-signal passing, except the ones this test names.
+    """Compute the checklist with every condition passing, except what this test names.
 
     Each override is a SubSignal to return, an Exception to raise, or a score() replacement.
     """
-    outcomes = {module: _sub(name) for module, name in _SIGNAL_MODULES.items()}
-    outcomes["yield_curve_signal"] = _sub("yield_curve", advisory=True)
-    outcomes["credit_signal"] = _sub("credit", advisory=True)
+    outcomes = {module: _sub(name, advisory=name not in REQUIRED) for module, name in _SIGNAL_MODULES.items()}
     outcomes.update(overrides)
 
     for module, outcome in outcomes.items():
@@ -601,62 +625,48 @@ def _compute(monkeypatch, allow_refresh=True, **overrides):
     return compute_signal(allow_refresh=allow_refresh)
 
 
-def test_compute_signal_is_strong_when_every_required_signal_passes(monkeypatch):
+def test_compute_signal_counts_all_five_when_every_condition_passes(monkeypatch):
     result = _compute(monkeypatch)
 
-    assert result.state == "strong"
-    assert result.passing_count == 5
-    assert result.required_count == 5
+    assert (result.state, result.label) == ("strong", "5 of 5")
+    assert result.missing_signals == []
 
 
-def test_compute_signal_counts_a_failing_required_signal_out_of_the_checklist(monkeypatch):
-    result = _compute(monkeypatch, vix_signal=_sub("vix", passes=False))
+def test_compute_signal_counts_a_failing_condition_out(monkeypatch):
+    result = _compute(monkeypatch, rate_signal=_sub("fed_rate", passes=False))
 
-    assert result.state == "none"
-    assert result.passing_count == 4
+    assert (result.state, result.label) == ("none", "4 of 5")
 
 
-def test_compute_signal_stays_strong_when_the_advisory_signal_fails(monkeypatch):
+def test_compute_signal_ignores_a_failing_context_signal(monkeypatch):
     failing_curve = _sub("yield_curve", passes=False, state="inverted", advisory=True)
 
-    result = _compute(monkeypatch, yield_curve_signal=failing_curve)
+    result = _compute(monkeypatch, yield_curve_signal=failing_curve, credit_signal=_sub("credit", passes=False, advisory=True))
 
-    assert result.state == "strong"
-    assert result.passing_count == 5
-    assert result.required_count == 5
-    assert result.score == 1.0
+    assert result.label == "5 of 5"
 
 
-def test_compute_signal_still_shows_a_failing_advisory_signal(monkeypatch):
-    failing_curve = _sub("yield_curve", passes=False, state="inverted", advisory=True)
+def test_compute_signal_shows_every_reading_in_checklist_order(monkeypatch):
+    result = _compute(monkeypatch)
 
-    result = _compute(monkeypatch, yield_curve_signal=failing_curve)
-
-    expected = list(_SIGNAL_MODULES.values())
-    expected.insert(4, "trend")
-    assert [s.name for s in result.subsignals] == expected
+    assert [s.name for s in result.subsignals] == [
+        "vix", "fed_rate", "margin_debt", "market_dip", "sector", "credit", "yield_curve"]
 
 
-def test_compute_signal_stays_strong_when_the_advisory_signal_is_missing(monkeypatch):
-    result = _compute(monkeypatch, yield_curve_signal=RuntimeError("no cache"))
+def test_compute_signal_keeps_its_count_when_a_context_signal_is_missing(monkeypatch):
+    result = _compute(monkeypatch, yield_curve_signal=RuntimeError("no cache"), credit_signal=RuntimeError("fred down"))
 
-    assert result.state == "strong"
-
-
-def test_compute_signal_reports_a_missing_advisory_signal(monkeypatch):
-    result = _compute(monkeypatch, yield_curve_signal=RuntimeError("no cache"))
-
-    assert result.missing_signals == ["yield_curve"]
+    assert (result.state, result.label) == ("strong", "5 of 5")
+    assert result.missing_signals == ["credit", "yield_curve"]
 
 
-def test_compute_signal_is_incomplete_when_a_required_signal_is_missing(monkeypatch):
-    result = _compute(monkeypatch, vix_signal=RuntimeError("boom"))
+@pytest.mark.parametrize("module,name", [(module, name) for module, name in _SIGNAL_MODULES.items() if name in REQUIRED])
+def test_compute_signal_is_incomplete_when_a_condition_is_missing(monkeypatch, module, name):
+    result = _compute(monkeypatch, **{module: RuntimeError("boom")})
 
-    assert result.state == "incomplete"
-    assert result.missing_signals == ["vix"]
-    assert len(result.subsignals) == 7
-    assert result.required_count == 5
-    assert result.score == pytest.approx(4/5)
+    assert (result.state, result.label) == ("incomplete", "4 of 5 incomplete")
+    assert result.missing_signals == [name]
+    assert len(result.subsignals) == 6
 
 
 def test_compute_signal_reports_every_signal_missing_when_all_of_them_fail(monkeypatch):
@@ -666,12 +676,12 @@ def test_compute_signal_reports_every_signal_missing_when_all_of_them_fail(monke
 
     assert result.subsignals == []
     assert result.state == "incomplete"
-    assert sorted(result.missing_signals) == sorted([*_SIGNAL_MODULES.values(), "trend"])
+    assert sorted(result.missing_signals) == sorted(_SIGNAL_MODULES.values())
 
 
 def test_compute_signal_passes_allow_refresh_through_to_the_refetching_signals(monkeypatch):
     def vix_score(vix=None, allow_refresh=True):
-        return _sub("vix", passes=allow_refresh)
+        return _sub("vix", passes=allow_refresh, state=SOFT if allow_refresh else NONE)
 
     def market_score(allow_refresh=True):
         return _sub("market_dip", passes=allow_refresh)
@@ -680,7 +690,8 @@ def test_compute_signal_passes_allow_refresh_through_to_the_refetching_signals(m
         monkeypatch, allow_refresh=False, vix_signal=vix_score, market_signal=market_score
     )
 
-    assert result.passing_count == 3
+    by_name = {signal.name: signal for signal in result.subsignals}
+    assert not by_name["vix"].passes and not by_name["market_dip"].passes
 
 
 def test_compute_signal_holds_the_signal_lock_while_scoring(monkeypatch):
@@ -712,23 +723,3 @@ def test_rate_past_meeting_is_missing_not_supportive():
     df.loc[df.horizon == "nearest", "meeting_date"] = pd.Timestamp("2026-06-30")
     with pytest.raises(ValueError, match="past meeting"):
         _rate(df)
-
-
-def test_missing_credit_does_not_gate_the_five_conditions(monkeypatch):
-    result = _compute(monkeypatch, credit_signal=RuntimeError("feed unavailable"))
-    assert result.state == "strong"
-    assert result.required_count == 5
-    assert result.passing_count == 5
-    assert result.score == 1
-    assert result.missing_signals == ["credit"]
-
-
-def test_trend_failure_cannot_remove_a_valid_drawdown_condition(monkeypatch):
-    def failed_trend(_):
-        raise ValueError("trend unavailable")
-    monkeypatch.setattr("buysignal.signals.buy_signal.trend_signal.from_market", failed_trend)
-    result = _compute(monkeypatch)
-    assert result.state == "strong"
-    assert result.required_count == 5
-    assert result.missing_signals == ["trend"]
-    assert next(s for s in result.subsignals if s.name == "market_dip").passes

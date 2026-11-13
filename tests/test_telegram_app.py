@@ -69,9 +69,18 @@ def test_is_alerting_dip_only(make_subsignal, make_buy_signal):
     assert app.is_alerting(result) is True
 
 
-def test_is_alerting_checklist_soft(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("vix", "none", "x")], state="soft")
+def test_other_conditions_alone_do_not_hold_the_watch_trigger_on(make_subsignal, make_buy_signal):
+    # Margin, Fed and earnings can pass for months; a standing alert would mask the next fear trigger.
+    result = make_buy_signal([make_subsignal(name, "x", "x", passes=True) for name in ("fed_rate", "margin_debt", "sector")]
+                             + [make_subsignal("vix", "none", "x")])
+    assert result.passing_count == 3
+    assert app.is_alerting(result) is False
+
+
+def test_all_five_passing_holds_the_watch_trigger_on(make_subsignal, make_buy_signal):
+    result = make_buy_signal([make_subsignal("vix", "none", "x")], state="strong")
     assert app.is_alerting(result) is True
+    assert app.trigger_reasons(result) == "checklist strong"
 
 
 def test_is_alerting_false_when_nothing_triggers(make_subsignal, make_buy_signal):
@@ -85,9 +94,8 @@ def test_trigger_reasons_combines_all(make_subsignal, make_buy_signal):
             make_subsignal("vix", "soft", "x", passes=True),
             make_subsignal("market_dip", "dip", "x", passes=True),
         ],
-        state="soft",
     )
-    assert app.trigger_reasons(result) == "VIX elevated, SPY dip, checklist soft"
+    assert app.trigger_reasons(result) == "VIX elevated, SPY dip"
 
 
 def test_trigger_reasons_empty_when_nothing_triggers(make_subsignal, make_buy_signal):
@@ -440,7 +448,8 @@ def whattobuy_env(monkeypatch, make_opportunity):
     monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
     photos = []
     monkeypatch.setattr(app.transport, "send_photo", lambda png, caption: photos.append(png))
-    monkeypatch.setattr(app.chart, "render_chart", lambda opp: b"\x89PNG-fake")
+    monkeypatch.setattr(app.chart, "render_chart", lambda opp, dips=None: b"\x89PNG-fake")
+    monkeypatch.setattr(app.personal_quotes, "dips", lambda store: {"VUAA": {"drawdown": -.02}})
     return photos
 
 
@@ -450,9 +459,8 @@ def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
     assert "What to buy" in reply
     assert "20.0" in reply
     assert "15.0" in reply
-    assert "Small-cap band: candidate" in reply
-    assert "FedWatch: 1/3 easing (ease → no change → no change, rate support: yes, need ≥1)" in reply
-    assert "z-scores" in reply  # notes render as bullets
+    assert "Fed rate at the next meeting: lower (78%)" in reply
+    assert "⚠️ Own-history comparison needs 12 monthly readings; 1 so far" in reply  # notes stay visible
 
 
 def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, make_subsignal, make_buy_signal):
@@ -463,7 +471,7 @@ def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, mak
 
 
 def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, monkeypatch):
-    def boom(opp):
+    def boom(opp, dips=None):
         raise RuntimeError("no display")
 
     monkeypatch.setattr(app.chart, "render_chart", boom)
