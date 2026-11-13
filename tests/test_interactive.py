@@ -1,6 +1,7 @@
 """Frozen report navigation, bounded storage, Telegram editing and source semantics."""
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch
+import re
 import json
 
 import pandas as pd
@@ -9,7 +10,7 @@ import pytest
 from buysignal.telegram_bot import app, interactive, transport, views, prepared
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal
+from buysignal.signals.buy_signal import BuySignal, assess
 from buysignal.signals import vix_signal
 from scripts.preview_entry_report import sample_assessment, NOW
 
@@ -84,7 +85,7 @@ def test_switching_index_uses_selected_series_and_buttons(saved, wire):
     store, token, _ = saved
     interactive.handle_callback(query(token, 'index_NASDAQ'), store)
     caption, markup, png, _ = wire[0][0]
-    assert '<b>NASDAQ</b>' in caption
+    assert '<b>Nasdaq</b>' in caption
     assert png == store.chart_bytes(token, 'market_dip:NASDAQ')
     labels = [b['text'] for row in markup['inline_keyboard'] for b in row]
     assert 'SPY' in labels and 'Dow' in labels and 'Euro50' in labels
@@ -100,33 +101,135 @@ def test_unavailable_index_does_not_replace_existing_chart(saved, wire):
     assert 'unavailable' in wire[1][0]
 
 
-def test_analyst_details_have_source_caps_and_explained_counts(saved, wire, monkeypatch):
+def labels(markup):
+    return [b['text'] for row in markup['inline_keyboard'] for b in row]
+
+
+def test_estimate_coverage_sits_in_the_earnings_caption_without_a_sub_tab(saved, wire):
     store, token, _ = saved
     interactive.handle_callback(query(token, 'sector'), store)
-    # The detail toggle only changes the caption; no rendering/upload needed.
-    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', lambda s: pytest.fail('Same chart should be retained'))
-    interactive.handle_callback(query(token, 'eps_info'), store)
     caption, markup, png, _ = wire[0][-1]
-    assert 'Yahoo Finance analyst consensus' in caption
-    assert 'names are not provided' in caption
-    assert '8 of 8 sampled companies have estimates' in caption
-    assert '$10.00T' in caption
-    assert png is None
+    assert '4 of 5 industries growing' in caption
+    assert 'Industry          Growth  Firms\nSemiconductors      +61%    8/8\n' in caption
+    assert 'Drug Manufactur…     -5%    8/8' in caption and 'Analysts per firm 12–40' in caption
+    assert png == store.chart_bytes(token, 'sector:')
+    assert not any('detail' in text.lower() or 'estimate' in text.lower() for text in labels(markup))
     assert len(caption.encode('utf-16-le')) // 2 <= 950
-    page_buttons = [b for row in markup['inline_keyboard'] for b in row if '~' in b['callback_data']]
-    assert page_buttons
-    for button in page_buttons:
-        interactive.handle_callback(query(token, button['callback_data'].split(':')[-1]), store)
-        assert len(wire[0][-1][0].encode('utf-16-le')) // 2 <= 950
 
 
-def test_fed_changes_are_labelled_with_units_and_comparison_clock(saved, wire):
+def test_thin_estimate_coverage_is_named_rather_than_averaged_away():
+    result = sample_assessment()
+    signal = next(s for s in result.subsignals if s.name == 'sector')
+    signal.history.loc[4, ['estimate_coverage', 'covered_companies']] = [.3, 3]
+    caption = views.panel_caption(signal, 'sector')
+    assert 'Too few estimates: Drug Manufacturers - General (3 of 8 firms)' in caption
+
+
+def test_fed_changes_are_drawn_on_the_probability_chart(saved, wire, monkeypatch):
+    from matplotlib.figure import Figure
+    from matplotlib.text import Text
+    from buysignal.analysis import signal_charts
+    store, token, result = saved
+    interactive.handle_callback(query(token, 'fed_rate'), store)
+    caption, markup, _, _ = wire[0][-1]
+    assert 'higher rates expected by Apr 2027' in caption and 'Rate now 3.75–4.00%' in caption
+    assert not any('change' in text.lower() for text in labels(markup))
+    drawn = []
+    original = Figure.savefig
+    monkeypatch.setattr(Figure, 'savefig', lambda figure, *a, **k: drawn.extend(t.get_text() for t in figure.findobj(Text)) or original(figure, *a, **k))
+    signal = next(s for s in result.subsignals if s.name == 'fed_rate')
+    assert signal_charts._render_signal_chart(signal)
+    # Same meeting, same target range: the move since the prior reading sits under each share.
+    assert '▼ 4' in drawn and '▲ 4' in drawn and '▲▼ points since 1 Nov' in drawn
+    assert {'Lower', 'Same', 'Higher'} <= set(drawn) and 'By 28 Apr 2027' in drawn
+
+
+def test_trend_and_move_size_are_part_of_each_index_panel(saved, wire):
     store, token, _ = saved
+    for view, title in (('market_dip', 'S&amp;P 500 (SPY)'), ('index_DOW', 'Dow Jones')):
+        interactive.handle_callback(query(token, view), store)
+        caption, markup, _, _ = wire[0][-1]
+        assert title in caption
+        assert '200-day avg' in caption and 'Price vs avg' in caption and "Week's move" in caption
+        assert not any('trend' in text.lower() or 'intensity' in text.lower() for text in labels(markup))
+    assert '· in a dip' in wire[0][0][0] and '· in a dip' not in wire[0][1][0]  # the dip is judged on SPY only
+    assert 'Dip line' not in wire[0][0][0]  # thresholds are drawn on the chart, not listed
+
+
+def test_range_buttons_switch_the_chart_and_keep_the_selected_index(saved, wire):
+    store, token, _ = saved
+    interactive.handle_callback(query(token, 'index_NASDAQ'), store)
+    _, markup, default_png, _ = wire[0][-1]
+    assert '● 1Y' in labels(markup) and '● Nasdaq' in labels(markup) and '3M' in labels(markup)
+    target = next(b['callback_data'] for row in markup['inline_keyboard'] for b in row if b['text'] == '3M')
+    assert target.endswith(':index_NASDAQ@3m')
+    interactive.handle_callback(query(token, 'index_NASDAQ@3m'), store)
+    caption, markup, png, _ = wire[0][-1]
+    assert '<b>Nasdaq</b>' in caption
+    assert png == store.chart_bytes(token, 'market_dip:NASDAQ@3m') and png != default_png
+    assert '● 3M' in labels(markup) and '1Y' in labels(markup)
+    # Changing index keeps the chosen range; the default range needs no suffix.
+    dow = next(b['callback_data'] for row in markup['inline_keyboard'] for b in row if b['text'] == 'Dow')
+    assert dow.endswith(':index_DOW@3m')
+    assert all(len(b['callback_data'].encode()) <= 64 for row in markup['inline_keyboard'] for b in row)
+
+
+def test_ranges_follow_the_available_history():
+    from buysignal.analysis.signal_charts import available_ranges
+    dates = pd.bdate_range(end='2026-11-02', periods=3000)
+    long = SubSignal('vix', 20, 'none', '', history=pd.DataFrame({'date': dates, 'vix': 20.}))
+    assert available_ranges(long) == ('3m', '1y', '5y', 'max')
+    short = SubSignal('vix', 20, 'none', '', history=long.history.tail(300))
+    assert available_ranges(short) == ('3m', '1y', 'max')  # no "5Y" button that would show 14 months
+    tiny = SubSignal('vix', 20, 'none', '', history=long.history.tail(40))
+    assert available_ranges(tiny) == ('1y',)
+    monthly = SubSignal('margin_debt', 0, 'leveraging', '', history=pd.DataFrame({'month': pd.date_range('1997-01-01', periods=357, freq='MS'), 'debit_balances': 1.}))
+    assert available_ranges(monthly) == ('1y', '5y', 'max')
+    assert available_ranges(SubSignal('fed_rate', 0, 'flat', '', history=pd.DataFrame({'a': [1]}))) == ()
+
+
+def test_buttons_from_reports_sent_before_the_redesign_still_open(tmp_path, wire):
+    import time
+    store = SnapshotStore(tmp_path)
+    token = 'abcdef123456'
+    store._write(token, {'created': time.time(), 'sent_at': NOW.isoformat(), 'panel': None})
+    store._write_views(token, {'created': time.time(), 'panel': None, 'file_ids': {}, 'views': {
+        'fed_changes': {'caption': 'Old probability changes', 'keyboard': {'inline_keyboard': []}, 'chart_key': None}}})
     interactive.handle_callback(query(token, 'fed_changes'), store)
-    text = wire[0][0][0]
-    assert 'percentage points (pp)' in text and 'Hike -4.0 pp' in text
-    assert 'Compared with 2026-11-01' in text
-    assert 'Data 2026-11-02' in text
+    assert wire[0][-1][0] == 'Old probability changes'
+
+
+def test_background_ranges_are_announced_until_drawn_and_never_plotted_on_click(tmp_path, wire, monkeypatch):
+    import threading
+    from buysignal.telegram_bot import snapshots
+    release, drawn = threading.Event(), []
+    def render(signal, range_key='1y'):
+        if range_key != '1y' or signal.metrics.get('chart_index', 'SPY') != 'SPY':
+            assert release.wait(5)
+        drawn.append((signal.name, signal.metrics.get('chart_index'), range_key))
+        return b'png:' + signal.name.encode() + range_key.encode()
+    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', render)
+    store = SnapshotStore(tmp_path, background=True)
+    token = store.save(sample_assessment(), NOW)
+    # Only each section's default chart is drawn before the overview can be sent.
+    assert sorted(name for name, _, _ in drawn) == sorted(['market_dip', 'vix', 'fed_rate', 'margin_debt', 'sector', 'credit', 'yield_curve'])
+    interactive.handle_callback(query(token, 'vix'), store)
+    assert len(wire[0]) == 1
+    interactive.handle_callback(query(token, 'vix@3m'), store)
+    assert len(wire[0]) == 1 and 'Tap again' in wire[1][-1]
+    release.set()
+    store.drain()
+    assert not store.load_views(token)['pending']
+    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', lambda *a: pytest.fail('Buttons must not plot'))
+    interactive.handle_callback(query(token, 'vix@3m'), store)
+    assert wire[0][-1][2] == b'png:vix3m'
+    # A chart still marked pending long after the report (e.g. a restart) falls back to its caption.
+    manifest = store.load_views(token)
+    manifest['pending'] = {'credit:@3m': manifest['created'] - snapshots.PENDING_GRACE_SEC - 1}
+    (store._asset_path(token, 'credit:@3m')).unlink()
+    store._write_views(token, manifest)
+    interactive.handle_callback(query(token, 'credit@3m'), store)
+    assert '<b>Credit spread</b>' in wire[0][-1][0] and wire[0][-1][2] is None
 
 
 def test_close_only_deletes_the_panel_not_the_overview(saved, wire, monkeypatch):
@@ -234,7 +337,9 @@ def test_overview_has_attached_buttons_in_one_send(telegram, tmp_path, monkeypat
     assert transport.send_report(report)
     assert len(posts) == 1 and posts[0][0].endswith('/sendMessage')
     buttons = posts[0][1]['json']['reply_markup']['inline_keyboard']
-    assert len([b for row in buttons for b in row]) == 7
+    assert [len(row) for row in buttons] == [4, 3]
+    # The five conditions in checklist order, then context.
+    assert [b['text'] for row in buttons for b in row] == ['VIX', 'Fed', 'Margin', 'Index', 'EPS', 'Credit', 'Curve']
     assert all(len(b['callback_data'].encode()) <= 64 for row in buttons for b in row)
 
 
@@ -245,12 +350,12 @@ def test_vix_high_uses_intraday_highs_and_flags_new_high():
         signal = vix_signal.score(vix=29.)
     assert signal.metrics['recent_peak'] == 30
     assert signal.metrics['from_peak'] == pytest.approx(29/30-1)
-    assert '20d high' in views.numeric_line(signal)
-    assert 'HIGH' not in views.numeric_line(signal)
+    assert re.search(r'20-day high +30.0\n', views.panel_caption(signal, 'vix'))
     history.loc[history.index[-1], ['vix','high']] = 31.
     with patch.object(vix_signal, 'daily_history', return_value=history), patch.object(vix_signal, 'vix_change_pct', return_value=.2):
         signal = vix_signal.score(vix=31.)
-    assert 'AT 20D HIGH' in views.numeric_line(signal)
+    assert re.search(r'20-day high +31.0\n', views.panel_caption(signal, 'vix'))
+    assert '<b>VIX</b> · high fear' in views.panel_caption(signal, 'vix')
 
 
 def test_absolute_times_use_zagreb_daylight_saving_rules(monkeypatch):
@@ -262,7 +367,7 @@ def test_absolute_times_use_zagreb_daylight_saving_rules(monkeypatch):
 def test_command_panel_delivery_binds_buttons_to_its_message(telegram, tmp_path, monkeypatch):
     store = SnapshotStore(tmp_path)
     monkeypatch.setattr(app, '_snapshot_store', store)
-    monkeypatch.setattr(app.signal_charts, 'render_signal_chart', lambda s: b'png')
+    monkeypatch.setattr(app.signal_charts, 'render_signal_chart', lambda s, r=None: b'png')
     monkeypatch.setattr(transport.requests, 'post', lambda *a, **kw: response({'ok':True,'result':{'message_id':123}}))
     signal = next(s for s in sample_assessment().subsignals if s.name == 'fed_rate')
     report = app._single_signal(lambda: signal)

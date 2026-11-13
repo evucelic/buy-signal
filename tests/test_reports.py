@@ -1,10 +1,12 @@
 """Readable report sections, bounded Telegram HTML and graphs from exact snapshots."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from io import BytesIO
 from unittest.mock import patch
 
+import html
 import numpy as np
 import pandas as pd
 import pytest
@@ -12,8 +14,8 @@ from PIL import Image
 
 from buysignal.analysis.signal_charts import render_signal_chart
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal
-from buysignal.signals import market_signal, trend_signal
+from buysignal.signals.buy_signal import BuySignal, assess
+from buysignal.signals import market_signal
 from buysignal.telegram_bot import render
 from buysignal.telegram_bot.html_chunks import split_html
 
@@ -57,26 +59,50 @@ def test_report_is_one_numeric_overview_with_absolute_times():
     report = render.signal_report(result, [(s.name, NOW) for s in result.subsignals], NOW)
     assert len(report.messages) == 1
     text = report.messages[0].text
-    assert "4/5" in text and "-7.1%" in text
-    assert "410 bp" in text and "1,355,103 USD m" in text
-    assert "Sent 2026-11-02 20:00 CET" in text
-    assert "Refreshed" in text and "ago" not in text
-    assert "NASDAQ" in text and "DOW" in text
+    assert text.startswith("<pre>CHECKLIST  4 of 5\n")
+    sheet = html.unescape(text.split("<pre>")[1].split("</pre>")[0])
+    assert sheet.startswith(
+        "CHECKLIST  4 of 5\n"
+        "[x] Fear    VIX 25.0\n"
+        "[ ] Fed     higher 79% Apr 27\n"
+        "[x] Margin  -2.0% in Sep\n"
+        "[x] Dip     SPY -7.1% vs high\n"
+        "[x] EPS     4 of 5 up\n"
+    )
+    assert "CONTEXT\nCredit  212 bp\nCurve   +0.80 pp\n" in sheet and "line" not in sheet
+    assert max(len(line) for line in sheet.splitlines()) <= 32  # a phone shows the sheet without wrapping
+    assert "AFTER" not in sheet and "Jobs" not in sheet and "Recession" not in sheet
+    assert "Report 2026-11-02 20:00 CET" in text
+    assert "last refresh" in text and "ago" not in text
+    assert "Nasdaq" in text and "Dow" in text
     assert len(text.encode("utf-16-le")) // 2 < 4096
     plain(text)
 
 
-def test_missing_required_data_remains_unknown_in_summary():
-    result = BuySignal(0, "incomplete", 0, [], missing_signals=["fed_rate"])
+def test_missing_required_data_stays_in_the_count_and_is_named():
+    result = assess([], ["fed_rate"])
     text = render.signal_report(result, [], NOW).messages[0].text
-    assert "Incomplete entry assessment" in text
-    assert "Fed Rate</b>: unknown" in text
-    assert "0/1" in text
+    assert text.startswith("<pre>CHECKLIST  0 of 5 incomplete\n[?] Fear    no data\n[?] Fed     no data\n")
+    assert "⚠️ No current data: Fear, Fed, Margin, Dip, EPS" in text
+    assert "Credit  no data" in text
+
+
+def test_checklist_boxes_show_pass_fail_and_stale():
+    vix = SubSignal("vix", 34., "strong", "", passes=True)
+    fed = SubSignal("fed_rate", .2, "flat", "", passes=True)
+    stale = SubSignal("market_dip", -.07, "flat", "", passes=False, metrics={"stale": True, "index_changes": {}})
+    margin = SubSignal("margin_debt", .01, "leveraging", "", passes=False, observed_at="2026-09-01")
+    text = html.unescape(render.signal_report(assess([vix, fed, stale, margin]), [], NOW).messages[0].text)
+    assert "CHECKLIST  2 of 5 incomplete" in text
+    assert "[x] Fear    VIX 34.0 high" in text
+    assert "[ ] Margin  +1.0% in Sep" in text
+    assert "[?] Dip     SPY -7.0% vs high" in text
+    assert "No current data: Dip, EPS" in text
 
 
 def test_verbose_source_descriptions_do_not_leak_into_overview():
     signal = SubSignal("sector", 1, "growing", "A & B " * 2000, passes=True)
-    report = render.signal_report(BuySignal(1, "strong", 1, [signal]), [], NOW)
+    report = render.signal_report(assess([signal]), [], NOW)
     assert len(report.messages) == 1
     assert 'A &amp; B' not in report.messages[0].text
     plain(report.messages[0].text)
@@ -113,8 +139,8 @@ def test_every_supported_chart_is_a_mobile_sized_png(kind):
     png = render_signal_chart(signal)
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
     image = Image.open(BytesIO(png))
-    assert image.width >= 600 and image.height >= 800
-    assert image.height > image.width  # portrait charts fit a phone message bubble
+    # Near-square: Telegram shows it at full bubble width, with caption and buttons on one screen.
+    assert image.width >= 700 and .85 <= image.height / image.width <= 1.2
     assert len(png) < 10_000_000
 
 
@@ -128,8 +154,8 @@ def test_routine_report_is_clinical_without_repeated_coaching():
     text = '\n'.join(part.text for part in report.messages).lower()
     for phrase in ('probability of profit', 'safe bottom', 'room to consider', 'chance of a rebound', 'investigate before acting'):
         assert phrase not in text
-    assert 'data / last successful refresh' in text
-    assert 'sent 2026-11-02' in text
+    assert 'data as of' in text
+    assert 'report 2026-11-02' in text
 
 
 def test_valuation_report_keeps_facts_without_allocation_advice(make_opportunity):
@@ -147,22 +173,24 @@ def test_telegram_overview_tables_fit_a_small_phone_at_normal_monospace_size():
     result = sample_assessment()
     text = render.signal_report(result, [(s.name, NOW) for s in result.subsignals], NOW).messages[0].text
     tables = re.findall(r'<pre>(.*?)</pre>', text, flags=re.S)
-    assert len(tables) == 2
-    assert all(len(line) <= 33 for table in tables for line in plain(table).splitlines())
-    assert 'Trend:' not in text and 'intensity:' not in text
+    assert len(tables) == 1
+    assert all(len(line) <= 33 for table in tables for line in html.unescape(table).splitlines())
+    assert 'intensity' not in text and 'volatility' not in text
 
 
 def test_telegram_detail_pages_use_supported_html_and_fit_photo_caption_limit():
     from scripts.preview_entry_report import sample_assessment
     from buysignal.telegram_bot import views
-    signals = {s.name:s for s in sample_assessment().subsignals}
-    for view in views.VIEWS - {'close'}:
-        key = ('market_dip' if view.startswith('index_') or view == 'market_info' else
-               'sector' if view == 'eps_info' else 'fed_rate' if view == 'fed_changes' else view)
-        pages = views.caption_pages(views.panel_caption(signals[key], view, NOW.isoformat()))
-        for page in pages:
-            plain(page)  # balanced HTML, including ampersands and non-ASCII characters
-            assert len(page.encode('utf-16-le')) // 2 <= 950 < 1024
+    from buysignal.telegram_bot import prepared
+    planned, _ = prepared.plan(sample_assessment(), 'abcdef123456', NOW.isoformat())
+    assert {'market_dip', 'index_NASDAQ', 'vix', 'fed_rate', 'margin_debt', 'sector', 'credit', 'yield_curve'} <= set(planned)
+    for item in planned.values():
+        plain(item['caption'])  # balanced HTML, including ampersands and non-ASCII characters
+        assert len(item['caption'].encode('utf-16-le')) // 2 <= 950 < 1024
+        # Every number sits in one aligned table that a phone shows without wrapping.
+        tables = item['caption'].split('<pre>')[1:]
+        assert len(tables) == 1
+        assert max(len(line) for line in html.unescape(tables[0].split('</pre>')[0]).splitlines()) <= 32
 
 
 def test_phone_chart_titles_fit_inside_uploaded_image(monkeypatch):
@@ -170,15 +198,34 @@ def test_phone_chart_titles_fit_inside_uploaded_image(monkeypatch):
     from buysignal.analysis import signal_charts
     from scripts.preview_entry_report import sample_assessment
     original = Figure.savefig
+    from matplotlib.text import Text
     def checked_save(figure, *args, **kwargs):
         figure.canvas.draw()
         renderer = figure.canvas.get_renderer()
+        # Matplotlib keeps label objects for ticks beyond the axis limits without drawing them.
+        undrawn = set()
         for ax in figure.axes:
-            title = ax._left_title
-            bounds = title.get_window_extent(renderer)
-            assert bounds.x0 >= 0 and bounds.x1 <= figure.bbox.width + 1, title.get_text()
+            for axis in (ax.xaxis, ax.yaxis):
+                low, high = sorted(axis.get_view_interval())
+                for tick in [*axis.get_major_ticks(), *axis.get_minor_ticks()]:
+                    if not low <= tick.get_loc() <= high:
+                        undrawn.update((id(tick.label1), id(tick.label2)))
+        # Margins are fixed, so every heading, label and tick must be measured against the canvas.
+        for text in figure.findobj(Text):
+            if id(text) in undrawn or not text.get_visible() or not text.get_text().strip():
+                continue
+            bounds = text.get_window_extent(renderer)
+            assert bounds.x0 >= -1 and bounds.x1 <= figure.bbox.width + 1, text.get_text()
+            assert bounds.y0 >= -1 and bounds.y1 <= figure.bbox.height + 1, text.get_text()
         return original(figure, *args, **kwargs)
     monkeypatch.setattr(Figure, 'savefig', checked_save)
+    rendered = 0
     for signal in sample_assessment().subsignals:
-        if signal.name != 'trend':
-            assert signal_charts._render_signal_chart(signal)
+        if signal.history is None:
+            continue
+        for index in (('SPY', 'NASDAQ', 'DOW', 'EURO50') if signal.name == 'market_dip' else (None,)):
+            shown = signal if index is None else replace(signal, metrics={**signal.metrics, 'chart_index': index})
+            for range_key in signal_charts.available_ranges(shown, index) or (signal_charts.DEFAULT_RANGE,):
+                assert signal_charts._render_signal_chart(shown, range_key)
+                rendered += 1
+    assert rendered >= 20

@@ -123,8 +123,6 @@ CREDIT_CHANGE_SESSIONS = (5, 21)
 CREDIT_STRESS_PERCENTILE = 0.80    # stressed = at or above this share of its own recent readings
 CREDIT_STRESS_WINDOW = 2520        # about 10 years of sessions
 CREDIT_STRESS_MIN_OBS = 1260       # fewer than about 5 years cannot define "stressed"
-CREDIT_ELEVATED_SPREAD = 5.0       # descriptive threshold, not an optimized entry rule
-CREDIT_CHANGE_NOISE_BP = 10.0     # smaller monthly moves described as broadly stable
 CREDIT_MAX_OBSERVATION_AGE_DAYS = 7  # calendar-day tolerance for weekends/holidays
 
 # --- Equity opportunity analyzer (#8): which segment looks attractive ---------
@@ -173,6 +171,7 @@ DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central
 LIVE_CACHE_TTL_SEC = int(os.environ.get("LIVE_CACHE_TTL_SEC", "300"))
 YAHOO_TIMEOUT_SEC = 20
 TELEGRAM_CHARTS = os.environ.get("TELEGRAM_CHARTS", "1") != "0"
-TELEGRAM_CHART_DPI = int(os.environ.get("TELEGRAM_CHART_DPI", "120"))
+# 150 DPI on the 6-inch canvas is 900 px wide: sharp on a phone without Telegram upscaling it.
+TELEGRAM_CHART_DPI = int(os.environ.get("TELEGRAM_CHART_DPI", "150"))
 CHART_CACHE_MAX_BYTES = int(os.environ.get("CHART_CACHE_MAX_MB", "8")) * 1024 * 1024
 CHROME_VERBOSE_LOG = os.environ.get("CHROME_VERBOSE_LOG", "0") == "1"

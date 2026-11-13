@@ -20,7 +20,7 @@ def response(result=None,status=200,description=''):
 
 @pytest.fixture
 def report(tmp_path,monkeypatch):
-    monkeypatch.setattr(prepared.signal_charts,'render_signal_chart',lambda s:b'png:'+s.name.encode()+s.metrics.get('chart_index','').encode())
+    monkeypatch.setattr(prepared.signal_charts,'render_signal_chart',lambda s,r=None:b'png:'+s.name.encode()+s.metrics.get('chart_index','').encode()+(r or '').encode())
     store=SnapshotStore(tmp_path)
     token=store.save(sample_assessment(),NOW)
     return store,token

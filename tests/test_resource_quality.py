@@ -119,7 +119,7 @@ def test_repeated_chart_uses_cached_png_with_a_bounded_budget(monkeypatch):
         signal_charts._CACHE.clear()
         signal_charts._CACHE_BYTES = 0
     monkeypatch.setattr(signal_charts, "CHART_CACHE_MAX_BYTES", 12)
-    monkeypatch.setattr(signal_charts, "_render_signal_chart", lambda s: b"12345678")
+    monkeypatch.setattr(signal_charts, "_render_signal_chart", lambda s, r=None: b"12345678")
     first = SubSignal("vix", 20, "none", "", history=pd.DataFrame({"vix": [20.]}))
     second = SubSignal("vix", 21, "none", "", history=pd.DataFrame({"vix": [21.]}))
     assert signal_charts.render_signal_chart(first) == b"12345678"

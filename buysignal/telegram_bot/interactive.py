@@ -1,7 +1,9 @@
 """Fast navigation over prepared report views; no scoring, collection or plotting."""
 import threading
+import time
 
 from buysignal.telegram_bot import transport, views
+from buysignal.telegram_bot.snapshots import PENDING_GRACE_SEC
 
 _NAVIGATION_LOCK = threading.Lock()
 
@@ -13,7 +15,7 @@ def handle_callback(query, store):
         return
     _, token, requested = raw
     base, _, page = requested.partition('~')
-    if base not in views.VIEWS or (page and (not page.isdigit() or int(page) > 10)):
+    if not views.is_view(base) or (page and (not page.isdigit() or int(page) > 10)):
         transport.answer_callback(query['id'], 'Unknown view.')
         return
     with _NAVIGATION_LOCK:
@@ -23,7 +25,7 @@ def handle_callback(query, store):
             transport.answer_callback(query['id'], 'This report has expired. Use /signal for a new overview.')
             return
         panel = manifest.get('panel')
-        if base == 'close':
+        if requested == 'close':
             transport.answer_callback(query['id'])
             if panel and panel['message_id'] == query.get('message', {}).get('message_id'):
                 if transport.close_panel(panel['message_id']):
@@ -33,10 +35,15 @@ def handle_callback(query, store):
         if item is None:
             transport.answer_callback(query['id'], 'This section is unavailable in this report.')
             return
+        chart_key = item['chart_key']
+        queued_at = manifest.get('pending', {}).get(chart_key)
+        if queued_at is not None and time.time() - queued_at < PENDING_GRACE_SEC:
+            # Drawn in the background right after the report is sent; never on a click.
+            transport.answer_callback(query['id'], 'Drawing this chart. Tap again in a few seconds.')
+            return
         transport.answer_callback(query['id'])
         if panel and panel.get('view') == requested and (panel.get('photo') or not item['chart_key']):
             return
-        chart_key = item['chart_key']
         same_chart = panel and panel.get('photo') and chart_key and panel.get('chart_key') == chart_key
         media = None
         cached_id = manifest['file_ids'].get(chart_key)
