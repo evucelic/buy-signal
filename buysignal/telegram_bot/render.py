@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from buysignal.schedule.journal import CollectorStatus
-from buysignal.signals.base import SubSignal, format_table
+from buysignal.signals.base import format_table
 from buysignal.signals.buy_signal import BuySignal
 from buysignal.telegram_bot.messages import Report, ReportMessage
 
@@ -22,47 +22,6 @@ ALERT_LABELS = {
     "soft": ("🟡", "Soft signal"),
     "strong": ("🟢", "Entry conditions aligned"),
     "incomplete": ("⚠️", "Incomplete entry assessment"),
-}
-
-SIGNAL_META = {
-    "vix": ("🌡️", "VIX"),
-    "fed_rate": ("🏦", "Fed Rate"),
-    "margin_debt": ("💳", "Margin Debt"),
-    "market_dip": ("📊", "SPY Drawdown"),
-    "trend": ("🧭", "Market Trend"),
-    "credit": ("🏦", "Corporate Credit"),
-    "sector": ("🏭", "Leading Industries"),
-    "yield_curve": ("〽️", "Yield Curve"),
-}
-
-STATE_LABELS = {
-    ("vix", "strong"): "🔴 High fear",
-    ("vix", "soft"): "🟡 Elevated",
-    ("vix", "none"): "⚪ Calm",
-    ("fed_rate", "hiking"): "📈 Hiking",
-    ("fed_rate", "cutting"): "📉 Cutting",
-    ("fed_rate", "no_change"): "➡️ No change",
-    ("fed_rate", "flat"): "🤔 Mixed",
-    ("margin_debt", "deleveraging"): "📉 Deleveraging",
-    ("margin_debt", "leveraging"): "📈 Leveraging up",
-    ("trend", "uptrend"): "📈 Established uptrend",
-    ("trend", "under_pressure"): "🟠 Trend under pressure",
-    ("trend", "downtrend"): "📉 Established downtrend",
-    ("trend", "recovering"): "↗️ Above falling SMA200",
-    ("trend", "unknown"): "Unknown",
-    ("credit", "widening"): "🟠 Widening",
-    ("credit", "narrowing"): "🟢 Narrowing",
-    ("credit", "stable"): "➡️ Broadly stable",
-    ("credit", "unknown"): "Insufficient change history",
-    ("market_dip", "dip"): "🔻 DD63 threshold met",
-    ("market_dip", "flat"): "▫️ Drawdown condition not met",
-    ("market_dip", "growth"): "📈 Growth",
-    ("sector", "growing"): "📈 Growing",
-    ("sector", "flat"): "➡️ Flat",
-    ("yield_curve", "steep"): "📈 Steep",
-    ("yield_curve", "flat"): "➡️ Flat/normal",
-    ("yield_curve", "inverted"): "⚠️ Inverted",
-    ("yield_curve", "deep_inversion"): "🚨 Deep inversion",
 }
 
 # Short row labels for the monospace table only (chart legends/notes keep the full config label).
@@ -75,7 +34,7 @@ TABLE_LABELS = {
 
 # Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
-    {"command": "signal", "description": "Entry overview and chart buttons"},
+    {"command": "signal", "description": "Entry checklist, with chart buttons"},
     {"command": "portfolio", "description": "Your ETF prices and recorded positions"},
     {"command": "whattobuy", "description": "Compare segment valuations"},
     {"command": "buy", "description": "Record a purchase: /buy 10 VUAA @ 151.25"},
@@ -87,7 +46,7 @@ COMMANDS = [
 
 HELP_TEXT = (
     "Commands:\n"
-    "/signal — entry overview and charts\n"
+    "/signal — entry checklist, with charts\n"
     "/portfolio — your ETF prices and positions\n"
     "/whattobuy — segment valuations\n"
     "/trades — purchase history\n"
@@ -97,7 +56,7 @@ HELP_TEXT = (
     "bought 10 VUAA @ 151.25\n"
     "or /buy 10 VUAA @ 151.25 USD on 2026-11-05 fees 1.00\n"
     "No date = today. /voidtrade ID corrects a record.\n\n"
-    "Shortcuts: /holdings /vix /dip /fedrate /margin /sector /curve /credit /trend"
+    "Shortcuts: /holdings /vix /fedrate /margin /dip /sector /credit /curve"
 )
 
 _STATUS_ERROR_WIDTH = 40  # a stack-trace-shaped error still has to fit a phone screen
@@ -122,11 +81,6 @@ def fmt(value: float | None, spec: str = ".1f") -> str:
     return "n/a" if value is None else format(value, spec)
 
 
-def _bullets(detail: str) -> str:
-    """Split a ' | '-joined detail string into one escaped bullet per fragment."""
-    return "\n".join(f"• {esc(part.strip())}" for part in detail.split(" | "))
-
-
 def humanize_age(updated_at: datetime | None, now: datetime) -> str:
     if updated_at is None:
         return "no cache"
@@ -138,33 +92,6 @@ def humanize_age(updated_at: datetime | None, now: datetime) -> str:
     if secs < 86400:
         return f"{int(secs // 3600)}h ago"
     return f"{int(secs // 86400)}d ago"
-
-
-def subsignal_block(s: SubSignal) -> str:
-    icon, display_name = SIGNAL_META.get(s.name, ("•", s.name))
-    mark = "ℹ️" if s.advisory else ("✅" if s.passes else "❌")
-    state_label = STATE_LABELS.get((s.name, s.state), s.state)
-    header = f"{mark} {icon} <b>{esc(display_name)}</b>: {esc(state_label)}"
-    body = f"<pre>{esc(s.table)}</pre>" if s.table else _bullets(s.detail)
-    if s.footer:
-        body += f"\n{esc(s.footer)}"
-    return f"{header}\n{body}"
-
-
-def freshness_table(caches: list[tuple[str, datetime | None]], now: datetime) -> str:
-    """How old each cache is, from the (name, last write) pairs the caller looked up."""
-    rows = [[name, humanize_age(updated_at, now)] for name, updated_at in caches]
-    return "<pre>" + esc(format_table(["signal", "updated"], rows)) + "</pre>"
-
-
-def signal_message(result: BuySignal, caches: list[tuple[str, datetime | None]], now: datetime) -> str:
-    emoji, label = ALERT_LABELS.get(result.state, ("", result.state.upper()))
-    header = f"{emoji} <b>{esc(label)}</b> ({result.passing_count}/{result.required_count} conditions met)"
-    blocks = [subsignal_block(s) for s in result.subsignals]
-    if result.missing_signals:
-        blocks.append(f"⚠️ missing: {esc(', '.join(result.missing_signals))}")
-    blocks.append(f"🕓 <b>Data as of</b>\n{freshness_table(caches, now)}")
-    return "\n\n".join([header, *blocks])
 
 
 def signal_report(result: BuySignal, caches: list[tuple[str, datetime | None]], now: datetime) -> Report:

@@ -8,8 +8,10 @@ from copy import deepcopy
 import shutil
 from io import StringIO
 import json
+import logging
 import math
 from pathlib import Path
+import queue
 import re
 import secrets
 import threading
@@ -21,7 +23,14 @@ from buysignal import config
 from buysignal.signals.base import SubSignal
 from buysignal.signals.buy_signal import BuySignal, assess
 
+log = logging.getLogger(__name__)
 _LOCK = threading.RLock()
+# One worker draws the non-default ranges after a report is sent; buttons never plot.
+_JOBS: queue.Queue = queue.Queue()
+_WORKER_LOCK = threading.Lock()
+_worker: threading.Thread | None = None
+PENDING_GRACE_SEC = 180  # after this a chart still marked pending is treated as unavailable
+_CHART_KEY = re.compile(r'[a-z_]+:[A-Z0-9]*(@[a-z0-9]+)?')
 MAX_SNAPSHOTS = 32
 MAX_AGE_SEC = 14 * 86400
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -42,9 +51,14 @@ def _clean(value):
 
 
 class SnapshotStore:
-    def __init__(self, directory=None):
+    def __init__(self, directory=None, background=False):
         self.directory = Path(directory) if directory else config.DATA_DIR / 'reports'
         self._view_cache = OrderedDict()
+        # Off by default so a store is deterministic; the running bot turns it on.
+        self.background = background
+
+    def _asset_path(self, token, key):
+        return self.directory / 'assets' / token / (key.replace(':', '_').replace('@', '-') + '.png')
 
     def _path(self, token):
         if not re.fullmatch(r'[0-9a-f]{12}', token):
@@ -125,40 +139,83 @@ class SnapshotStore:
         while len(self._view_cache) > 8:
             self._view_cache.popitem(last=False)
 
+    def _store_chart(self, token, key, png, used):
+        """Write one PNG atomically; return the report's asset total, or None when over budget."""
+        if png is None or used + len(png) > MAX_REPORT_ASSET_BYTES:
+            return None
+        target = self._asset_path(token, key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix('.tmp')
+        temporary.write_bytes(png)
+        temporary.replace(target)
+        return used + len(png)
+
     def prepare(self, token, result, sent_at):
         from buysignal.telegram_bot import prepared
         # Heavy work runs outside the snapshot lock; existing reports remain navigable.
-        captions, charts = prepared.build(result, token, sent_at)
-        manifest = {'created': time.time(), 'views': captions, 'panel': None, 'file_ids': {}}
-        total = 0
-        assets = self.directory / 'assets' / token
-        assets.mkdir(parents=True, exist_ok=True)
-        for key, png in charts.items():
-            total += len(png)
-            if total > MAX_REPORT_ASSET_BYTES:
-                for item in captions.values():
-                    if item['chart_key'] == key:
-                        item['chart_key'] = None
+        captions, jobs = prepared.plan(result, token, sent_at)
+        # Likeliest taps first: other ranges of the charts already shown, then the other indexes.
+        later = sorted((job for job in jobs if not job.primary), key=prepared.background_order) if self.background else []
+        used, missing = 0, set()
+        for job in jobs:
+            if self.background and not job.primary:
                 continue
-            target = assets / (key.replace(':', '_') + '.png')
-            temporary = target.with_suffix('.tmp')
-            temporary.write_bytes(png)
-            temporary.replace(target)
+            total = self._store_chart(token, job.key, prepared.render(job), used)
+            if total is None:
+                missing.add(job.key)
+            else:
+                used = total
+        for item in captions.values():
+            if item['chart_key'] in missing:
+                item['chart_key'] = None
+        manifest = {'created': time.time(), 'views': captions, 'panel': None, 'file_ids': {},
+                    'pending': {job.key: time.time() for job in later}}
         with _LOCK:
             # Keep the original expiry, including for reports prepared after a restart.
             source = json.loads(self._path(token).read_text())
             manifest['created'] = source['created']
             manifest['panel'] = source.get('panel')
             self._write_views(token, manifest)
-            all_assets = self.directory / 'assets'
-            size = sum(p.stat().st_size for p in all_assets.rglob('*.png'))
-            for path in sorted(self.directory.glob('*.json'), key=lambda p: p.stat().st_mtime):
-                if size <= MAX_ASSET_BYTES:
-                    break
-                if path.stem != token:
-                    folder = all_assets / path.stem
-                    size -= sum(p.stat().st_size for p in folder.glob('*.png'))
-                    self._remove(path.stem)
+            self._trim_assets(token)
+        if later:
+            _JOBS.put((self, token, later, used))
+            _start_worker()
+
+    def _trim_assets(self, token):
+        all_assets = self.directory / 'assets'
+        size = sum(p.stat().st_size for p in all_assets.rglob('*.png'))
+        for path in sorted(self.directory.glob('*.json'), key=lambda p: p.stat().st_mtime):
+            if size <= MAX_ASSET_BYTES:
+                break
+            if path.stem != token:
+                folder = all_assets / path.stem
+                size -= sum(p.stat().st_size for p in folder.glob('*.png'))
+                self._remove(path.stem)
+
+    def _finish(self, token, jobs, used):
+        """Draw the remaining ranges one by one, publishing each as soon as it exists."""
+        from buysignal.telegram_bot import prepared
+        for job in jobs:
+            total = self._store_chart(token, job.key, prepared.render(job), used)
+            with _LOCK:
+                try:
+                    manifest = self.load_views(token)
+                except (OSError, ValueError, KeyError, TypeError):
+                    return  # the report expired or was evicted while its charts were drawn
+                manifest.get('pending', {}).pop(job.key, None)
+                if total is None:
+                    for item in manifest['views'].values():
+                        if item['chart_key'] == job.key:
+                            item['chart_key'] = None
+                else:
+                    used = total
+                self._write_views(token, manifest)
+        with _LOCK:
+            self._trim_assets(token)
+
+    def drain(self):
+        """Block until queued background charts are finished (tests, benchmarks, shutdown)."""
+        _JOBS.join()
 
     def load_views(self, token):
         self._path(token)  # validate the identifier before using it as a directory name
@@ -187,9 +244,9 @@ class SnapshotStore:
 
     def chart_bytes(self, token, key):
         self._path(token)
-        if not re.fullmatch(r'[a-z_]+:[A-Z0-9]*', key):
+        if not _CHART_KEY.fullmatch(key):
             raise ValueError('Invalid chart identifier')
-        path = self.directory / 'assets' / token / (key.replace(':', '_') + '.png')
+        path = self._asset_path(token, key)
         if path.stat().st_size > MAX_REPORT_ASSET_BYTES:
             raise ValueError('Invalid chart size')
         return path.read_bytes()
@@ -208,3 +265,22 @@ class SnapshotStore:
             manifest = self.load_views(token)
             manifest['panel'] = panel
             self._write_views(token, manifest)
+
+
+def _work():
+    while True:
+        store, token, jobs, used = _JOBS.get()
+        try:
+            store._finish(token, jobs, used)
+        except Exception:
+            log.exception('Background chart preparation failed')
+        finally:
+            _JOBS.task_done()
+
+
+def _start_worker():
+    global _worker
+    with _WORKER_LOCK:
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_work, name='report-charts', daemon=True)
+            _worker.start()

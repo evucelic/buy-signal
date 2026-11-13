@@ -5,7 +5,7 @@ the decision - whether an alert edge was crossed, whether the daily report is du
 command ran, and what reached the transport.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -125,6 +125,50 @@ def test_handle_tick_alert_edge_triggering(monkeypatch, sent, make_subsignal, ma
     app.handle_tick(not_alerting, None)
     assert len(sent) == 2
     assert "cleared" in sent[-1].lower()
+
+
+def _fear(state, score):
+    from buysignal.signals.base import SubSignal
+    from buysignal.signals.buy_signal import assess
+    return assess([SubSignal("vix", score, state, "", passes=state != "none")])
+
+
+def test_high_fear_gets_its_own_push_once_a_day(monkeypatch, sent):
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
+    morning = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    elevated, high, calm = _fear("soft", 25.), _fear("strong", 32.), _fear("none", 15.)
+
+    app.handle_tick(elevated, None, morning)
+    assert len(sent) == 1 and "Watch trigger active</b> (VIX elevated)" in sent[0]
+    app.handle_tick(high, None, morning + timedelta(hours=1))
+    assert len(sent) == 2 and sent[1].startswith("🔴 <b>High fear</b> (VIX at or above 30)")
+    app.handle_tick(high, None, morning + timedelta(hours=2))
+    app.handle_tick(elevated, None, morning + timedelta(hours=3))
+    app.handle_tick(high, None, morning + timedelta(hours=4))
+    assert len(sent) == 2  # sustained, or flapping around the line the same day: nothing more
+    app.handle_tick(elevated, None, morning + timedelta(days=1))
+    app.handle_tick(high, None, morning + timedelta(days=1, hours=1))
+    assert len(sent) == 3 and "High fear" in sent[2]
+    app.handle_tick(calm, None, morning + timedelta(days=1, hours=2))
+    assert len(sent) == 4 and "cleared" in sent[3].lower()
+
+
+def test_a_jump_straight_to_high_fear_sends_one_push_that_says_so(monkeypatch, sent):
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
+    now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    app.handle_tick(_fear("none", 15.), None, now)
+    app.handle_tick(_fear("strong", 34.), None, now + timedelta(hours=1))
+    app.handle_tick(_fear("strong", 36.), None, now + timedelta(hours=2))
+    assert len(sent) == 1 and "Watch trigger active</b> (VIX high fear)" in sent[0]
+
+
+def test_an_unknown_vix_neither_sets_nor_clears_high_fear(monkeypatch, sent):
+    from buysignal.signals.buy_signal import assess
+    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
+    now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    app.handle_tick(_fear("strong", 34.), None, now)
+    app.handle_tick(assess([]), None, now + timedelta(hours=1))
+    assert app._state.high_fear is True
 
 
 def test_handle_tick_records_last_tick_and_error():
@@ -373,7 +417,7 @@ def test_handle_message_signal(monkeypatch, make_buy_signal):
     fake = make_buy_signal([])
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
     monkeypatch.setattr(app, "market_open", lambda: True)
-    assert "No buy signal" in _text(app.handle_message("/signal"))
+    assert "CHECKLIST  0 of 5 incomplete" in _text(app.handle_message("/signal"))
 
 
 def test_handle_message_vix_respects_market_open_flag(monkeypatch, make_subsignal):
@@ -406,7 +450,7 @@ def test_handle_message_fedrate(monkeypatch, make_subsignal):
     # _SIGNAL_COMMANDS binds these score functions at import time, so patching
     # app.rate_signal.score wouldn't reach the already-bound dict entry -- patch the entry itself.
     monkeypatch.setitem(app._SIGNAL_COMMANDS, "/fedrate", lambda: make_subsignal("fed_rate", "flat", "x", passes=True))
-    assert "FedWatch" in _text(app.handle_message("/fedrate"))
+    assert "Fed outlook" in _text(app.handle_message("/fedrate"))
 
 
 def test_handle_message_margin(monkeypatch, make_subsignal):
@@ -418,7 +462,7 @@ def test_handle_message_margin(monkeypatch, make_subsignal):
 
 def test_handle_message_sector(monkeypatch, make_subsignal):
     monkeypatch.setitem(app._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
-    assert "Industry EPS" in _text(app.handle_message("/sector"))
+    assert "Earnings outlook" in _text(app.handle_message("/sector"))
 
 
 def test_handle_message_curve(monkeypatch, make_subsignal):
@@ -467,7 +511,7 @@ def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, mak
     with app._lock:
         app._state.last_result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
     reply = app.handle_message("/whattobuy")
-    assert "Buy signal (context): No buy signal" in reply
+    assert "Market read: No buy signal" in reply
 
 
 def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, monkeypatch):
@@ -533,7 +577,7 @@ def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatc
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
     reply = _text(app.handle_message("/refresh"))
     assert calls == [True]
-    assert "No buy signal" in reply
+    assert "CHECKLIST  0 of 5 incomplete" in reply
 
 
 def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_signal):

@@ -61,12 +61,14 @@ class _State:
     last_error: str | None = None
     last_result: BuySignal | None = None
     alerting: bool = False
+    high_fear: bool = False              # VIX was at or above the high-fear line at the last tick that knew it
+    high_fear_date: date | None = None   # CT date of the last high-fear push, so a day of flapping sends one
     last_report_date: date | None = None
 
 
 _state = _State(start_time=datetime.now(timezone.utc))
 _lock = threading.Lock()
-_snapshot_store = SnapshotStore()
+_snapshot_store = SnapshotStore(background=True)
 _portfolio_store = None
 _personal_service = None
 _portfolio_lock = threading.Lock()
@@ -167,12 +169,20 @@ def is_alerting(result: BuySignal) -> bool:
     return (vix is not None and vix.passes) or (dip is not None and dip.passes) or result.state == "strong"
 
 
+def high_fear(result: BuySignal) -> bool | None:
+    """VIX at or above the high-fear line; None when there is no current VIX reading."""
+    vix = next((s for s in result.subsignals if s.name == "vix"), None)
+    if not buy_signal.usable(vix):
+        return None
+    return vix.score >= config.VIX_STRONG
+
+
 def trigger_reasons(result: BuySignal) -> str:
     by_name = {s.name: s for s in result.subsignals}
     reasons = []
     vix = by_name.get("vix")
     if vix is not None and vix.passes:
-        reasons.append("VIX elevated")
+        reasons.append("VIX high fear" if high_fear(result) else "VIX elevated")
     dip = by_name.get("market_dip")
     if dip is not None and dip.passes:
         reasons.append("SPY dip")
@@ -243,8 +253,14 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
 
     with _notification_lock:
         alerting = is_alerting(result)
+        high_reading = high_fear(result)
+        high = bool(high_reading)
         with _lock:
             was_alerting = _state.alerting
+            # The one level whose history stands apart gets its own push, at most once a day.
+            high_is_news = high and not _state.high_fear and _state.high_fear_date != now_ct.date()
+            if high_reading is not None:
+                _state.high_fear = high
 
         if alerting and not was_alerting:
             reasons = trigger_reasons(result)
@@ -256,6 +272,14 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
             if delivered:
                 with _lock:
                     _state.alerting = True
+                    if high:
+                        _state.high_fear_date = now_ct.date()
+        elif high_is_news:
+            # Already on watch at a lower level; a report due this tick carries the news itself.
+            if due and _state.last_report_date == now_ct.date() or _deliver_report(
+                    result, "🔴 <b>High fear</b> (VIX at or above 30)\n\n", now=now):
+                with _lock:
+                    _state.high_fear_date = now_ct.date()
         elif was_alerting and not alerting and not (
             any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
             or set(result.missing_signals) & {'vix', 'market_dip'}

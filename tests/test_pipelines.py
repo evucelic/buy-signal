@@ -129,7 +129,7 @@ def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
         assess([signal]),
         [], pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
     )
-    assert any("SPY vs high" in part.text and "-10.0%" in part.text for part in report.messages)
+    assert any("SPY -10.0% vs high" in part.text for part in report.messages)
 
 
 def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):

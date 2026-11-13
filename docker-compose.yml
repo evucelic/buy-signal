@@ -37,7 +37,7 @@ services:
     env_file: .env
     environment:
       - TELEGRAM_CHARTS=${TELEGRAM_CHARTS:-1}
-      - TELEGRAM_CHART_DPI=${TELEGRAM_CHART_DPI:-120}
+      - TELEGRAM_CHART_DPI=${TELEGRAM_CHART_DPI:-150}
       - CHART_CACHE_MAX_MB=${CHART_CACHE_MAX_MB:-8}
       - LIVE_CACHE_TTL_SEC=${LIVE_CACHE_TTL_SEC:-300}
       - CF_BYPASS_HOST=cfbypass   # compose's internal DNS; config.py defaults to localhost otherwise
