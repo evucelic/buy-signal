@@ -161,7 +161,7 @@ def test_routine_report_is_clinical_without_repeated_coaching():
 def test_valuation_report_keeps_facts_without_allocation_advice(make_opportunity):
     opportunity = make_opportunity()
     opportunity.verdict = 'S&P 500 default; investigate before acting'
-    text = render.opportunity_message(opportunity, 1)
+    text = render.opportunity_message(opportunity)
     assert '20.0' in text and '15.0' in text
     assert 'Verdict:' not in text
     assert 'investigate before acting' not in text

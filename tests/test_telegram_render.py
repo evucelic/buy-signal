@@ -17,7 +17,7 @@ def _status(**overrides):
         "last_tick_at": None,
         "ok": True,
         "error": None,
-        "alert_state": None,
+        "read": None,
     }
     return render.RunnerStatus(**{**fields, **overrides})
 
@@ -53,7 +53,7 @@ def test_status_message_never_ticked():
 
 
 def test_status_message_ok_after_tick():
-    status = _status(last_tick_at=NOW, ok=True, alert_state="none")
+    status = _status(last_tick_at=NOW, ok=True, read="Calm, macro sound")
     assert "(ok)" in render.status_message(status, [], NOW)
 
 
@@ -62,9 +62,9 @@ def test_status_message_failed_after_tick():
     assert "FAILED (boom)" in render.status_message(status, [], NOW)
 
 
-def test_status_message_names_the_alert_state():
-    status = _status(alert_state="strong")
-    assert "Entry conditions aligned" in render.status_message(status, [], NOW)
+def test_status_message_names_the_read():
+    status = _status(read="Fear, macro deteriorating")
+    assert "read        Fear, macro deteriorating" in render.status_message(status, [], NOW)
 
 
 def test_status_message_lists_each_collectors_last_attempt():
@@ -131,11 +131,13 @@ def test_refresh_failures_lists_each_collector_and_escapes_it():
 
 
 def test_opportunity_message_is_rendered_from_the_opportunity_alone(make_opportunity):
-    message = render.opportunity_message(make_opportunity(), easing_obs_needed=1)
+    message = render.opportunity_message(make_opportunity())
 
     assert "What to buy" in message
-    assert "20.0" in message and "-25%" in message
-    assert "Fed rate at the next meeting: lower (78%)" in message
+    assert "20.0" in message and "5.0%" in message and "Over" in message
+    paid = render.opportunity_message(make_opportunity(), real=(.02, "2026-11-12"))
+    assert "S&amp;P 500   20.0  5.0% +3.0%" in paid and "Real 10y        2.0%" in paid and "real yield 2026-11-12" in paid
+    assert "<i>" not in message
     # Jargon and internal labels stay out of the message.
     for term in ("Small-cap band", "rate support", "relZ", "z-score"):
         assert term not in message
@@ -146,18 +148,13 @@ def test_opportunity_message_leads_with_the_owners_etfs_and_their_own_dips(make_
     opp.segments[0].etf, opp.segments[2].etf = "VUAA", "VWCG"
     opp.segments[2].fwd_z = 1.4
     dips = {"VUAA": {"drawdown": -.031}, "VWCG": {"drawdown": 0., "refresh_failed": True}}
-    message = render.opportunity_message(opp, 1, dips)
+    message = render.opportunity_message(opp, dips)
     table = message.split("<pre>")[1].split("</pre>")[0].splitlines()
-    assert [line.split()[0] for line in table[1:]] == ["VUAA", "VWCG", "Small"]
-    assert table[1].split() == ["VUAA", "20.0", "—", "-3.1%"]
-    assert table[2].split() == ["VWCG", "16.0", "-20%", "at", "high"]
+    assert [line.split()[0] for line in table[1:]] == ["VUAA", "VWCG", "SmallCap"]
+    assert table[1].split() == ["VUAA", "20.0", "5.0%", "-3.1%"]
+    assert table[2].split() == ["VWCG", "16.0", "6.2%", "0.0%"]
     assert max(map(len, table)) <= 33
-    assert "Against its own past: VWCG cheap" in message
+    assert "Own past: VWCG cheap" in message
     assert "Dip from cached prices: VWCG" in message
 
 
-def test_opportunity_message_names_the_buy_signal_context(make_opportunity):
-    opp = make_opportunity()
-    opp.buy_signal_state = "none"
-
-    assert "Market read: No buy signal" in render.opportunity_message(opp, 1)

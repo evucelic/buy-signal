@@ -52,3 +52,19 @@ def next_delay(now, store):
     future = [(s.alert_at - now).total_seconds() for s in sessions if s.alert_at > now]
     # Check at most hourly while quiet; wake exactly at a nearer deadline.
     return max(.1, min(3600, min(future))) if future else 3600
+
+
+def us_overlap(now, exchange):
+    """(start, end) of today's stretch when both `exchange` and New York are open.
+
+    None when New York is shut on a day `exchange` trades; False when `exchange` itself is shut.
+    """
+    now = now.astimezone(timezone.utc)
+    windows = []
+    for name in (exchange, 'XNYS'):
+        schedule = mcal.get_calendar(name).schedule(start_date=now.date(), end_date=now.date())
+        if schedule.empty:
+            return False if name == exchange else None
+        windows.append((schedule.iloc[0].market_open.to_pydatetime(), schedule.iloc[0].market_close.to_pydatetime()))
+    start, end = max(w[0] for w in windows), min(w[1] for w in windows)
+    return (start, end) if start < end else None

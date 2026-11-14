@@ -65,7 +65,6 @@ class Opportunity:
     verdict: str
     notes: list[str]
     history_obs: int             # unique monthly MSCI observations backing the z-scores
-    buy_signal_state: str | None = None  # context only, filled by the caller
 
 
 def _cheapness_z(series: pd.Series, current: float) -> float | None:

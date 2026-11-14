@@ -40,6 +40,8 @@ class PortfolioStore:
                     exchange TEXT NOT NULL, session_date TEXT NOT NULL, sent_at TEXT NOT NULL,
                     PRIMARY KEY (exchange,session_date)
                 );
+                CREATE TABLE IF NOT EXISTS targets (symbol TEXT PRIMARY KEY, weight TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS fees (name TEXT PRIMARY KEY, minimum TEXT NOT NULL, percent TEXT NOT NULL);
             ''')
 
     @contextmanager
@@ -81,6 +83,37 @@ class PortfolioStore:
         for item in result.values():
             item['average'] = item['cost'] / item['quantity']
         return result
+
+    def targets(self):
+        """The chosen mix as {symbol: share of the portfolio}; empty until /target sets one."""
+        with self.connection() as db:
+            return {row['symbol']: float(Decimal(row['weight']) / 100) for row in db.execute('SELECT * FROM targets')}
+
+    def set_targets(self, weights):
+        """Replace the mix. Weights are percentages of known listings and must total 100."""
+        cleaned = {resolve(symbol).symbol: number(weight, positive=False) for symbol, weight in weights.items()}
+        if len(cleaned) != len(weights):
+            raise ValueError('Name each ETF once.')
+        if sum(cleaned.values()) != 100:
+            raise ValueError(f'Weights must total 100; these total {sum(cleaned.values()):f}.')
+        with self.connection() as db:
+            db.execute('DELETE FROM targets')
+            db.executemany('INSERT INTO targets VALUES (?,?)', [(s, str(w)) for s, w in cleaned.items() if w > 0])
+        return self.targets()
+
+    def fees(self):
+        """{listing symbol or 'FX': (minimum per order, share of the order value)} as set by /fees."""
+        with self.connection() as db:
+            return {row['name']: (float(row['minimum']), float(Decimal(row['percent']) / 100)) for row in db.execute('SELECT * FROM fees')}
+
+    def set_fee(self, name, minimum, percent):
+        name = 'FX' if name.upper() == 'FX' else resolve(name).symbol
+        minimum, percent = number(minimum, positive=False), number(percent, positive=False)
+        if percent > 5:
+            raise ValueError('The percentage is per order, for example 0.05.')
+        with self.connection() as db:
+            db.execute('INSERT OR REPLACE INTO fees VALUES (?,?,?)', (name, str(minimum), str(percent)))
+        return name
 
     def void(self, trade_id):
         with self.connection() as db:
