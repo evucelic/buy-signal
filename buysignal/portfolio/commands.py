@@ -72,6 +72,52 @@ def handle(text, store, *, now=None, source_key=None):
             return f'Purchase #{row["id"]} voided. Holdings recalculated.'
         except ValueError as exc:
             return esc(str(exc))
+    if lower.startswith('/target'):
+        pairs = re.findall(r'([A-Za-z0-9.]+)\s+(\d+(?:\.\d+)?)', text[len('/target'):])
+        if not pairs or re.sub(r'([A-Za-z0-9.]+)\s+(\d+(?:\.\d+)?)|\s|%', '', text[len('/target'):]):
+            current = store.targets()
+            mix = ' '.join(f'{symbol} {weight:.0%}' for symbol, weight in current.items()) if current else 'not set'
+            return f'Mix: {esc(mix)}\nUse: /target VUAA 60 VWCG 20 AVWS 20'
+        try:
+            if len({symbol.upper() for symbol, _ in pairs}) != len(pairs):
+                raise ValueError('Name each ETF once.')
+            current = store.set_targets(dict(pairs))
+        except ValueError as exc:
+            return esc(str(exc))
+        return 'Mix set: ' + esc(' '.join(f'{symbol} {weight:.0%}' for symbol, weight in current.items()))
+    if lower.startswith('/fees'):
+        from buysignal.portfolio import plan
+        from buysignal.portfolio.instruments import INSTRUMENTS
+        argument = text[len('/fees'):].strip()
+        if argument.lower() in plan.IBKR:
+            for instrument in INSTRUMENTS:
+                minimum, rate = plan.IBKR[argument.lower()][instrument.currency]
+                store.set_fee(instrument.symbol, minimum, rate * 100)
+        elif argument:
+            match = re.fullmatch(r'([A-Za-z0-9.]+)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%?', argument)
+            if not match:
+                return ('Use: /fees tiered or /fees fixed (Interactive Brokers\' published rates)\n'
+                        'Your own: /fees VUAA 1.70 0.05 (minimum per order, then percent of the order)\nCurrency conversion: /fees FX 0 0.03')
+            try:
+                store.set_fee(*match.groups())
+            except ValueError as exc:
+                return esc(str(exc))
+        chosen = store.fees()
+        # The fee on the latest recorded purchase of each ETF: what the broker really took.
+        paid = {}
+        for purchase in reversed(store.purchases(limit=1000)):
+            if not purchase['voided_at']:
+                paid[purchase['symbol']] = float(purchase['fees'])
+        rows = []
+        for instrument in INSTRUMENTS:
+            minimum, rate = chosen.get(instrument.symbol) or plan.DEFAULT_FEES[instrument.currency]
+            rows.append(f'{instrument.symbol:<5}{minimum:>6.2f} {instrument.currency}{rate:>8.3%}'
+                        + (f'{paid[instrument.symbol]:>6.2f}' if instrument.symbol in paid else ''))
+        minimum, rate = chosen.get('FX') or plan.DEFAULT_FX
+        rows.append(f'{"FX":<5}{minimum:>6.2f} EUR{rate:>8.3%}')
+        unset = [name for name in [*(i.symbol for i in INSTRUMENTS), 'FX'] if name not in chosen]
+        note = '\nInteractive Brokers tiered, as published: ' + ', '.join(unset) if unset else ''
+        return '<b>Fees per order</b>\n<pre>' + esc('\n'.join(['      Minimum   Of order  Paid', *rows])) + '</pre>' + note
     if lower == '/trades':
         rows = store.purchases()
         if not rows:

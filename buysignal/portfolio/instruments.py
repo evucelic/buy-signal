@@ -8,12 +8,13 @@ class Instrument:
     yahoo: str
     exchange: str
     currency: str
+    us_hours: bool = False  # most of the holdings trade in New York, so quotes are tightest while it is open
 
 
 INSTRUMENTS = (
-    Instrument('VUAA', 'VUAA.L', 'LSE', 'USD'),
+    Instrument('VUAA', 'VUAA.L', 'LSE', 'USD', True),
     Instrument('VWCG', 'VWCG.DE', 'XETR', 'EUR'),
-    Instrument('AVWS', 'AVWS.DE', 'XETR', 'EUR'),
+    Instrument('AVWS', 'AVWS.DE', 'XETR', 'EUR', True),
 )
 
 

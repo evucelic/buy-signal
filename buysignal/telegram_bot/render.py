@@ -16,18 +16,10 @@ from buysignal.signals.base import format_table
 from buysignal.signals.buy_signal import BuySignal
 from buysignal.telegram_bot.messages import Report, ReportMessage
 
-# Presentation only: signal logic/state strings (signals/*.py) are untouched by any of this.
-ALERT_LABELS = {
-    "none": ("⚪", "No buy signal"),
-    "soft": ("🟡", "Soft signal"),
-    "strong": ("🟢", "Entry conditions aligned"),
-    "incomplete": ("⚠️", "Incomplete entry assessment"),
-}
-
 # Short row labels for the monospace table only (chart legends/notes keep the full config label).
 TABLE_LABELS = {
     "sp500": "S&P 500",
-    "world_small": "Small Cap",
+    "world_small": "SmallCap",
     "world_small_value": "SC Value",
     "europe": "Europe",
 }
@@ -35,20 +27,23 @@ TABLE_LABELS = {
 # Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
     {"command": "signal", "description": "Entry checklist, with chart buttons"},
+    {"command": "cash", "description": "Orders for the cash you have, fees included: /cash 500"},
+    {"command": "whattobuy", "description": "Your mix, where new cash goes, valuations"},
     {"command": "portfolio", "description": "Your ETF prices and recorded positions"},
-    {"command": "whattobuy", "description": "Compare segment valuations"},
     {"command": "buy", "description": "Record a purchase: /buy 10 VUAA @ 151.25"},
-    {"command": "trades", "description": "Purchase journal and record IDs"},
-    {"command": "refresh", "description": "Fetch fresh data"},
-    {"command": "status", "description": "Data collection and bot health"},
-    {"command": "help", "description": "Commands and purchase examples"},
+    {"command": "entries", "description": "Your purchase prices against each month's average"},
+    {"command": "help", "description": "All commands"},
 ]
 
 HELP_TEXT = (
     "Commands:\n"
     "/signal — entry checklist, with charts\n"
     "/portfolio — your ETF prices and positions\n"
-    "/whattobuy — segment valuations\n"
+    "/whattobuy — where new cash goes, valuations\n"
+    "/cash 500 — orders for that many euros, fees included\n"
+    "/target — set your mix: /target VUAA 60 VWCG 20 AVWS 20\n"
+    "/fees — your broker's fees: /fees VUAA 1.70 0.05\n"
+    "/entries — your prices against each month's average\n"
     "/trades — purchase history\n"
     "/refresh — fresh data\n"
     "/status — bot and data health\n\n"
@@ -70,7 +65,7 @@ class RunnerStatus:
     last_tick_at: datetime | None
     ok: bool
     error: str | None
-    alert_state: str | None
+    read: str | None  # the checklist's label, e.g. "3 of 5"
 
 
 def esc(text: str) -> str:
@@ -99,56 +94,56 @@ def signal_report(result: BuySignal, caches: list[tuple[str, datetime | None]], 
     return Report([ReportMessage(overview(result, caches, now), key="summary")])
 
 
-_RATE_WORDS = {"ease": "lower", "no_change": "the same", "hike": "higher"}
-
-
 def _own_history_word(z: float) -> str:
     return "cheap" if z >= 1 else "rich" if z <= -1 else "usual"
 
 
-def opportunity_message(opp, easing_obs_needed: int, dips: dict | None = None) -> str:
-    """Forward valuations of the markets behind the owner's ETFs, with each ETF's own dip."""
+def opportunity_message(opp, dips: dict | None = None, plan: dict | None = None, notes=(), real: tuple | None = None) -> str:
+    """Where new cash goes under the owner's mix, then what each market earns on its price.
+
+    Earn is next year's expected earnings over the price; Over is that minus the 10-year
+    inflation-protected Treasury yield in `real` (value, date), i.e. the pay for holding shares.
+    """
+    from buysignal.portfolio.plan import paid_to_hold
     dips = dips or {}
-    rows = [("", "P/E", "vs US", "Dip")]
+    rate = real[0] if real else None
+    rows = [("", "P/E", "Earn", "Over", "Dip")]
     # The owner's ETFs first, then indexes shown only for comparison.
     for s in sorted(opp.segments, key=lambda view: view.etf is None):
         name = s.etf or TABLE_LABELS.get(s.name, s.label)
-        versus = "—" if s.name == "sp500" or s.discount_vs_spx is None else f"{-s.discount_vs_spx:+.0%}"
+        earned, over = paid_to_hold(s.fwd_pe, rate)
         dip = dips.get(s.etf, {}).get("drawdown") if s.etf else None
-        rows.append((name, fmt(s.fwd_pe), versus, "" if dip is None else "at high" if dip == 0 else f"{dip:+.1%}"))
-    table = "<pre>" + esc("\n".join(f"{name:<10}{pe:>5}{versus:>7}{dip:>8}".rstrip() for name, pe, versus, dip in rows)) + "</pre>"
+        rows.append((name, fmt(s.fwd_pe), "" if earned is None else f"{earned:.1%}", "" if over is None else f"{over:+.1%}",
+                     "" if dip is None else "0.0%" if dip == 0 else f"{dip:+.1%}"))
+    if rate is not None:
+        rows.append(("Real 10y", "", f"{rate:.1%}", "", ""))
+    body = [f"{name:<9}{pe:>5}{earned:>6}{over:>6}{dip:>7}".rstrip() for name, pe, earned, over, dip in rows]
+    table = "<pre>" + esc("\n".join(body)) + "</pre>"
 
     lines = []
     judged = [(s.etf or TABLE_LABELS.get(s.name, s.label), s.fwd_z) for s in opp.segments if s.fwd_z is not None]
     if judged:
-        lines.append("Against its own past: " + " · ".join(f"{name} {_own_history_word(z)}" for name, z in judged))
-    rate = opp.rate
-    if rate.horizons:
-        nearest = rate.horizons[0]
-        odds = {"ease": nearest.ease, "no_change": nearest.no_change, "hike": nearest.hike}
-        if nearest.state in _RATE_WORDS:
-            lines.append(f"Fed rate at the next meeting: {_RATE_WORDS[nearest.state]} ({odds[nearest.state]:.0%})")
-        else:
-            lines.append("Fed rate at the next meeting: no clear favourite")
-    if opp.buy_signal_state is not None:
-        lines.append("Market read: " + ALERT_LABELS.get(opp.buy_signal_state, ("", opp.buy_signal_state))[1])
-
+        lines.append("Own past: " + " · ".join(f"{name} {_own_history_word(z)}" for name, z in judged))
     asofs = {s.asof for s in opp.segments if s.asof}
     if len(asofs) == 1:
-        lines.append(f"MSCI index data, {asofs.pop()} · updates monthly")
+        lines.append(f"MSCI {asofs.pop()}" + (f" · real yield {real[1]}" if real and real[1] else ""))
     elif asofs:
-        lines.append("MSCI index data: " + ", ".join(f"{s.etf or s.label} {s.asof}" for s in opp.segments if s.asof))
+        lines.append("MSCI: " + ", ".join(f"{s.etf or s.label} {s.asof}" for s in opp.segments if s.asof))
+    if plan and plan.get("eurusd"):
+        lines.append(f"EUR/USD {plan['eurusd']:.4f}" + (f" · {plan['fx_date']}" if plan.get("fx_date") else ""))
     stale = [symbol for symbol, item in dips.items() if item.get("refresh_failed")]
     if stale:
         lines.append("⚠️ Dip from cached prices: " + ", ".join(stale))
-    lines.extend("⚠️ " + note for note in opp.notes)
+    lines.extend("⚠️ " + note for note in (*opp.notes, *notes))
 
-    blocks = [
-        "<b>What to buy</b> · how each market is priced",
-        table,
-        "<i>P/E = price ÷ next year's expected earnings; lower is cheaper. Dip = below the ETF's own 3-month high.</i>",
-        "\n".join(esc(line) for line in lines),
-    ]
+    title = "<b>What to buy</b>"
+    if plan and plan["destination"]:
+        title += f" · new cash → {esc(plan['destination'])}"
+    allocation = ""
+    if plan:
+        from buysignal.portfolio.presentation import allocation_table
+        allocation = allocation_table(plan)
+    blocks = [title, allocation, table, "\n".join(esc(line) for line in lines)]
     return "\n".join(block for block in blocks if block)
 
 
@@ -176,12 +171,11 @@ def collector_table(statuses: list[CollectorStatus], now: datetime) -> str:
 def status_message(status: RunnerStatus, statuses: list[CollectorStatus], now: datetime) -> str:
     last_tick = "never" if status.last_tick_at is None else f"{status.last_tick_at:%Y-%m-%d %H:%M UTC}"
     tick_status = "ok" if status.ok else f"FAILED ({status.error})"
-    alert = ALERT_LABELS.get(status.alert_state, ("", "unknown"))[1] if status.alert_state else "unknown"
 
     lines = [
         f"uptime      {status.uptime}",
         f"last tick   {last_tick} ({tick_status})",
-        f"alert       {alert}",
+        f"read        {status.read or 'unknown'}",
     ]
     collectors = collector_table(statuses, now)
     return "<pre>" + esc("\n".join(lines)) + "</pre>" + f"\n\n🔄 <b>Collectors</b>\n{collectors}"

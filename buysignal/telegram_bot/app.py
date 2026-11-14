@@ -8,13 +8,15 @@ computes nothing and the transport decides nothing; both of those live here.
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from buysignal import config
 from buysignal.resources import force_refreshes
-from buysignal.portfolio import commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
+from buysignal.portfolio import plan as portfolio_plan, commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
+from buysignal.portfolio.instruments import resolve as resolve_instrument
 from buysignal.portfolio.journal import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
@@ -339,7 +341,7 @@ def _status_message() -> str:
             last_tick_at=_state.last_tick_at,
             ok=_state.last_ok,
             error=_state.last_error,
-            alert_state=_state.last_result.state if _state.last_result is not None else None,
+            read=_state.last_result.label if _state.last_result is not None else None,
         )
     statuses = runner.macro_journal().statuses()
     return render.status_message(status, statuses, datetime.now(timezone.utc))
@@ -352,22 +354,81 @@ def _whattobuy() -> str:
     opp.notes.extend(
         render.stale_collector_notes("valuations", failed, runner.macro_journal().statuses())
     )
-    with _lock:
-        last_result = _state.last_result
-    opp.buy_signal_state = last_result.state if last_result is not None else None
+    store = _get_portfolio_store()
     try:
         # Each ETF's own distance below its high; a failed listing is simply left blank.
-        dips = personal_quotes.dips(_get_portfolio_store())
+        dips = personal_quotes.dips(store)
     except Exception:
         log.exception('ETF dip context unavailable')
         dips = {}
+    plan, notes = None, []
+    try:
+        holdings = store.holdings()
+        if holdings:
+            rate, fx_date, fx_stale = personal_quotes.eurusd(store)
+            plan = portfolio_plan.allocation(holdings, personal_quotes.all_quotes(store), rate, store.targets())
+            if plan is None:
+                notes.append("positions cannot be valued: a price or the EUR/USD rate is missing")
+            else:
+                plan["fx_date"] = fx_date
+                if fx_stale:
+                    notes.append("EUR/USD refresh failed; using the last rate")
+                if plan["destination"] is None:
+                    notes.append("no mix set: /target VUAA 60 VWCG 20 AVWS 20")
+    except Exception:
+        log.exception('Allocation unavailable')
+        notes.append("allocation unavailable")
     try:
         transport.send_photo(chart.render_chart(opp, dips=dips), "Forward P/E by market")
     except Exception as exc:
         opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
 
-    reply = render.opportunity_message(opp, config.SMALL_CAP_EASING_OBS, dips)
+    real = None
+    try:
+        rate, observed, old = personal_quotes.real_yield(store)
+        if rate is not None:
+            real = (rate, observed)
+        if old:
+            notes.append("real yield refresh failed" + ("; using the last value" if rate is not None else ""))
+    except Exception:
+        log.exception('Real yield unavailable')
+    reply = render.opportunity_message(opp, dips, plan, notes, real)
     return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
+
+
+def _cash(text: str) -> str:
+    match = re.fullmatch(r'/cash\s+(\d+(?:\.\d+)?)(?:\s*(?:eur|€))?', text.strip(), re.I)
+    if not match:
+        return 'Use: /cash 500 (euros you want to invest now)'
+    store = _get_portfolio_store()
+    targets = store.targets()
+    if not targets:
+        return 'Set your mix first: /target VUAA 60 VWCG 20 AVWS 20'
+    rate, _, fx_stale = personal_quotes.eurusd(store)
+    fees = store.fees()
+    result = portfolio_plan.purchase_plan(float(match.group(1)), store.holdings(), personal_quotes.all_quotes(store), rate,
+                                          targets, fees, fees.get('FX'))
+    if result is None:
+        return '⚠️ A price or the EUR/USD rate is missing; no plan.'
+    overlaps = {}
+    if result['chosen']:
+        now = _utc_now()
+        for order in result['chosen']['orders']:
+            instrument = resolve_instrument(order['symbol'])
+            if instrument.us_hours:
+                overlaps[instrument.symbol] = personal_sessions.us_overlap(now, instrument.exchange)
+    reply = personal_presentation.cash_message(result, overlaps)
+    notes = []
+    if fx_stale:
+        notes.append('⚠️ EUR/USD refresh failed; using the last rate')
+    return '\n'.join([reply, *notes])
+
+
+def _entries() -> str:
+    store = _get_portfolio_store()
+    purchases = store.purchases(limit=1000)
+    closes, stale = personal_quotes.daily_closes(store) if purchases else ({}, [])
+    return personal_presentation.entries_message(portfolio_plan.scorecard(purchases, closes), stale)
 
 
 def _refresh() -> Report:
@@ -380,7 +441,7 @@ def _refresh() -> Report:
 
 def handle_message(text: str) -> str | Report | None:
     text = text.strip()
-    if text.lower().startswith(('/buy', 'bought ', 'buy ', '/voidtrade', '/trades', '/holdings')):
+    if text.lower().startswith(('/buy', 'bought ', 'buy ', '/voidtrade', '/trades', '/holdings', '/target', '/fees')):
         reply = portfolio_commands.handle(text, _get_portfolio_store(), source_key=transport.current_message_key())
         if reply is not None:
             return reply
@@ -401,6 +462,10 @@ def handle_message(text: str) -> str | Report | None:
         return _single_signal(_SIGNAL_COMMANDS[text])
     if text == "/whattobuy":
         return _whattobuy()
+    if text.lower().startswith("/cash"):
+        return _cash(text)
+    if text == "/entries":
+        return _entries()
     if text == "/refresh":
         return _refresh()
     if text == "/status":

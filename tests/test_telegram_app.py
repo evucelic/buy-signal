@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from buysignal.portfolio.journal import PortfolioStore
 from buysignal.schedule.journal import RefreshJournal
 from buysignal.telegram_bot import app
 from buysignal.telegram_bot.messages import Report
@@ -486,8 +487,9 @@ def test_single_signal_handles_exception():
 
 
 @pytest.fixture
-def whattobuy_env(monkeypatch, make_opportunity):
-    """Offline /whattobuy: collectors fresh, analyzer canned, photo captured."""
+def whattobuy_env(monkeypatch, make_opportunity, tmp_path):
+    """Offline /whattobuy: collectors fresh, analyzer canned, photo captured, an empty journal."""
+    monkeypatch.setattr(app, "_portfolio_store", PortfolioStore(tmp_path / "empty.sqlite3"))
     monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
     monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
     photos = []
@@ -503,15 +505,33 @@ def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
     assert "What to buy" in reply
     assert "20.0" in reply
     assert "15.0" in reply
-    assert "Fed rate at the next meeting: lower (78%)" in reply
+    assert "<i>" not in reply and "Fed rate" not in reply  # figures only; the Fed odds live in /signal
     assert "⚠️ Own-history comparison needs 12 monthly readings; 1 so far" in reply  # notes stay visible
 
 
-def test_handle_message_whattobuy_includes_buy_signal_context(whattobuy_env, make_subsignal, make_buy_signal):
-    with app._lock:
-        app._state.last_result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
+def test_whattobuy_leads_with_the_mix_and_where_new_cash_goes(whattobuy_env, monkeypatch, tmp_path):
+    store = PortfolioStore(tmp_path / "p.sqlite3")
+    store.record("VUAA", "10", "110", date(2026, 10, 5))   # 1,100 USD = 1,000 EUR at 1.10
+    store.record("VWCG", "10", "50", date(2026, 10, 5))    # 500 EUR
+    monkeypatch.setattr(app, "_portfolio_store", store)
+    quotes = [{"symbol": "VUAA", "price": 110.}, {"symbol": "VWCG", "price": 50.}, {"symbol": "AVWS", "price": 25.}]
+    monkeypatch.setattr(app.personal_quotes, "all_quotes", lambda store: quotes)
+    monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (1.10, "2026-11-13", False))
     reply = app.handle_message("/whattobuy")
-    assert "Market read: No buy signal" in reply
+    assert reply.startswith("<b>What to buy</b>\n<pre>") and "no mix set: /target" in reply
+    assert "VUAA   1,000  67%" in reply and "Total  1,500" in reply
+
+    assert app.handle_message("/target VUAA 50 VWCG 30 AVWS 20") == "Mix set: VUAA 50% VWCG 30% AVWS 20%"
+    reply = app.handle_message("/whattobuy")
+    assert reply.startswith("<b>What to buy</b> · new cash → AVWS\n<pre>")
+    table = reply.split("<pre>")[1].split("</pre>")[0].splitlines()
+    assert table[1].split() == ["VUAA", "1,000", "67%", "50%", "+250"]
+    assert table[3].split() == ["AVWS", "0", "0%", "20%", "-300"]
+    assert max(map(len, table)) <= 32 and "EUR/USD 1.1000 · 2026-11-13" in reply
+
+    monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (None, None, True))
+    reply = app.handle_message("/whattobuy")
+    assert "new cash" not in reply and "positions cannot be valued" in reply  # no weights from a partial total
 
 
 def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, monkeypatch):
