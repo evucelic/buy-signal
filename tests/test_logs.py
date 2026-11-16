@@ -1,6 +1,8 @@
 """Tests for logs.py: the handlers it installs, where they write, and the level they honour."""
 
 import logging
+import sys
+import threading
 
 import pytest
 
@@ -13,11 +15,14 @@ def restore_root_logger():
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
     noisy = {name: logging.getLogger(name).level for name in logs._NOISY}
+    hooks = sys.excepthook, threading.excepthook
     yield
     root.handlers = handlers
     root.setLevel(level)
     for name, restored in noisy.items():
         logging.getLogger(name).setLevel(restored)
+    sys.excepthook, threading.excepthook = hooks
+    logging.captureWarnings(False)
 
 
 def _ours(root=None):
@@ -83,3 +88,24 @@ def test_configure_keeps_logging_to_stderr_when_the_file_cannot_be_opened(tmp_pa
     logs.configure(unwritable / "buysignal.log")
 
     assert len(_ours()) == 1
+
+
+def test_log_lines_tracebacks_and_uncaught_thread_errors_are_redacted(tmp_path, monkeypatch):
+    token = "123456789:AAFakeTelegramTokenForTestsOnly_abcdefg"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
+    path = tmp_path / "buysignal.log"
+    logs.configure(path)
+    log = logging.getLogger("buysignal.test")
+    log.warning("GET https://api.telegram.org/bot%s/getUpdates failed", token)
+    try:
+        raise ValueError(f"bad url https://api.telegram.org/bot{token}/sendMessage")
+    except ValueError:
+        log.exception("send failed")
+    worker = threading.Thread(target=lambda: (_ for _ in ()).throw(RuntimeError(f"boom {token}")), name="poller")
+    worker.start()
+    worker.join()
+    for handler in _ours():
+        handler.flush()
+    text = path.read_text()
+    assert "send failed" in text and "Uncaught exception in thread poller" in text
+    assert token not in text and text.count("[redacted]") >= 3

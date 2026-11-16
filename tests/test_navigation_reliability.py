@@ -88,8 +88,9 @@ def test_transient_edit_timeout_retries_idempotently_without_extra_message(wire,
 def test_api_rejection_logs_telegram_description_without_token(wire,monkeypatch,caplog):
     monkeypatch.setattr(transport.requests,'post',lambda *a,**kw:response(status=400,description='Bad Request: cannot parse media test-token'))
     assert transport.show_panel('Caption',{},b'png',{'message_id':99,'photo':True}) is None
-    assert 'cannot parse media [redacted]' in caplog.text
-    assert 'test-token' not in caplog.text
+    from buysignal.redaction import RedactingFormatter
+    written='\n'.join(RedactingFormatter().format(record) for record in caplog.records)  # what the log handlers write
+    assert 'cannot parse media [redacted]' in written and 'test-token' not in written
 
 
 def test_missing_prepared_image_never_puts_new_caption_under_old_chart(report,wire,monkeypatch):

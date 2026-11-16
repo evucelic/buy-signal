@@ -20,6 +20,8 @@ from collections.abc import Callable
 import requests
 from dotenv import load_dotenv
 
+from buysignal.redaction import redact_strings
+
 from buysignal.telegram_bot.render import COMMANDS
 from buysignal.telegram_bot.messages import Report
 from buysignal.telegram_bot.html_chunks import split_html
@@ -51,15 +53,11 @@ def current_message_key():
 _last_delivery_at = 0.0
 
 
-def _safe_error(exc: Exception) -> str:
-    message = str(exc)
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    return message.replace(token, "[redacted]") if token else message
-
-
 def _post(method: str, *, json=None, data=None, files=None, timeout=10, return_result=False):
     global _last_delivery_at
     with _delivery_lock:
+        # Every message leaves through here, so quoted error text never carries a credential.
+        json, data = redact_strings(json), redact_strings(data)
         payload = json if json is not None else data
         if method in ("sendMessage", "sendPhoto"):
             payload["disable_notification"] = getattr(_delivery_state, "silent", False)
@@ -80,7 +78,7 @@ def _post(method: str, *, json=None, data=None, files=None, timeout=10, return_r
                     time.sleep(delay)
                     continue
                 body = response.json()
-                description = _safe_error(Exception(str(body.get("description", ""))))
+                description = str(body.get("description", ""))
                 if return_result and response.status_code == 400:
                     lower = description.lower()
                     if any(part in lower for part in ("message to edit not found", "message can't be edited")):
@@ -102,10 +100,10 @@ def _post(method: str, *, json=None, data=None, files=None, timeout=10, return_r
                 if method.startswith('editMessage') and attempt < 2:
                     time.sleep(.25 * (attempt + 1))
                     continue
-                log.error("Telegram %s failed (%s: %s)", method, type(exc).__name__, _safe_error(exc))
+                log.error("Telegram %s failed (%s: %s)", method, type(exc).__name__, exc)
                 return False
             except (requests.exceptions.RequestException, ValueError, KeyError) as exc:
-                log.error("Telegram %s failed (%s: %s)", method, type(exc).__name__, _safe_error(exc))
+                log.error("Telegram %s failed (%s: %s)", method, type(exc).__name__, exc)
                 return False
         return False
 
@@ -172,7 +170,7 @@ def answer_callback(query_id: str, text: str | None = None) -> None:
         response = requests.post(f"{_api()}/answerCallbackQuery", json=payload, timeout=5)
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        log.warning("Telegram callback acknowledgement failed (%s)", _safe_error(exc))
+        log.warning("Telegram callback acknowledgement failed (%s)", exc)
 
 
 def notice(text: str) -> None:
@@ -288,7 +286,7 @@ class _CommandWorker:
             try:
                 _deliver(self.handler(text))
             except Exception as exc:
-                log.error('Telegram command failed (%s: %s)', type(exc).__name__, _safe_error(exc))
+                log.error('Telegram command failed (%s: %s)', type(exc).__name__, exc)
                 notice('Command failed. The previous report remains available.')
             finally:
                 with self.lock:
@@ -320,7 +318,7 @@ def poll_forever(handle_message: Callable[[str], str | Report | None], handle_ca
                         try:
                             handle_callback(callback)
                         except Exception as exc:
-                            log.error("Callback failed (%s: %s)", type(exc).__name__, _safe_error(exc))
+                            log.error("Callback failed (%s: %s)", type(exc).__name__, exc)
                     else:
                         answer_callback(callback["id"])
                     continue
@@ -345,7 +343,7 @@ def poll_forever(handle_message: Callable[[str], str | Report | None], handle_ca
                 worker.close()
             raise
         except requests.exceptions.RequestException as exc:
-            log.warning("Telegram poll failed (%s: %s); retrying.", type(exc).__name__, _safe_error(exc))
+            log.warning("Telegram poll failed (%s: %s); retrying.", type(exc).__name__, exc)
             time.sleep(RETRY_DELAY_SEC)
 
 
@@ -355,5 +353,5 @@ def start(handle_message: Callable[[str], str | Report | None], handle_callback=
         resp = requests.post(f"{_api()}/setMyCommands", json={"commands": COMMANDS}, timeout=10)
         resp.raise_for_status()
     except requests.exceptions.RequestException as exc:
-        log.warning("Telegram setMyCommands failed (%s: %s); continuing anyway.", type(exc).__name__, _safe_error(exc))
+        log.warning("Telegram setMyCommands failed (%s: %s); continuing anyway.", type(exc).__name__, exc)
     threading.Thread(target=poll_forever, args=(handle_message, handle_callback), daemon=True).start()

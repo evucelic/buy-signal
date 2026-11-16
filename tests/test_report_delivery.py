@@ -77,8 +77,9 @@ def test_bot_token_is_redacted_from_transport_errors(monkeypatch, caplog):
         raise requests.exceptions.RequestException("failed at https://api.telegram.org/bottest-token/sendMessage")
     monkeypatch.setattr(transport.requests, "post", fail)
     assert not transport.send("message")
-    assert "test-token" not in caplog.text
-    assert "[redacted]" in caplog.text
+    from buysignal.redaction import RedactingFormatter
+    written = "\n".join(RedactingFormatter().format(record) for record in caplog.records)  # what the log handlers write
+    assert "test-token" not in written and "[redacted]" in written
 
 
 def test_long_cooldown_does_not_retry_before_telegram_allows_it(monkeypatch):

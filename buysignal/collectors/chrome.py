@@ -25,6 +25,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 from buysignal.config import CHROMEDRIVER_LOG, CHROME_VERBOSE_LOG
+from buysignal.redaction import public_env
 from buysignal.resources import HEAVY_WORK_LOCK
 
 
@@ -52,7 +53,8 @@ def chrome_session(page_load_timeout: float):
         profile_dir = stack.enter_context(tempfile.TemporaryDirectory(prefix="buysignal-chrome-", ignore_cleanup_errors=True))
         CHROMEDRIVER_LOG.parent.mkdir(parents=True, exist_ok=True)
         log_file = stack.enter_context(open(CHROMEDRIVER_LOG, "w"))
-        service = Service(service_args=["--verbose"] if CHROME_VERBOSE_LOG else [], log_output=log_file)
+        # The browser loads third-party pages: no credentials in its environment.
+        service = Service(service_args=["--verbose"] if CHROME_VERBOSE_LOG else [], log_output=log_file, env=public_env())
         driver = webdriver.Chrome(options=_options(profile_dir), service=service)
         try:
             driver.set_page_load_timeout(page_load_timeout)
