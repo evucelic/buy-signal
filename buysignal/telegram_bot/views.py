@@ -220,7 +220,9 @@ def _sources(by_name: dict, caches, now: datetime) -> str:
         signal = by_name.get(key)
         observed = stamp(signal.observed_at if signal else None, short=True)
         if signal and key == "sector":
-            observed = "forecasts"
+            # Forecasts have no observation date; the day they were retrieved stands in for it.
+            fetched = signal.history.fetched_at.iloc[-1] if signal.history is not None and "fetched_at" in signal.history else None
+            observed = stamp(fetched, short=True)
         elif signal and key == "margin_debt" and signal.observed_at:
             observed = pd.Timestamp(signal.observed_at).strftime("%b %Y")
         fetched = signal.metrics.get("retrieved_at") if signal and key == "market_dip" else None
@@ -298,8 +300,6 @@ def _market_rows(signal: SubSignal, name: str) -> list[tuple]:
     if facts.get("ma200"):
         rows += [("200-day avg", _price(facts["ma200"])), ("Price vs avg", f"{facts['price'] / facts['ma200'] - 1:+.1%}"),
                  ("Avg, 20 days", percent(facts.get("ma_slope")))]
-    if facts.get("intensity") is not None:
-        rows.append(("Week's move", f"{abs(facts['intensity']):.1f}× usual"))
     past = []
     if facts.get("drawdown_share") is not None:
         past.append(("Days this low", _share(facts["drawdown_share"])))

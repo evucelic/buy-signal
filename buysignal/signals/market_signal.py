@@ -1,8 +1,6 @@
-"""SPY drawdown (the dip) with volatility-scaled selloff and trend context."""
+"""SPY drawdown (the dip) with trend context."""
 
 from __future__ import annotations
-
-import math
 
 import numpy as np
 import pandas as pd
@@ -11,7 +9,6 @@ from buysignal.analysis.context import share_at_or_below
 from buysignal.collectors.entry import get_entry_history
 from buysignal.config import (
     INDEX_TICKERS, OPTIONAL_INDEX_TICKERS, MARKET_DIP_THRESHOLD, MARKET_DRAWDOWN_SESSIONS,
-    MARKET_VOLATILITY_SESSIONS, MARKET_SELLOFF_SESSIONS,
     MARKET_TREND_SESSIONS, MARKET_TREND_SLOPE_SESSIONS,
 )
 from buysignal.signals.base import SubSignal
@@ -24,7 +21,7 @@ def drawdown_series(closes: pd.Series) -> pd.Series:
 
 
 def analyze_series(closes: pd.Series, name: str = "SPY") -> dict:
-    """Drawdown, move size and trend facts for one index, from its own sessions only."""
+    """Drawdown and trend facts for one index, from its own sessions only."""
     closes = closes.dropna()
     needed = MARKET_DRAWDOWN_SESSIONS + 1
     if len(closes) < needed:
@@ -43,19 +40,8 @@ def analyze_series(closes: pd.Series, name: str = "SPY") -> dict:
         "daily": latest / float(closes.iloc[-2]) - 1,
         "weekly": latest / float(closes.iloc[-6]) - 1,
         "monthly": latest / float(closes.iloc[-22]) - 1,
-        "intensity": None, "daily_volatility": None,
         "ma200": None, "ma_slope": None, "trend": "unknown",
     }
-    # Log returns are additive. The 20-return baseline ends at the START of
-    # the five-session move, so the shock cannot inflate its own denominator.
-    returns = np.log(closes).diff()
-    n, window = MARKET_SELLOFF_SESSIONS, MARKET_VOLATILITY_SESSIONS
-    baseline = returns.iloc[-n-window:-n]
-    if len(baseline.dropna()) == window:
-        volatility = float(baseline.std(ddof=1))
-        if volatility > 1e-10:
-            facts["daily_volatility"] = volatility
-            facts["intensity"] = float(math.log(latest / float(closes.iloc[-1-n])) / (volatility * math.sqrt(n)))
     ma = closes.rolling(MARKET_TREND_SESSIONS).mean()
     slope_back = MARKET_TREND_SLOPE_SESSIONS
     if len(closes) >= MARKET_TREND_SESSIONS + slope_back:
@@ -112,13 +98,6 @@ def score(allow_refresh: bool = True) -> SubSignal:
         f"{'met in cached observation' if condition_met and facts['stale'] else 'met' if passes else 'not met'}"
         f" | SPY daily {facts['daily']:+.1%}; five sessions {facts['weekly']:+.1%}; 21 sessions {facts['monthly']:+.1%}"
     )
-    if facts["intensity"] is None:
-        detail += " | Five-session selloff intensity unavailable: baseline volatility is zero or history is insufficient"
-    else:
-        detail += (
-            f" | Five-session move {facts['intensity']:+.2f} volatility units; "
-            f"prior 20-session daily volatility {facts['daily_volatility']:.2%}"
-        )
     dates = {str(history[name].dropna().index[-1].date()) for name in INDEX_TICKERS if history[name].notna().any()}
     if len(dates) > 1:
         detail += " | Index observation dates differ: " + ", ".join(

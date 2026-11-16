@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
@@ -31,6 +31,11 @@ def vix_active_window(now: datetime | None = None) -> bool:
         return False
     now_ct = now.astimezone(CT)
     return VIX_WINDOW_START_HOUR_CT <= now_ct.hour < VIX_WINDOW_END_HOUR_CT
+
+
+def is_session_day(day: date) -> bool:
+    """Whether the NYSE trades on this calendar date (weekends and holidays are not)."""
+    return not _NYSE.schedule(start_date=day, end_date=day).empty
 
 
 def market_session(now: datetime | None = None) -> str:

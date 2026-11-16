@@ -21,12 +21,12 @@ from buysignal.portfolio.journal import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import chart, opportunity, signal_charts
+from buysignal.analysis import chart, checklist_log, opportunity, signal_charts
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
 from buysignal.signals.buy_signal import BuySignal, assess, compute_signal
-from buysignal.telegram_bot import render, transport, views, interactive
+from buysignal.telegram_bot import interactive, pushes, render, transport, views
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.telegram_bot.messages import Report, ReportMessage
 
@@ -62,9 +62,7 @@ class _State:
     last_ok: bool = True
     last_error: str | None = None
     last_result: BuySignal | None = None
-    alerting: bool = False
-    high_fear: bool = False              # VIX was at or above the high-fear line at the last tick that knew it
-    high_fear_date: date | None = None   # CT date of the last high-fear push, so a day of flapping sends one
+    seen: pushes.Seen = pushes.Seen()    # what the pushes have told the owner so far
     last_report_date: date | None = None
 
 
@@ -124,12 +122,15 @@ def _deliver_preclose(sessions, now):
             from dataclasses import replace
             result = replace(cached, state=buy_signal.INCOMPLETE)
         prefix = '⚠️ Global assessment refresh failed; showing available cached data.\n\n'
-    delivered = _deliver_report(result, prefix=prefix, now=now, preclose=sessions)
-    if delivered:
+    with _notification_lock:
         with _lock:
-            _state.last_result = result
-            if is_alerting(result):
-                _state.alerting = True
+            seen = _state.seen
+        heading, after = pushes.decide(seen, result, now.astimezone(market_hours.CT).date())
+        delivered = _deliver_report(result, heading, prefix=prefix, now=now, preclose=sessions)
+        if delivered:
+            with _lock:
+                _state.last_result = result
+                _state.seen = after
     return delivered
 
 
@@ -164,33 +165,27 @@ def _signal_report(result: BuySignal, heading: str = "", prefix: str = "") -> Re
     return report
 
 
-def is_alerting(result: BuySignal) -> bool:
-    by_name = {s.name: s for s in result.subsignals}
-    vix = by_name.get("vix")
-    dip = by_name.get("market_dip")
-    return (vix is not None and vix.passes) or (dip is not None and dip.passes) or result.state == "strong"
+def _etf_closes(now: datetime) -> dict:
+    """{symbol: (daily close, its date, trading currency)} for the owned listings, freshly downloaded."""
+    return personal_quotes.session_closes(_get_portfolio_store(), now=now)
 
 
-def high_fear(result: BuySignal) -> bool | None:
-    """VIX at or above the high-fear line; None when there is no current VIX reading."""
-    vix = next((s for s in result.subsignals if s.name == "vix"), None)
-    if not buy_signal.usable(vix):
-        return None
-    return vix.score >= config.VIX_STRONG
-
-
-def trigger_reasons(result: BuySignal) -> str:
-    by_name = {s.name: s for s in result.subsignals}
-    reasons = []
-    vix = by_name.get("vix")
-    if vix is not None and vix.passes:
-        reasons.append("VIX high fear" if high_fear(result) else "VIX elevated")
-    dip = by_name.get("market_dip")
-    if dip is not None and dip.passes:
-        reasons.append("SPY dip")
-    if result.state == "strong":
-        reasons.append("checklist strong")
-    return ", ".join(reasons)
+def _log_session(result: BuySignal, now: datetime) -> None:
+    """Append today's checklist to the log on an NYSE session day; never fails the report."""
+    # The report is due from 20:00 CT, and its Central date is the session's even after
+    # midnight in New York (a late or retried report at 23:00 CT is 00:00 ET).
+    session = now.astimezone(market_hours.CT).date()
+    if not market_hours.is_session_day(session):
+        return
+    try:
+        try:
+            closes = _etf_closes(now)
+        except Exception:
+            log.exception("ETF closes unavailable for the checklist log")
+            closes = {}
+        checklist_log.append(checklist_log.row(result, session.isoformat(), now, closes))
+    except Exception:
+        log.exception("Checklist log not written")
 
 
 def report_due(now_ct: datetime, last_report_date: date | None, report_hour: int) -> bool:
@@ -237,11 +232,16 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 if error is not None
                 else ""
             )
-            delivered = _deliver_report(reported, "📅 <b>End of day</b>\n\n", prefix, now=now)
-            if delivered:
+            with _notification_lock:
                 with _lock:
-                    _state.last_report_date = now_ct.date()
-                    _state.last_result = reported
+                    seen = _state.seen
+                heading, after = pushes.decide(seen, reported, now_ct.date())
+                if _deliver_report(reported, "📅 <b>End of day</b>\n\n" + heading, prefix, now=now):
+                    with _lock:
+                        _state.last_report_date = now_ct.date()
+                        _state.last_result = reported
+                        _state.seen = after
+            _log_session(reported, now)
             result = reported
 
     # Marked reported only once delivered, so an outage delays the notice instead of losing it.
@@ -250,45 +250,18 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
         if transport.send(render.refresh_failures([(name, failure)])):
             journal.mark_reported(name, now_et)
 
-    if result is None:
-        return
+    with _lock:
+        reported_today = due and _state.last_report_date == now_ct.date()
+    if result is None or reported_today:
+        return  # the daily report just sent carried this reading's pushes
 
     with _notification_lock:
-        alerting = is_alerting(result)
-        high_reading = high_fear(result)
-        high = bool(high_reading)
         with _lock:
-            was_alerting = _state.alerting
-            # The one level whose history stands apart gets its own push, at most once a day.
-            high_is_news = high and not _state.high_fear and _state.high_fear_date != now_ct.date()
-            if high_reading is not None:
-                _state.high_fear = high
-
-        if alerting and not was_alerting:
-            reasons = trigger_reasons(result)
-            if not due:
-                delivered = _deliver_report(result, f"🔔 <b>Watch trigger active</b> ({render.esc(reasons)})\n\n", now=now)
-            else:
-                # The full report already carries this tick's read.
-                delivered = _state.last_report_date == now_ct.date()
-            if delivered:
-                with _lock:
-                    _state.alerting = True
-                    if high:
-                        _state.high_fear_date = now_ct.date()
-        elif high_is_news:
-            # Already on watch at a lower level; a report due this tick carries the news itself.
-            if due and _state.last_report_date == now_ct.date() or _deliver_report(
-                    result, "🔴 <b>High fear</b> (VIX at or above 30)\n\n", now=now):
-                with _lock:
-                    _state.high_fear_date = now_ct.date()
-        elif was_alerting and not alerting and not (
-            any(s.metrics.get('stale') for s in result.subsignals if s.name in ('vix', 'market_dip'))
-            or set(result.missing_signals) & {'vix', 'market_dip'}
-        ):
-            if _deliver_report(result, "<b>Watch trigger cleared (VIX/SPY)</b>\n\n", now=now):
-                with _lock:
-                    _state.alerting = False
+            seen = _state.seen
+        heading, after = pushes.decide(seen, result, now_ct.date())
+        if not heading or _deliver_report(result, heading, now=now):
+            with _lock:
+                _state.seen = after
 
 
 def _single_signal(score_fn) -> str | Report:
@@ -446,7 +419,7 @@ def handle_message(text: str) -> str | Report | None:
     if text == "/vix":
         return _single_signal(lambda: vix_signal.score(allow_refresh=open_now))
     if text in ("/dip", "/trend"):
-        # Trend and move size now sit in each index's own panel.
+        # Trend now sits in each index's own panel.
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])

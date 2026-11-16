@@ -192,6 +192,19 @@ def daily_closes(store, *, now=None, refresh=True):
     return result, stale
 
 
+def session_closes(store, *, now=None):
+    """{symbol: (close, date, currency)} from a download made now, for the checklist log.
+
+    A cached bar may have been taken mid-session, so a failed download leaves the listing out.
+    """
+    now, result = _utc(now), {}
+    for instrument in INSTRUMENTS:
+        series, old = _cached_series(store, instrument.symbol + ':daily', instrument.yahoo, _DAILY_PERIOD, 0, now, True)
+        if series is not None and not old:
+            result[instrument.symbol] = (float(series.iloc[-1]), series.index[-1].date().isoformat(), instrument.currency)
+    return result
+
+
 def eurusd(store, *, now=None, refresh=True):
     """(dollars per euro, observation date, stale) from the latest daily close; (None, None, True) if never fetched."""
     series, old = _cached_series(store, 'EURUSD:fx', 'EURUSD=X', '5d', _DIP_TTL_SEC, _utc(now), refresh)

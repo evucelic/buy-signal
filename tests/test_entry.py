@@ -55,27 +55,6 @@ def test_drawdown_has_no_silent_short_history_fallback():
         score([100.] * 63)
 
 
-def test_five_session_intensity_uses_volatility_before_the_move():
-    baseline_returns = np.array([.01, -.01] * 10)
-    baseline_prices = 100 * np.exp(np.r_[0, baseline_returns].cumsum())
-    move = baseline_prices[-1] * np.exp(np.arange(1, 6) * -.02)
-    values = np.r_[[100.] * 80, baseline_prices, move]
-    facts = market_signal.analyze_history(prices(values))
-    volatility = baseline_returns.std(ddof=1)
-    assert facts["daily_volatility"] == pytest.approx(volatility)
-    assert facts["intensity"] == pytest.approx(-.1 / (volatility * np.sqrt(5)))
-    larger_move = baseline_prices[-1] * np.exp(np.arange(1, 6) * -.04)
-    larger = market_signal.analyze_history(prices(np.r_[[100.] * 80, baseline_prices, larger_move]))
-    assert larger["daily_volatility"] == pytest.approx(volatility)
-    assert larger["intensity"] == pytest.approx(2 * facts["intensity"])
-
-
-def test_zero_baseline_volatility_is_unknown_not_infinite():
-    signal = score([100.] * 219 + [90.])
-    assert signal.metrics["intensity"] is None
-    assert signal.passes
-
-
 @pytest.mark.parametrize("values, state", [
     (np.linspace(80, 120, 240), "uptrend"),
     (np.linspace(120, 80, 240), "downtrend"),

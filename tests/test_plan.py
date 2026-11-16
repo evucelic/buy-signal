@@ -107,6 +107,18 @@ def test_daily_history_is_cached_and_survives_a_failed_refresh(store):
     assert quotes.eurusd(PortfolioStore(store.path.with_name("other.sqlite3")), now=now, refresh=False) == (None, None, True)
 
 
+def test_session_closes_come_only_from_a_download_made_now(store):
+    now = datetime(2026, 11, 16, 21, tzinfo=timezone.utc)
+    frame = pd.DataFrame({"Close": [60.1, 60.5]}, index=pd.to_datetime(["2026-11-13", "2026-11-16"]).tz_localize("UTC"))
+    with patch.object(quotes.yf, "Ticker") as ticker:
+        ticker.return_value.history.return_value = frame
+        assert quotes.session_closes(store, now=now)["VWCG"] == (60.5, "2026-11-16", "EUR")
+        assert quotes.session_closes(store, now=now)["VUAA"] == (60.5, "2026-11-16", "USD")
+        assert ticker.return_value.history.call_count == 6  # a cached copy is never used: it may hold a bar still trading
+        ticker.return_value.history.side_effect = TimeoutError("offline")
+        assert quotes.session_closes(store, now=now) == {}  # a failed download logs nothing rather than the cached copy
+
+
 QUOTES = [{"symbol": "VUAA", "price": 143.}, {"symbol": "VWCG", "price": 60.}, {"symbol": "AVWS", "price": 25.}]
 MIX = {"VUAA": .6, "VWCG": .2, "AVWS": .2}
 

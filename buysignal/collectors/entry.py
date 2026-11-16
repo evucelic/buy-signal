@@ -1,4 +1,4 @@
-"""Adjusted daily index history for drawdown, selloff intensity and long-term trend.
+"""Adjusted daily index history for drawdown and long-term trend.
 
 The old hourly market.csv stays readable by existing tools. This separate daily
 cache bootstraps the available history without mixing raw hourly and adjusted daily prices.

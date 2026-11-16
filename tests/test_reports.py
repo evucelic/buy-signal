@@ -79,6 +79,15 @@ def test_report_is_one_numeric_overview_with_absolute_times():
     plain(text)
 
 
+def test_every_data_as_of_row_carries_a_date():
+    from scripts.preview_entry_report import sample_assessment
+    result = sample_assessment()
+    text = render.signal_report(result, [(s.name, NOW) for s in result.subsignals], NOW).messages[0].text
+    block = text.split("<b>Data as of</b>")[1].split("</blockquote>")[0].strip().splitlines()[1:]
+    assert [line.split()[0] for line in block] == ["Prices", "VIX", "Fed", "Margin", "Earnings", "Credit", "Curve", "Report"]
+    assert all("—" not in line for line in block)
+
+
 def test_missing_required_data_stays_in_the_count_and_is_named():
     result = assess([], ["fed_rate"])
     text = render.signal_report(result, [], NOW).messages[0].text

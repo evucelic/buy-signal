@@ -585,6 +585,11 @@ def test_required_signals_are_not_advisory_and_context_ones_are():
     assert _curve([1.5, 1.5]).advisory is True
 
 
+def test_a_margin_month_past_its_release_window_is_stale():
+    assert _margin([100, 90], freshness=("stale", "late")).metrics["stale"] is True
+    assert _margin([100, 90]).metrics["stale"] is False
+
+
 _SIGNAL_MODULES = {
     "vix_signal": "vix",
     "rate_signal": "fed_rate",

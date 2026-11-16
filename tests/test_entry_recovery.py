@@ -104,7 +104,7 @@ def test_single_bad_peer_value_does_not_reject_valid_spy():
 
 def test_unknown_prices_do_not_clear_an_existing_watch(monkeypatch):
     from buysignal.telegram_bot import app
-    monkeypatch.setattr(app,'_state',app._State(start_time=NOW.to_pydatetime(),alerting=True))
+    monkeypatch.setattr(app,'_state',app._State(start_time=NOW.to_pydatetime(),seen=app.pushes.Seen(alerting=True)))
     monkeypatch.setattr(app.config,'DAILY_REPORT_HOUR_CT',-1)
     monkeypatch.setattr(app.runner,'macro_journal',lambda:type('Journal',(),{'unreported_failures':lambda self,now:[]})())
     report=patch.object(app.transport,'send_report')
@@ -112,4 +112,4 @@ def test_unknown_prices_do_not_clear_an_existing_watch(monkeypatch):
         stale=SubSignal('market_dip',-.07,'flat','',metrics={'stale':True})
         app.handle_tick(assess([stale]),None,NOW.to_pydatetime())
     sent.assert_not_called()
-    assert app._state.alerting
+    assert app._state.seen.alerting
