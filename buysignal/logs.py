@@ -8,10 +8,13 @@ survives the container recreation every deploy does.
 
 import logging
 import os
+import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from buysignal.config import DATA_DIR
+from buysignal.redaction import RedactingFormatter
 
 LOG_FILE = DATA_DIR / "buysignal.log"
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -46,6 +49,13 @@ def configure(path: Path | str = LOG_FILE, level: str | None = None) -> None:
     for name in _NOISY:
         logging.getLogger(name).setLevel(logging.WARNING)
 
+    # Uncaught exceptions and warnings would otherwise reach stderr without the redacting formatter.
+    sys.excepthook = lambda kind, exc, tb: root.critical("Uncaught exception", exc_info=(kind, exc, tb))
+    threading.excepthook = lambda args: root.critical(
+        "Uncaught exception in thread %s", args.thread.name if args.thread else "?",
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    logging.captureWarnings(True)
+
     _install(root, logging.StreamHandler())
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +66,6 @@ def configure(path: Path | str = LOG_FILE, level: str | None = None) -> None:
 
 
 def _install(root: logging.Logger, handler: logging.Handler) -> None:
-    handler.setFormatter(logging.Formatter(FORMAT))
+    handler.setFormatter(RedactingFormatter(FORMAT))
     setattr(handler, _OURS, True)
     root.addHandler(handler)

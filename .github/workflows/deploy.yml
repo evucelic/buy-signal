@@ -3,24 +3,32 @@ name: Build and deploy
 on:
   push:
     branches: [main]
+  # Weekly rebuild without the layer cache, so Chromium and the base image get security updates
+  # even in weeks with no code change.
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch: {}
 
-permissions:
-  contents: read
-  packages: write
+# Nothing by default; each job asks for only what it needs.
+permissions: {}
 
+# Actions are pinned to commit SHAs, so a moved tag cannot swap in new code; Dependabot proposes updates.
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Run tests
         run: pytest -v
@@ -28,24 +36,31 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          pull: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           tags: |
             ghcr.io/evucelic/buy-signal:latest
             ghcr.io/evucelic/buy-signal:${{ github.sha }}
@@ -55,14 +70,18 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.AWS_HOST }}
-          username: ${{ secrets.AWS_SSH_USER }}
-          key: ${{ secrets.AWS_SSH_KEY }}
-          script: |
-            cd ~/buy-signal
-            git pull
-            docker compose pull
-            docker compose up -d
+      # Plain ssh, so no third-party action holds the server key; the host key must match AWS_KNOWN_HOSTS.
+      - name: Deploy
+        env:
+          SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.AWS_KNOWN_HOSTS }}
+          HOST: ${{ secrets.AWS_HOST }}
+          SSH_USER: ${{ secrets.AWS_SSH_USER }}
+        run: |
+          umask 077 && mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes "$SSH_USER@$HOST" \
+            'cd ~/buy-signal && git pull --ff-only && docker compose pull && docker compose up -d && docker image prune -f'

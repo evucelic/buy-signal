@@ -14,13 +14,17 @@ ENV PYTHONUNBUFFERED=1 \
 # chromium/chromium-driver: the Selenium scrapers (buysignal/collectors/chrome.py) need a real browser.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium chromium-driver \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 bot
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 COPY . .
 
+# Unprivileged, so code that compromises the browser does not run as root. The host's ./data
+# must be owned by uid 1000 (older images wrote it as root).
+USER bot
 CMD ["python", "-m", "buysignal"]

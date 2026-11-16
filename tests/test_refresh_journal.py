@@ -199,3 +199,19 @@ def test_a_missing_data_directory_is_created_on_the_first_write(tmp_path):
     RefreshJournal(path, backoff=BACKOFF).record("fed_rate", ok=True, error=None, now=MORNING)
 
     assert path.exists()
+
+
+def test_collectors_that_no_longer_run_are_forgotten(tmp_path, monkeypatch):
+    from buysignal.schedule import runner
+    path = tmp_path / "buysignal.schedule.journal.json"
+    old = RefreshJournal(path, backoff=BACKOFF)
+    old.record("jobs", ok=False, error="HTTPError: 503", now=MORNING)
+    old.record("credit", ok=True, error=None, now=MORNING)
+    monkeypatch.setattr(runner, "REFRESH_JOURNAL_JSON", path)
+    monkeypatch.setattr(runner, "_journal", None)
+
+    journal = runner.macro_journal()
+
+    assert [s.name for s in journal.statuses()] == ["credit"]
+    assert journal.unreported_failures(MORNING) == []  # a removed collector's old failure is never pushed
+    assert [s.name for s in RefreshJournal(path, backoff=BACKOFF).statuses()] == ["credit"]

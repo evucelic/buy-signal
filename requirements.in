@@ -1,0 +1,13 @@
+# Direct dependencies; requirements.txt pins them and everything they pull in, with hashes.
+numpy
+pandas
+pandas-market-calendars
+yfinance
+selenium
+lxml
+pip-system-certs
+openpyxl
+requests
+python-dotenv
+matplotlib
+pytest

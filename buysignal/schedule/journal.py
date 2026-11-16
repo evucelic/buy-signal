@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Protocol
 
 from buysignal.config import REFRESH_RETRY_BACKOFF
+from buysignal.redaction import redact
 
 
 log = logging.getLogger(__name__)
@@ -63,6 +64,16 @@ class RefreshJournal:
         self._lock = threading.Lock()  # /refresh runs on the Telegram thread, ticks on the main one
         self._entries = self._load()
 
+    def retain(self, names) -> None:
+        """Forget collectors that no longer run, so /status and the failure pushes never
+        name them again; a journal written by an older version may still hold them."""
+        with self._lock:
+            gone = set(self._entries) - set(names)
+            if gone:
+                for name in gone:
+                    del self._entries[name]
+                self._save()
+
     def due(self, collector: Refreshable, now: datetime) -> bool:
         """Whether `collector` should be attempted now: the one place refresh timing is decided."""
         with self._lock:
@@ -85,7 +96,7 @@ class RefreshJournal:
             self._entries[name] = _Entry(
                 attempted_at=now,
                 ok=ok,
-                error=None if ok else (error or "unknown error"),
+                error=None if ok else redact(error or "unknown error"),  # the journal is a file on disk
                 # Carried over so a failure re-recorded hourly is still only pushed once a day.
                 reported_on=previous.reported_on if previous is not None else None,
             )

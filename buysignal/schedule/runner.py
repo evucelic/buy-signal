@@ -117,6 +117,7 @@ def macro_journal() -> RefreshJournal:
     with _journal_lock:
         if _journal is None:
             _journal = RefreshJournal(REFRESH_JOURNAL_JSON)
+            _journal.retain(collector.name for collector in _macro_collectors())
         return _journal
 
 
