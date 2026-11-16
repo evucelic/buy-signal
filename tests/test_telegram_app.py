@@ -11,7 +11,7 @@ import pytest
 
 from buysignal.portfolio.journal import PortfolioStore
 from buysignal.schedule.journal import RefreshJournal
-from buysignal.telegram_bot import app
+from buysignal.telegram_bot import app, pushes
 from buysignal.telegram_bot.messages import Report
 
 def _text(reply):
@@ -57,17 +57,17 @@ def _never_computes():
     raise AssertionError("compute_signal() must not run for this case")
 
 
-# --- is_alerting / trigger_reasons ---------------------------------------------------------
+# --- pushes: is_alerting / trigger_reasons ---------------------------------------------------------
 
 
 def test_is_alerting_vix_only(make_subsignal, make_buy_signal):
     result = make_buy_signal([make_subsignal("vix", "soft", "x", passes=True)])
-    assert app.is_alerting(result) is True
+    assert pushes.is_alerting(result) is True
 
 
 def test_is_alerting_dip_only(make_subsignal, make_buy_signal):
     result = make_buy_signal([make_subsignal("market_dip", "dip", "x", passes=True)])
-    assert app.is_alerting(result) is True
+    assert pushes.is_alerting(result) is True
 
 
 def test_other_conditions_alone_do_not_hold_the_watch_trigger_on(make_subsignal, make_buy_signal):
@@ -75,18 +75,12 @@ def test_other_conditions_alone_do_not_hold_the_watch_trigger_on(make_subsignal,
     result = make_buy_signal([make_subsignal(name, "x", "x", passes=True) for name in ("fed_rate", "margin_debt", "sector")]
                              + [make_subsignal("vix", "none", "x")])
     assert result.passing_count == 3
-    assert app.is_alerting(result) is False
-
-
-def test_all_five_passing_holds_the_watch_trigger_on(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("vix", "none", "x")], state="strong")
-    assert app.is_alerting(result) is True
-    assert app.trigger_reasons(result) == "checklist strong"
+    assert pushes.is_alerting(result) is False
 
 
 def test_is_alerting_false_when_nothing_triggers(make_subsignal, make_buy_signal):
     result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
-    assert app.is_alerting(result) is False
+    assert pushes.is_alerting(result) is False
 
 
 def test_trigger_reasons_combines_all(make_subsignal, make_buy_signal):
@@ -96,12 +90,12 @@ def test_trigger_reasons_combines_all(make_subsignal, make_buy_signal):
             make_subsignal("market_dip", "dip", "x", passes=True),
         ],
     )
-    assert app.trigger_reasons(result) == "VIX elevated, SPY dip"
+    assert pushes.trigger_reasons(result) == "VIX elevated, SPY dip"
 
 
 def test_trigger_reasons_empty_when_nothing_triggers(make_subsignal, make_buy_signal):
     result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
-    assert app.trigger_reasons(result) == ""
+    assert pushes.trigger_reasons(result) == ""
 
 
 # --- handle_tick: alert edge-triggering ---------------------------------------------------------
@@ -169,7 +163,67 @@ def test_an_unknown_vix_neither_sets_nor_clears_high_fear(monkeypatch, sent):
     now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
     app.handle_tick(_fear("strong", 34.), None, now)
     app.handle_tick(assess([]), None, now + timedelta(hours=1))
-    assert app._state.high_fear is True
+    assert app._state.seen.high_fear is True
+
+
+def _count(passing, vix_passes=False):
+    """A complete checklist: VIX passes only when asked, then `passing` of Fed, margin, EPS, dip."""
+    from buysignal.signals.base import SubSignal
+    from buysignal.signals.buy_signal import assess
+    names = ("fed_rate", "margin_debt", "sector", "market_dip")
+    vix = SubSignal("vix", 25. if vix_passes else 15., "soft" if vix_passes else "none", "", passes=vix_passes)
+    return assess([vix, *(SubSignal(name, 0., "x", "", passes=i < passing) for i, name in enumerate(names))])
+
+
+def test_a_change_in_the_count_sends_one_push(monkeypatch, sent):
+    now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    app.handle_tick(_count(1), None, now)
+    assert sent == []  # the first complete read after a start is the baseline
+    app.handle_tick(_count(2), None, now + timedelta(hours=1))
+    assert len(sent) == 1 and sent[0].startswith("🔢 <b>Checklist 1 → 2 of 5</b>") and "CHECKLIST  2 of 5" in sent[0]
+    app.handle_tick(_count(2), None, now + timedelta(hours=2))
+    from buysignal.signals.buy_signal import assess
+    app.handle_tick(assess([]), None, now + timedelta(hours=3))  # an incomplete read is not a change
+    assert len(sent) == 1
+    app.handle_tick(_count(1), None, now + timedelta(hours=4))
+    assert len(sent) == 2 and "Checklist 2 → 1 of 5" in sent[1]
+
+
+def test_a_count_change_that_comes_with_a_watch_trigger_is_one_message(monkeypatch, sent):
+    now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    app.handle_tick(_count(1), None, now)
+    app.handle_tick(_count(1, vix_passes=True), None, now + timedelta(hours=1))
+    assert len(sent) == 1
+    assert "Watch trigger active" in sent[0] and "Checklist 1 → 2 of 5" in sent[0]
+
+
+def test_an_undelivered_count_change_is_sent_on_the_next_tick(monkeypatch):
+    now = datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc)
+    attempts = []
+    monkeypatch.setattr(app.transport, "send", lambda text, **kwargs: attempts.append(text) and False)
+    app.handle_tick(_count(1), None, now)
+    app.handle_tick(_count(2), None, now + timedelta(hours=1))
+    delivered = []
+    monkeypatch.setattr(app.transport, "send", lambda text, **kwargs: delivered.append(text) or True)
+    app.handle_tick(_count(2), None, now + timedelta(hours=2))
+    assert len(attempts) == 1 and len(delivered) == 1 and "Checklist 1 → 2 of 5" in delivered[0]
+
+
+def test_the_end_of_day_report_carries_a_count_change_and_logs_the_session(monkeypatch, sent, checklist_log_path):
+    from buysignal.analysis import checklist_log
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
+    monkeypatch.setattr(app, "_etf_closes", lambda now: {"VWCG": (60.5, "2026-07-24", "EUR")})
+    app.handle_tick(_count(1), None, _ct(10))
+    result = _count(3)
+    monkeypatch.setattr(app, "compute_signal", lambda: result)
+    app.handle_tick(result, None, now=_ct(20))
+    app.handle_tick(result, None, now=_ct(21))
+    assert len(sent) == 1 and sent[0].startswith("📅 <b>End of day</b>\n\n🔢 <b>Checklist 1 → 3 of 5</b>")
+    rows = checklist_log.read(checklist_log_path)
+    assert len(rows) == 1 and rows[0]["session"] == "2026-07-24" and rows[0]["count"] == 3
+    assert rows[0]["etfs"] == {"VWCG": {"close": 60.5, "observed": "2026-07-24", "currency": "EUR"}}
+    app.handle_tick(result, None, now=_ct(20, day=25))  # Saturday: the report goes out, no session is logged
+    assert len(sent) == 2 and len(checklist_log.read(checklist_log_path)) == 1
 
 
 def test_handle_tick_records_last_tick_and_error():
@@ -673,10 +727,10 @@ def test_watch_activation_retries_when_report_delivery_failed(monkeypatch, make_
     result = make_buy_signal([make_subsignal("market_dip", "dip", passes=True)])
     monkeypatch.setattr(app.transport, "send_report", lambda report: False)
     app.handle_tick(result, None)
-    assert app._state.alerting is False
+    assert app._state.seen.alerting is False
     monkeypatch.setattr(app.transport, "send_report", lambda report: True)
     app.handle_tick(result, None)
-    assert app._state.alerting is True
+    assert app._state.seen.alerting is True
 
 
 def test_overview_never_renders_charts(monkeypatch, make_buy_signal, make_subsignal):
@@ -689,3 +743,13 @@ def test_overview_never_renders_charts(monkeypatch, make_buy_signal, make_subsig
     assert report.messages[0].photo is None
     assert report.messages[0].keyboard
     assert "Verbose facts" not in report.messages[0].text
+
+
+def test_a_late_end_of_day_report_logs_under_its_own_session(monkeypatch, sent, checklist_log_path, make_subsignal, make_buy_signal):
+    # 23:00 CT on a Friday is already Saturday in New York; the row still belongs to Friday.
+    from buysignal.analysis import checklist_log
+    monkeypatch.setattr(app.config, "DAILY_REPORT_HOUR_CT", 20)
+    result = make_buy_signal([make_subsignal("vix", "none", "x")])
+    monkeypatch.setattr(app, "compute_signal", lambda: result)
+    app.handle_tick(result, None, now=_ct(23))
+    assert [row["session"] for row in checklist_log.read(checklist_log_path)] == ["2026-07-24"]

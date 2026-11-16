@@ -19,6 +19,7 @@ MARKET_CSV = DATA_DIR / "market.csv"
 MARKET_DAILY_CSV = DATA_DIR / "marketdaily.csv"
 CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread; the older credit.csv holds a different series and is left alone
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
+CHECKLIST_LOG = DATA_DIR / "checklistlog.jsonl"  # append-only, one line per NYSE session
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
 CHROMEDRIVER_LOG = DATA_DIR / "chromedriver.log"  # latest Selenium session only, for "Chrome instance exited"
 REFRESH_JOURNAL_JSON = DATA_DIR / "buysignal.schedule.journal.json"  # how each macro collector is doing
@@ -28,6 +29,10 @@ VIX_TICKER = "^VIX"
 VIX_INTERVAL = "1h"
 VIX_LOOKBACK_DAYS = 729   # Yahoo caps 1h intraday history at ~730 days
 VIX_HISTORY_SERIES = "VIXCLS"  # Cboe daily close via FRED, from 1990
+
+# The checklist rules as set on 2026-11-05 (41bf741); logged with every session so a later
+# change of rules never mixes with these in the scorecard.
+CHECKLIST_RULES = "2026-11-05"
 
 # --- VIX thresholds (#1): higher VIX = more fear = potential buying dip -------
 VIX_STRONG = 30.0      # strong "fear" signal
@@ -82,8 +87,6 @@ MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
 MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.05        # 5% below the recent closing high qualifies, even on rebound days
 MARKET_DRAWDOWN_SESSIONS = 63       # prior completed sessions; current price is compared with their closing high
-MARKET_VOLATILITY_SESSIONS = 20    # baseline ends BEFORE the five-session selloff window
-MARKET_SELLOFF_SESSIONS = 5
 MARKET_TREND_SESSIONS = 200
 MARKET_TREND_SLOPE_SESSIONS = 20
 MARKET_BOOTSTRAP_PERIOD = "max"

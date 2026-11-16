@@ -144,13 +144,13 @@ def test_fed_changes_are_drawn_on_the_probability_chart(saved, wire, monkeypatch
     assert {'Lower', 'Same', 'Higher'} <= set(drawn) and 'By 28 Apr 2027' in drawn
 
 
-def test_trend_and_move_size_are_part_of_each_index_panel(saved, wire):
+def test_trend_is_part_of_each_index_panel_and_move_size_is_gone(saved, wire):
     store, token, _ = saved
     for view, title in (('market_dip', 'S&amp;P 500 (SPY)'), ('index_DOW', 'Dow Jones')):
         interactive.handle_callback(query(token, view), store)
         caption, markup, _, _ = wire[0][-1]
         assert title in caption
-        assert '200-day avg' in caption and 'Price vs avg' in caption and "Week's move" in caption
+        assert '200-day avg' in caption and 'Price vs avg' in caption and "Week's move" not in caption
         assert not any('trend' in text.lower() or 'intensity' in text.lower() for text in labels(markup))
     assert '· in a dip' in wire[0][0][0] and '· in a dip' not in wire[0][1][0]  # the dip is judged on SPY only
     assert 'Dip line' not in wire[0][0][0]  # thresholds are drawn on the chart, not listed
