@@ -17,7 +17,7 @@ MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
 MARKET_CSV = DATA_DIR / "market.csv"
 MARKET_DAILY_CSV = DATA_DIR / "marketdaily.csv"
-CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread; the older credit.csv holds a different series and is left alone
+CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread (credit.csv is a different series)
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 CHECKLIST_LOG = DATA_DIR / "checklistlog.jsonl"  # append-only, one line per NYSE session
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
@@ -51,15 +51,8 @@ FEDWATCH_URL = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-too
 FETCH_JITTER_SEC = (2.0, 12.0)  # random pause before an external fetch, so it isn't periodic
 SCRAPE_RETRIES = 3
 SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape retries
-# CME FedWatch's page is JS-heavy and has been observed taking close to (and sometimes past)
-# 60s to finish rendering in production; give it real headroom instead of timing out mid-load.
+# CME's JS-heavy page has taken 60s+ to render in production.
 FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
-# Recent desktop-Chrome UAs only: must match the real browser or detection worsens.
-USER_AGENTS = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-)
 
 # --- FINRA margin debt (#3) --------------------------------------------------
 MARGIN_STATS_URL = "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics"
@@ -73,8 +66,7 @@ MARGIN_REFRESH_WINDOW_DAY = 21  # FINRA's stated "third week"; past this, expect
 CF_BYPASS_HOST = os.environ.get("CF_BYPASS_HOST", "localhost")
 CF_BYPASS_PORT = 8000
 CF_BYPASS_URL = f"http://{CF_BYPASS_HOST}:{CF_BYPASS_PORT}"
-# cfbypass solving the Cloudflare Turnstile challenge has been observed taking 90-120s+ in
-# production, so give it real headroom instead of timing out mid-solve.
+# cfbypass has taken 90-120s+ to solve Turnstile in production.
 CF_BYPASS_TIMEOUT_SEC = 180
 
 # --- Market index % change (#6): daily/weekly/monthly, dip watch -------------
@@ -91,7 +83,6 @@ MARKET_TREND_SESSIONS = 200
 MARKET_TREND_SLOPE_SESSIONS = 20
 MARKET_BOOTSTRAP_PERIOD = "max"
 MARKET_DAILY_PERIOD = "5y"          # bootstrap history; incremental requests between daily full reconciliations
-MARKET_GROWTH_THRESHOLD = 0.0055    # +0.55% or better daily change counts as growth
 
 # --- Leading industries (#4/#5): top industries by market cap, earnings growth ---
 SECTOR_TOP_N = 5              # how many top industries (by market cap, across all sectors) to consider
@@ -105,9 +96,8 @@ FRED_GRAPH_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"  # no API
 YIELD_CURVE_SERIES = "T10Y3M"
 YIELD_CURVE_STEEP = 1.0            # bucket avg spread (pp) at/above this = supportive regime
 YIELD_CURVE_DEEP_INVERSION = -1.0  # two consecutive bucket avgs at/below this = deep inversion
-# Policy spread (2y Treasury minus effective fed funds), cached alongside the curve. FRED's
-# ready-made T2YFF series is gone, so it's computed from the two legs. Negative = the bond
-# market is pricing in cuts; context only, it says nothing about whether they'll be good ones.
+# Policy spread: 2y Treasury minus effective fed funds, built from its two legs (FRED dropped
+# T2YFF). Negative = cuts priced in; context only.
 TWO_YEAR_SERIES = "DGS2"
 FED_FUNDS_SERIES = "DFF"
 # Both spreads are read in fixed 3-week buckets: 92% agreement with calendar-month averages
@@ -119,8 +109,7 @@ YIELD_CURVE_BUCKET_DAYS = 21
 POLICY_SPREAD_NEG_BUCKETS = 2
 
 # --- Credit context, never a checklist condition ------------------------------------------------
-# Moody's Baa corporate yield minus the 10-year Treasury, daily since 1986. The
-# high-yield series used before has only three years on FRED, too short to judge "stressed".
+# Moody's Baa corporate yield minus the 10-year Treasury, daily since 1986: long enough to define "stressed".
 CREDIT_SERIES = "BAA10Y"
 CREDIT_CHANGE_SESSIONS = (5, 21)
 CREDIT_STRESS_PERCENTILE = 0.80    # stressed = at or above this share of its own recent readings
@@ -129,11 +118,7 @@ CREDIT_STRESS_MIN_OBS = 1260       # fewer than about 5 years cannot define "str
 CREDIT_MAX_OBSERVATION_AGE_DAYS = 7  # calendar-day tolerance for weekends/holidays
 
 # --- Equity opportunity analyzer (#8): which segment looks attractive ---------
-# Segments compared on valuations. Trailing AND forward P/E both come from MSCI index
-# pages (one provider, one methodology; true next-year consensus "P/E Fwd"), scraped with
-# Selenium since the site sits behind a JS challenge that blocks plain requests. MSCI
-# updates these monthly (factsheet cadence). Rate support is forward-looking: CME FedWatch
-# expectations (fedwatch.csv), not historical Fed moves.
+# Segments compared on MSCI trailing and forward P/E (see collectors/valuations.py).
 OPPORTUNITY_SEGMENTS = {
     "sp500": {
         "label": "MSCI USA",
@@ -167,7 +152,7 @@ VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed b
 # Two hours is two ticks: enough that a rate-limited source isn't hammered, short enough
 # that a transient failure still costs part of a day rather than all of it.
 REFRESH_RETRY_BACKOFF = timedelta(hours=2)
-TICK_INTERVAL_SEC = 3600  # 1h between ticks in continuous mode (python -m buysignal.schedule.runner --loop); matches VIX/market's cadence
+TICK_INTERVAL_SEC = 3600  # 1h between ticks in --loop mode
 DAILY_REPORT_HOUR_CT = 20  # send the end-of-day Telegram report at 8pm Central
 
 # --- Resource and fetch budgets (overridable on small deployments) ------------

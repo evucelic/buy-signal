@@ -1,8 +1,4 @@
-"""Tests for telegram_bot/transport.py: the wire, and what it does when the wire is down.
-
-Credentials are set per-test rather than globally: nothing in this package reads the
-environment at import any more, so only the tests that actually send need them.
-"""
+"""Tests for telegram_bot/transport.py: the wire, and what it does when the wire is down."""
 
 import pytest
 import requests

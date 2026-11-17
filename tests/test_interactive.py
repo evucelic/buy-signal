@@ -1,5 +1,4 @@
 """Frozen report navigation, bounded storage, Telegram editing and source semantics."""
-from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 import re
 import json
@@ -10,7 +9,6 @@ import pytest
 from buysignal.telegram_bot import app, interactive, transport, views, prepared
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal, assess
 from buysignal.signals import vix_signal
 from scripts.preview_entry_report import sample_assessment, NOW
 
@@ -367,7 +365,7 @@ def test_absolute_times_use_zagreb_daylight_saving_rules(monkeypatch):
 def test_command_panel_delivery_binds_buttons_to_its_message(telegram, tmp_path, monkeypatch):
     store = SnapshotStore(tmp_path)
     monkeypatch.setattr(app, '_snapshot_store', store)
-    monkeypatch.setattr(app.signal_charts, 'render_signal_chart', lambda s, r=None: b'png')
+    monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', lambda s, r=None: b'png')
     monkeypatch.setattr(transport.requests, 'post', lambda *a, **kw: response({'ok':True,'result':{'message_id':123}}))
     signal = next(s for s in sample_assessment().subsignals if s.name == 'fed_rate')
     report = app._single_signal(lambda: signal)

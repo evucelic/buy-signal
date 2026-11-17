@@ -120,7 +120,6 @@ def test_batches_do_not_interleave_between_threads(monkeypatch):
 
 
 def test_poll_loop_delivers_prepared_report_replies(monkeypatch):
-    from unittest.mock import Mock
     report = Report([ReportMessage("overview"), ReportMessage("details")])
     updates = response(payload={"ok": True, "result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "/signal"}}]})
     import threading

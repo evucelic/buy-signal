@@ -1,4 +1,4 @@
-"""Independent calendar clock: no extra hourly polling or changes to the US alert schedule."""
+"""Pre-close update thread for the owner's exchanges, separate from the hourly tick loop."""
 from datetime import datetime, timezone
 import logging
 import threading

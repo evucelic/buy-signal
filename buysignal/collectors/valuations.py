@@ -1,12 +1,9 @@
 """Collect segment valuation snapshots (trailing + forward P/E) from MSCI; accumulate in CSV.
 
-Both ratios come from MSCI index pages: one provider, one methodology, and "P/E Fwd" is a
-true next-year consensus forward P/E (verified against the labeled values on msci.com). The
-site sits behind a JS challenge that blocks plain requests, so pages are rendered with
-headless Selenium (same infrastructure fed_rate.py already uses daily in production). MSCI
-refreshes the values monthly; one row per segment per day is APPENDED to the cache with the
-page's as-of date, and the accumulated unique-as-of history is what makes z-scores ("cheap
-vs own history") possible. Never overwrite this file wholesale.
+MSCI's "P/E Fwd" is a true next-year consensus forward P/E. The site's JS challenge blocks plain
+requests, so pages are rendered in headless Chrome. MSCI updates monthly; one row per segment per
+day is appended with the page's as-of date, and that history is what the z-scores need. Never drop
+old rows.
 """
 
 from __future__ import annotations

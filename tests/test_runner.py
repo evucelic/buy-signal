@@ -21,7 +21,7 @@ ET = ZoneInfo("America/New_York")
 
 def _fake_result(vix_passes):
     from buysignal.signals.base import SubSignal
-    from buysignal.signals.buy_signal import BuySignal, assess
+    from buysignal.signals.buy_signal import assess
 
     subs = [SubSignal("vix", 20.0, "none", "x", passes=vix_passes)]
     return assess(subs)
@@ -45,11 +45,9 @@ def test_tick_always_refreshes_in_pre_market():
 
 
 def test_tick_refreshes_in_pre_market_even_when_the_vix_subsignal_is_missing():
-    """A VIX collector failure used to mean current_vix is None and no macro refresh at all,
-    pre-market included: the five macro caches then sat frozen until someone ran /refresh.
-    """
+    """A missing VIX sub-signal still lets pre-market refresh the macro caches."""
     dt = datetime(2026, 7, 24, 5, 0, tzinfo=ET)
-    from buysignal.signals.buy_signal import BuySignal, assess
+    from buysignal.signals.buy_signal import assess
 
     vixless = assess([])
     with patch("buysignal.schedule.runner.compute_signal", return_value=vixless), patch(
@@ -215,9 +213,7 @@ def test_refresh_macro_does_not_check_the_precondition_of_a_collector_that_is_no
 
 
 def test_refresh_macro_keeps_going_when_a_collector_raises(journal):
-    """One collector blowing up used to end the pass, and the two Selenium collectors ran
-    first: a browser that wouldn't start cost every cache behind it its refresh.
-    """
+    """One collector raising must not cost the others their refresh."""
     collectors = [
         _FakeCollector("fed_rate", raises=RuntimeError("chrome not reachable")),
         _FakeCollector("sector"),

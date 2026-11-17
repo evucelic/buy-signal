@@ -1,19 +1,9 @@
-"""Decide WHEN to act, then compute and report the entry checklist.
+"""Decide WHEN to act, then compute and log the entry checklist.
 
-One tick() per call: hourly, the highest frequency any signal needs (VIX and market_dip
-refresh every tick). `python -m buysignal.schedule.runner` does a single tick, for an external
-scheduler (cron, GitHub Actions, /loop); the same command with --loop runs tick() forever
-itself, sleeping until the next wall-clock hour between calls. What session it is - and
-whether VIX is still moving on its own clock, roughly 02:00-20:00 CT, outside NYSE hours -
-comes from market_hours.py, so holidays, early closes and DST are handled there.
-
-Full recompute pre-open and post-close; during the regular session just track VIX, recomputing
-macro only on a band crossing. When each macro collector is actually attempted is decided in
-one place, RefreshJournal (schedule/journal.py): once a day on success, sooner on a domain rule
-(margin_debt's FINRA checkpoint, see MARGIN_REFRESH_WINDOW_DAY / data_freshness()), later on a
-failure (a retry backoff, so one bad pass costs hours rather than the whole day). So a VIX band
-crossing that persists for several hourly ticks only triggers one real refresh, not one per
-tick, and a collector that still has work to do gets its chance from an ordinary REGULAR tick.
+One tick() per call: `python -m buysignal.schedule.runner` runs one, `--loop` runs one per
+wall-clock hour. Macro collectors refresh pre-market, after hours, while VIX passes, or whenever
+RefreshJournal (schedule/journal.py) says one is due; the journal alone decides each collector's
+timing. Sessions, holidays, early closes and DST come from market_hours.py.
 """
 
 import logging
@@ -140,13 +130,12 @@ def _refresh_macro(
     now: datetime | None = None,
     only: Collection[str] | None = None,
 ) -> list[tuple[str, str]]:
-    """Refresh the slow macro indicators (#2-#5, #7), each one only if the journal says it's due.
+    """Refresh each macro collector the journal says is due.
 
     force=True bypasses that gate (the Telegram /refresh command); `only` narrows the pass to
     named collectors (/whattobuy needs valuations, nothing else). Every attempt is recorded,
-    success or failure, and one collector blowing up is isolated from the rest of the pass:
-    before this, an exception from the first collector silently cost all the others their
-    refresh. Returns (name, error_message) for every collector attempted but failed.
+    success or failure, and one collector raising never stops the rest. Returns
+    (name, error_message) for every collector attempted but failed.
     """
     journal = macro_journal() if journal is None else journal
     now = now_et(now)
@@ -186,7 +175,7 @@ def _any_due(now: datetime | None = None) -> bool:
 
 
 def tick(now: datetime | None = None):
-    """One scheduled cycle. Returns the alert result, or None when nothing needs checking.
+    """One scheduled cycle. Returns the checklist result, or None when nothing needs checking.
 
     Skipped only when the NYSE session is CLOSED and VIX isn't in its active window either:
     VIX moves outside NYSE hours, so tick() stays live for that on its own clock.
@@ -199,10 +188,6 @@ def tick(now: datetime | None = None):
 
     result = compute_signal()
     current_vix = next((signal for signal in result.subsignals if signal.name == "vix"), None)
-    # A broken VIX sub-signal used to mean current_vix is None and *no* macro refresh at all,
-    # pre-market included: the session windows now stand on their own, and any collector the
-    # journal says is due (a retry past its backoff, margin_debt's checkpoint) gets its pass
-    # from an ordinary REGULAR tick too.
     session_driven = session in (PRE_MARKET, AFTER_HOURS)
     vix_driven = current_vix is not None and current_vix.passes
     if session_driven or vix_driven or _any_due(now):

@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from buysignal.signals import margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
-from buysignal.config import MARKET_DIP_THRESHOLD, MARKET_GROWTH_THRESHOLD, YIELD_CURVE_BUCKET_DAYS
+from buysignal.config import MARKET_DIP_THRESHOLD, YIELD_CURVE_BUCKET_DAYS
 from buysignal.signals.base import NONE, SOFT, STRONG, SubSignal
 from buysignal.signals.buy_signal import SIGNAL_LOCK, assess, compute_signal
 

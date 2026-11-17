@@ -63,8 +63,8 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
         filepath.parent.mkdir(parents=True, exist_ok=True)
     else:
         old.index = pd.to_datetime(old.index, utc=True)
-        new = pd.concat([old, new]) # concat the new and old dataframes
-        new = new[~new.index.duplicated(keep="last")].sort_index() # deduplicate indexes if they overlap
+        new = pd.concat([old, new])
+        new = new[~new.index.duplicated(keep="last")].sort_index()
 
     # Keep the provider-supported intraday window bounded on disk.
     cutoff = new.index[-1] - pd.Timedelta(days=VIX_LOOKBACK_DAYS)
@@ -75,7 +75,7 @@ def refresh_vix_cache(filepath: Path = VIX_CSV) -> bool:
 
 
 def load_latest_cached_vix(filepath: Path = VIX_CSV) -> float | None:
-    """Most recent cached VIX close, without fetching. Returns the last row of the VIX CSV file"""
+    """Most recent cached VIX close, without fetching; None if absent or invalid."""
     filepath = Path(filepath)
     if not filepath.exists():
         return None

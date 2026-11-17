@@ -6,7 +6,7 @@ from buysignal.collectors.margin_debt import data_freshness, margin_history
 from buysignal.config import MARGIN_DELEVERAGE_MONTHS
 from buysignal.signals.base import SubSignal
 
-# No dates here -- the "data as of" freshness table elsewhere already shows cache age.
+# No dates here: observed_at carries the month.
 _TIER_FLAG = {
     "refresh_due_soon": "refresh due soon",
     "stale": "data stale, check scraper",

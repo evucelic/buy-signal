@@ -30,7 +30,7 @@ def sample_assessment() -> BuySignal:
     # Ten years of history behind the charts; the last 300 sessions are the ones the readings describe.
     long_dates = pd.bdate_range(end="2026-11-02", periods=2600)
     steps = np.arange(2600)
-    dates, index = long_dates[-300:], np.arange(300)
+    index = np.arange(300)
     prices = np.r_[np.linspace(22, 65, 2300) * (1 + .12 * np.sin(np.arange(2300) / 90)), np.linspace(65, 100, 300) + 1.25 * np.sin(index * 1.1)]
     prices[-6:] = [100, 98.8, 96.5, 94, 92.8, 93.4]
     frame = pd.DataFrame({"SPY": prices, "NASDAQ": prices*1.3, "DOW": prices*.9, "EURO50": prices*40}, index=long_dates)

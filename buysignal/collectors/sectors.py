@@ -78,7 +78,7 @@ def _industry_earnings_data(industry_key: str) -> dict:
 
 
 def _industry_earnings_growth(industry_key: str) -> float:
-    """Compatibility helper; current snapshots also retain constituent coverage."""
+    """The growth estimate alone, from _industry_earnings_data()."""
     return _industry_earnings_data(industry_key)["earnings_growth_estimate_1y"]
 
 

@@ -3,7 +3,6 @@
 import json
 from datetime import datetime, timezone
 
-import pandas as pd
 
 from buysignal.analysis import checklist_log
 from buysignal.signals.base import SubSignal
@@ -13,7 +12,6 @@ NOW = datetime(2026, 11, 16, 21, 5, tzinfo=timezone.utc)
 
 
 def _result():
-    sector_history = pd.DataFrame({"industry": ["A"], "fetched_at": ["2026-11-16T12:00:00Z"]})
     return assess([
         SubSignal("vix", 25.0, "soft", "", passes=True, observed_at="2026-11-16"),
         SubSignal("fed_rate", .79, "hiking", "", passes=False, observed_at="2026-11-16T18:50:00Z",

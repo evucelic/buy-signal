@@ -2,7 +2,7 @@
 
 The hourly Yahoo cache drives the fear rule and reaches back about two years. Saying how unusual
 today's reading is needs decades, so Cboe's daily close (FRED series VIXCLS, from 1990) is kept
-beside it. Nothing here changes the fear read: without this file the bot falls back to the hourly
+beside it. Nothing here changes the fear rule: without this file the bot falls back to the hourly
 cache's own span.
 """
 

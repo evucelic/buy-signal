@@ -1,7 +1,5 @@
 """Comparable FedWatch observations: same date, same reference, honest elapsed time."""
 
-from unittest.mock import patch
-
 import pandas as pd
 import pytest
 

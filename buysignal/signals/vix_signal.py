@@ -16,8 +16,6 @@ def _change_suffix(change: float | None) -> str:
 def score(vix: float | None = None, allow_refresh: bool = True) -> SubSignal:
     """Map the latest VIX to a SubSignal.
 
-    High VIX = fear = potential buying opportunity (esp. on a dip).
-
     allow_refresh=False serves the cached value without fetching (e.g. the market's closed,
     so nothing new to find); falls back to a live fetch if there's no cache yet.
     """

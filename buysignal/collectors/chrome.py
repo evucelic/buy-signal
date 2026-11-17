@@ -1,13 +1,6 @@
 """One headless Chrome session, always cleaned up.
 
-fed_rate.py and valuations.py each built their own driver, and fed_rate's sat outside the
-try that quits it: anything failing between the browser starting and the try beginning
-(set_page_load_timeout on a half-dead session, most often) left a chrome process behind -
-three times per retrying pass, ~10 passes a day, in a container with no PID or memory limit.
-A context manager makes that unrepresentable: there is no path that starts a browser without
-quitting it.
-
-quit() is not the whole story, though. When a tab crashes, Chrome's helper processes are
+When a tab crashes, Chrome's helper processes are
 orphaned and reparented to PID 1, which reaps nothing unless it is an init - hence `init: true`
 in docker-compose.yml; without it the zombies filled pids_limit and every later session died
 with "Chrome instance exited". The profile goes in a per-session temp dir removed here, since

@@ -50,7 +50,7 @@ def test_delivery_retries_and_survives_restart_without_duplicate_ping(store):
     assert len(attempts)==2
 
 def test_preclose_combines_personal_quotes_and_global_overview_once(store,monkeypatch):
-    from buysignal.signals.buy_signal import BuySignal, assess
+    from buysignal.signals.buy_signal import assess
     monkeypatch.setattr(app,'_portfolio_store',store)
     monkeypatch.setattr(app,'_utc_now',lambda:NOW)
     monkeypatch.setattr(app,'_signal_report',lambda result,heading='',prefix='': Report([ReportMessage(heading+prefix+'GLOBAL OVERVIEW')]))
@@ -65,7 +65,7 @@ def test_preclose_combines_personal_quotes_and_global_overview_once(store,monkey
     assert 'VUAA' in text and 'GLOBAL OVERVIEW' in text
 
 def test_regular_watch_during_preclose_window_covers_the_scheduled_ping(store,monkeypatch):
-    from buysignal.signals.buy_signal import BuySignal, assess
+    from buysignal.signals.buy_signal import assess
     monkeypatch.setattr(app,'_portfolio_store',store)
     monkeypatch.setattr(app,'_personal_service',Mock())
     monkeypatch.setattr(app,'_utc_now',lambda:NOW)

@@ -14,7 +14,7 @@ from PIL import Image
 
 from buysignal.analysis.signal_charts import render_signal_chart
 from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal, assess
+from buysignal.signals.buy_signal import assess
 from buysignal.signals import market_signal
 from buysignal.telegram_bot import render
 from buysignal.telegram_bot.html_chunks import split_html
@@ -189,7 +189,6 @@ def test_telegram_overview_tables_fit_a_small_phone_at_normal_monospace_size():
 
 def test_telegram_detail_pages_use_supported_html_and_fit_photo_caption_limit():
     from scripts.preview_entry_report import sample_assessment
-    from buysignal.telegram_bot import views
     from buysignal.telegram_bot import prepared
     planned, _ = prepared.plan(sample_assessment(), 'abcdef123456', NOW.isoformat())
     assert {'market_dip', 'index_NASDAQ', 'vix', 'fed_rate', 'margin_debt', 'sector', 'credit', 'yield_curve'} <= set(planned)

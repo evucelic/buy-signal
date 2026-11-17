@@ -1,9 +1,4 @@
-"""Long-polling Telegram bot: per-signal + aggregate commands, plus threshold-crossing pushes.
-
-Three modules, in dependency order: `render` turns values into Telegram HTML and does nothing
-else; `transport` owns the credentials and the wire; `app` holds the state, decides what to
-say and wires the other two together. The entrypoint only needs the public names below.
-"""
+"""Long-polling Telegram bot: commands, chart panels and pushes. The entrypoint only needs the public names below."""
 
 from buysignal.telegram_bot.app import handle_tick, start, stop
 from buysignal.telegram_bot.transport import notify_started, notify_stopped

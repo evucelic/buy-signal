@@ -1,11 +1,9 @@
 """How each macro cache is doing: when it was last attempted, whether it worked, whether that
 failure has already been pushed.
 
-Attempt state, retry timing and notification dedup are one fact — "how is this collector
-doing" — so one module owns all three instead of smearing them across a file's mtime, a dict
-in runner and a second dict in telegram_bot. It persists to DATA_DIR, the volume the caches
-themselves live on, so a redeploy neither resets the retry backoff nor re-pushes a failure you
-were already told about.
+Attempt state, retry timing and notification dedup are one fact, so one module owns all three.
+It persists to DATA_DIR, so a redeploy neither resets the retry backoff nor re-pushes a failure
+already reported.
 
 `now` is always a parameter: nothing here reads the wall clock, so the tests are literal
 timestamps against a tmp file rather than a monkeypatched clock.
@@ -138,8 +136,7 @@ class RefreshJournal:
 
     def _load(self) -> dict[str, _Entry]:
         """The journal on disk. Missing, corrupt or half-written all degrade to empty, i.e.
-        "attempt everything once" — the safe default, and the same defensive read
-        _cached_policy_spread() uses in collectors/yield_curve.py.
+        "attempt everything once" — the safe default.
         """
         try:
             raw = json.loads(self._path.read_text())

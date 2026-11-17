@@ -314,7 +314,6 @@ def test_handle_tick_force_refreshes_and_recomputes_before_the_daily_report(
     app.handle_tick(stale, None, now=_ct(20))
 
     assert calls == [("refresh", True), ("compute",)]
-    report = next(s for s in sent if "End of day" in s)
     assert app._state.last_result is fresh
     assert len(sent) == 1
     assert "stale-detail" not in "\n".join(sent)
@@ -737,7 +736,7 @@ def test_overview_never_renders_charts(monkeypatch, make_buy_signal, make_subsig
     signal = make_subsignal("market_dip", "dip", detail="Verbose facts", passes=True)
     def fail(_):
         raise AssertionError("Overview must not eagerly render a chart")
-    monkeypatch.setattr(app.signal_charts, "render_signal_chart", fail)
+    monkeypatch.setattr("buysignal.analysis.signal_charts.render_signal_chart", fail)
     report = app._signal_report(make_buy_signal([signal]))
     assert len(report.messages) == 1
     assert report.messages[0].photo is None
