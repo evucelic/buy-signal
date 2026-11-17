@@ -26,7 +26,7 @@ _CACHE_LOCK = threading.Lock()
 _CACHE = OrderedDict()
 _CACHE_BYTES = 0
 
-# Validated reference palette (dataviz skill): marks carry colour, text stays in ink tokens.
+# Reference palette: marks carry colour, text stays in ink tokens.
 _SURFACE, _INK, _SECOND, _MUTED, _GRID, _AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
 _BLUE, _ORANGE, _MET, _RED, _NEUTRAL = "#2a78d6", "#eb6834", "#1baf7a", "#e34948", "#d5d4cc"
 

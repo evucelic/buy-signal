@@ -1,11 +1,4 @@
-"""The Telegram Bot API itself: credentials, sending, and the long-poll loop.
-
-Plain synchronous requests calls, matching the rest of the codebase's style: no async
-framework needed for a handful of commands and a push. Credentials are read at send time,
-not at import, so importing anything else in this package costs nothing and needs no
-environment - the command handler is passed in by the caller, so this module knows the wire
-and nothing about what the bot actually says.
-"""
+"""Telegram Bot API: sending, panel edits and the long-poll loop."""
 
 from __future__ import annotations
 

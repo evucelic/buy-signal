@@ -154,7 +154,6 @@ class SnapshotStore:
         from buysignal.telegram_bot import prepared
         # Heavy work runs outside the snapshot lock; existing reports remain navigable.
         captions, jobs = prepared.plan(result, token, sent_at)
-        # Likeliest taps first: other ranges of the charts already shown, then the other indexes.
         later = sorted((job for job in jobs if not job.primary), key=prepared.background_order) if self.background else []
         used, missing = 0, set()
         for job in jobs:

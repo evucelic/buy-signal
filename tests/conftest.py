@@ -1,9 +1,4 @@
-"""Shared pytest fixtures.
-
-Nothing here injects Telegram credentials any more: telegram_bot/render.py is pure and
-telegram_bot/transport.py reads the environment at send time, so only the transport tests
-that actually send need a token, and they set their own.
-"""
+"""Shared pytest fixtures."""
 
 import pytest
 

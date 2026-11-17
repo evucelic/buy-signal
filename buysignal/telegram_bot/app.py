@@ -1,10 +1,4 @@
-"""What the bot knows and what it decides: tick state, the daily report, command dispatch.
-
-Holds the only mutable state in the package (the last tick's outcome, whether an alert is
-currently active, whether today's report has gone out), reads whatever the renderer needs -
-cache mtimes, the refresh journal - and hands the strings to the transport. The renderer
-computes nothing and the transport decides nothing; both of those live here.
-"""
+"""What the bot decides: tick state, the daily report, pushes and command dispatch."""
 
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ from buysignal.portfolio.journal import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import chart, checklist_log, opportunity, signal_charts
+from buysignal.analysis import chart, checklist_log, opportunity
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
@@ -30,9 +24,8 @@ from buysignal.telegram_bot import interactive, pushes, render, transport, views
 from buysignal.telegram_bot.snapshots import SnapshotStore
 from buysignal.telegram_bot.messages import Report, ReportMessage
 
-# Per-signal commands: score() called directly (not compute_signal()) so a broken collector
-# can't block checking the others. /vix and /dip are handled separately in handle_message
-# since they take an allow_refresh flag; these four don't refetch on every call.
+# score() directly, not compute_signal(), so one broken collector can't block the others.
+# /vix and /dip take allow_refresh and are handled in handle_message.
 _SIGNAL_COMMANDS = {
     "/fedrate": rate_signal.score,
     "/margin": margin_signal.score,
@@ -41,8 +34,7 @@ _SIGNAL_COMMANDS = {
     "/credit": credit_signal.score,
 }
 
-# Cache files backing each signal, for the "data as of" freshness table appended to every
-# signal message.
+# Cache files behind the overview's "Data as of" block.
 _FRESHNESS_FILES = {
     "vix": config.VIX_CSV,
     "market_dip": config.MARKET_DAILY_CSV,
@@ -419,7 +411,7 @@ def handle_message(text: str) -> str | Report | None:
     if text == "/vix":
         return _single_signal(lambda: vix_signal.score(allow_refresh=open_now))
     if text in ("/dip", "/trend"):
-        # Trend now sits in each index's own panel.
+        # /trend is an alias: trend sits in each index's panel.
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])

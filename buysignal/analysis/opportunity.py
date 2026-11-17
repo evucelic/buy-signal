@@ -1,13 +1,5 @@
-"""Equity Opportunity Analyzer (#8): if buying equities, which broad segment looks attractive.
-
-Fully independent of the buy signal (signals/): that one answers WHEN to buy, this one
-answers WHAT. Compares broad segments (US large caps / world small cap / Europe, plus the
-value-weighted small-cap variant closest to AVWS) on actual valuations: trailing and true
-forward P/E from MSCI index pages (one provider, one methodology, monthly cadence),
-cheapness z-scores against our own accumulated snapshot history, plus the expected US rate
-path as a small-cap conditional modifier (CME FedWatch expectations, forward-looking,
-like everything else here). Informational only: facts plus a transparent rules verdict,
-no portfolio instructions.
+"""Which equity segment looks cheap: forward P/E against its own MSCI history, with the FedWatch
+rate path as a small-cap modifier.
 """
 
 from __future__ import annotations

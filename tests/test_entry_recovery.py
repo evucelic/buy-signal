@@ -10,7 +10,7 @@ from buysignal.collectors import entry
 from buysignal.signals import market_signal
 from buysignal.signals.base import SubSignal
 from buysignal.telegram_bot import render
-from buysignal.signals.buy_signal import BuySignal, assess
+from buysignal.signals.buy_signal import assess
 
 NOW = pd.Timestamp('2026-11-05 02:02Z')  # Nov 4, 20:02 Chicago; user's end-of-day case
 

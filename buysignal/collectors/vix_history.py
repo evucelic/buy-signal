@@ -1,9 +1,6 @@
-"""Long daily VIX closes from FRED, for context only.
+"""Daily VIX closes from FRED (VIXCLS, from 1990), for context only.
 
-The hourly Yahoo cache drives the fear rule and reaches back about two years. Saying how unusual
-today's reading is needs decades, so Cboe's daily close (FRED series VIXCLS, from 1990) is kept
-beside it. Nothing here changes the fear read: without this file the bot falls back to the hourly
-cache's own span.
+The hourly Yahoo cache drives the fear rule but covers about two years; this says how unusual today is.
 """
 
 from pathlib import Path

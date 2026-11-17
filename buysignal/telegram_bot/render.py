@@ -1,8 +1,6 @@
 """Turn signals, statuses and opportunities into Telegram HTML. Nothing else.
 
-Pure by construction: every value this module renders is passed in, including the clock. It
-reads no files, no journal and no environment, so a change to a label is a change to a string
-function - testable with literals, and free of the credentials the transport needs.
+Every value, the clock included, is passed in; credentials stay in the transport.
 """
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ from buysignal.signals.base import format_table
 from buysignal.signals.buy_signal import BuySignal
 from buysignal.telegram_bot.messages import Report, ReportMessage
 
-# Short row labels for the monospace table only (chart legends/notes keep the full config label).
+# Short row labels for the /whattobuy table.
 TABLE_LABELS = {
     "sp500": "S&P 500",
     "world_small": "SmallCap",

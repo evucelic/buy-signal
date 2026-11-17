@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from buysignal.telegram_bot import render, views
-from buysignal.signals.buy_signal import BuySignal, assess
-from buysignal.collectors import market, sectors, vix, yield_curve
+from buysignal.signals.buy_signal import assess
+from buysignal.collectors import sectors, vix, yield_curve
 from buysignal.signals import market_signal, sector_signal, vix_signal, yield_curve_signal
 
 _TRADING_DAYS = 60

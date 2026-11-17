@@ -1,10 +1,4 @@
-"""Logging setup for the whole process: one configure() call, from __main__.py, before anything else.
-
-Collector output used to be bare print()s with no timestamp at all, so `docker compose logs`
-couldn't be lined up against the tick schedule. Everything goes through logging now: to stderr,
-so `docker compose logs` keeps working, and to a rotating file on the data volume, which
-survives the container recreation every deploy does.
-"""
+"""Process logging: stderr plus a rotating file on the data volume."""
 
 import logging
 import os

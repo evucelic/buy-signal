@@ -747,7 +747,6 @@ def test_fedwatch_expired_cache_is_rejected(tmp_path):
 
 def test_fedwatch_waits_through_postback_and_invalid_rows():
     from selenium.common.exceptions import StaleElementReferenceException
-    from selenium.webdriver.common.by import By
     browser = MagicMock()
     card = MagicMock()
     card.text = "28 Oct 2026"

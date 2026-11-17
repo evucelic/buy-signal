@@ -1,12 +1,10 @@
 """Data coverage, corporate-action reconciliation, cache budgets and direct source paths."""
 
 from unittest.mock import MagicMock, patch
-import json
 
 import numpy as np
 import pandas as pd
 import pytest
-import requests
 
 from buysignal.analysis import signal_charts
 from buysignal.collectors import entry, margin_debt, sectors

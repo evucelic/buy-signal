@@ -1,10 +1,7 @@
 """Overview and panel captions: every number behind a reading, laid out to scan; no collection or IO.
 
-The overview is one data sheet: the five checklist conditions and how many pass, the context
-readings, and the index moves. A panel is its chart plus a caption in one fixed order: name and
-verdict, a table of the numbers behind it, and the data date. No prose: thresholds are drawn on the charts.
-Tables are monospace and stay within about 32 characters so a phone does not wrap them. Method detail
-lives in README.md; warnings for missing or stale data stay in the message.
+Tables are monospace and stay within about 32 characters so a phone does not wrap them; warnings
+for missing or stale data stay in the message.
 """
 from __future__ import annotations
 
@@ -29,7 +26,7 @@ _INDEX_BUTTONS = {"NASDAQ": "Nasdaq", "DOW": "Dow", "EURO50": "Euro50"}
 TITLES = {"vix": "VIX", "fed_rate": "Fed outlook", "margin_debt": "Margin debt",
           "sector": "Earnings outlook", "credit": "Credit spread", "yield_curve": "Yield curve"}
 VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES}
-# Buttons on reports sent before the sub-tabs were merged keep opening their prepared views.
+# Retired view names that old reports' buttons still send.
 LEGACY_VIEWS = {"market_info", "eps_info", "fed_changes"}
 _SELECTED = "● "
 _HISTORY_ROWS = 6  # recent observations listed in a monthly panel
