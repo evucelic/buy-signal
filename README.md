@@ -36,20 +36,26 @@ Every NYSE session, the end-of-day report appends one line to `data/checklistlog
 | `/vix` `/fedrate` `/margin` `/dip` `/sector` `/credit` `/curve` | one reading's panel |
 | `/refresh`, `/status` | fresh data; bot, collector and IBKR health |
 
-The `/portfolio` tabs:
+The `/portfolio` tabs (Value and Returns follow the 3M / 1Y / All buttons):
 
 | Tab | Chart | Numbers |
 |---|---|---|
-| Overview | account value against money paid in; on All, the same deposits put into the benchmark on the day they arrived | value, paid in, market gain, you against the benchmark |
-| Returns | time-weighted return (deposits removed) against the benchmark | return, per year (after a year), worst fall |
-| Mix | share of the account now against the target | holdings with gain on IBKR's cost basis, gap to target in euros |
-| Risk | each holding's share of the money beside its share of the portfolio's swings | volatility, correlation, effective number of bets |
-| Entries | each purchase against its month's average close | mean difference and the range chance alone gives |
-| Fees | commissions paid, running and per order | total, share of money invested |
-| Cash | cash balance over time | per currency, cash target, recent deposits |
-| P/E | forward P/E by market | earnings yield over the real 10-year yield, each ETF's dip |
+| Value | account value against money paid in, and the same deposits put into each benchmark on the day IBKR booked them | start or held value, deposits, market gain, money-weighted return, you against each benchmark |
+| Returns | time-weighted return (deposits removed) of you and the benchmarks; below it, the fall from the previous high | return (per year beyond 400 days), worst fall, yearly volatility |
+| Mix | two rings: the account now outside, the target inside | value, share now, target, gap in euros, where new cash goes |
+| Risk | each holding's share of the money beside its share of the swings | volatility, correlation, effective number of bets |
+| Trades | each purchase against its month's average close | timing against chance, commissions |
+| Cash | deposits over time, running total and per month; cash left uninvested | totals, last 12 months, median days to invest, cash per currency, recent deposits |
+| Tax | tax a full sale would cost on each coming date at today's prices; gain per purchase | holdings, cost, gain taxed and tax-free, tax, what you keep |
+| Valuation | Shiller's CAPE since 1881; every month's excess CAPE yield against the next ten years' real return | CAPE, earnings yield, real bond yield, excess yield, what followed similar months, each ETF's forward earnings yield over the 10-year TIPS |
 
-The benchmark is `BUYSIGNAL_BENCHMARK` (default `VWCE.DE`, Vanguard FTSE All-World, accumulating, in euros). Listings are whatever IBKR reports; before the first statement the defaults are VUAA (London, USD), VWCG and AVWS (Xetra, EUR).
+Benchmarks: the S&P 500 (`SXR8.DE`, iShares Core S&P 500 Acc) and the FTSE All-World (`VWCE.DE`, Vanguard All-World Acc), both accumulating and quoted in euros on Xetra, and the target mix: each deposit split by the `/target` weights into the held listings, cash kept as cash, no rebalancing. Every benchmark starts with the range's opening value and receives each later deposit on the day IBKR booked it, so it answers "what if every euro had gone there instead". The target mix is the policy benchmark of Brinson, Hood and Beebower (1986); the All-World index is the usual yardstick for a global equity investor. A sector index such as the Nasdaq-100 is left out: it does not match the strategy.
+
+Tax follows the Zakon o porezu na dohodak (NN 152/24): 12% on capital gains from financial assets, fund units included (čl. 70 st. 4); lots matched first in, first out (čl. 70 st. 5); nothing due on a lot sold more than two years after its purchase (čl. 67 st. 8); losses offset gains within the calendar year. Costs include the commission and use IBKR's exchange rate on the trade date. Shares bought before the oldest statement read are counted as taxed until the history reaches them. Sale commissions are left out.
+
+Valuation uses Robert Shiller's `ie_data.xls` from shillerdata.com (monthly, read at most weekly). The excess CAPE yield is 1/CAPE minus the real 10-year Treasury yield (GS10 less the past ten years' inflation). "What followed" takes every month whose excess yield was within one point of today's and reports the 10th, 50th and 90th percentile of the next ten years' real annual return; overlapping windows make the month count larger than the number of independent decades, which is shown too.
+
+Listings are whatever IBKR reports; before the first statement the defaults are VUAA (London, USD), VWCG and AVWS (Xetra, EUR).
 
 ## Interactive Brokers (read only)
 
@@ -105,7 +111,7 @@ docker compose run --rm --no-deps bot python -m scripts.check_ibkr
 
 ### How it is read
 
-The statement is read once a weekday after IBKR publishes the previous day, again every three hours until it does, and on `/portfolio` or `/whattobuy` when the stored one is behind. A deposit that cleared today therefore shows from the next day; `/whattobuy 500` plans for it meanwhile. A statement is checked for every section before it replaces the stored holdings, and an older one is refused. Trades, daily values and deposits are kept beyond the 365-day window.
+The statement is read once a weekday after IBKR publishes the previous day, again every three hours until it does, and on `/portfolio` or `/whattobuy` when the stored one is behind. A deposit that cleared today therefore shows from the next day; `/whattobuy 500` plans for it meanwhile. A statement is checked for every section before it replaces the stored holdings, and an older one is refused. Trades, daily values and deposits are kept beyond the 365-day window. A statement covers at most 365 days, so older history is read separately (`ibkr_history` in `/status`): each run asks for the 365 days before the oldest stored day, using the Flex Web Service's `fd`/`td` dates, until it reaches the day the account held nothing. Deposits count on the day IBKR booked them (`reportDate`), which is when the account's value includes them. Each tab's footer gives the statement's last day, when it was read, and "adds up ✓" when holdings plus cash match IBKR's own total for that day.
 
 ## Setup
 
