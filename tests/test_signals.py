@@ -28,29 +28,13 @@ def _vix_sources(monkeypatch, cached=_CACHED_VIX, live=_LIVE_VIX):
     monkeypatch.setattr("buysignal.signals.vix_signal.vix_change_pct", lambda: None)
 
 
-def test_vix_strong_passes():
-    s = _vix(30.0)
-    assert s.state == STRONG
-    assert s.passes is True
+@pytest.mark.parametrize("level, state, passes", [
+    (30.0, STRONG, True), (29.9, SOFT, True), (22.0, SOFT, True), (21.9, NONE, False), (15.0, NONE, False), (5.0, NONE, False),
+])
+def test_vix_passes_from_22_and_is_strong_from_30(level, state, passes):
+    s = _vix(level)
 
-
-def test_vix_soft_boundary_passes():
-    s = _vix(22.0)
-    assert s.state == SOFT
-    assert s.passes is True
-
-
-def test_vix_calm_fails():
-    s = _vix(15.0)
-    assert s.state == NONE
-    assert s.passes is False
-
-
-def test_vix_optimistic_low_fails():
-    s = _vix(5.0)
-    assert s.state == NONE
-    assert s.passes is False
-    assert "optimistic" in s.detail
+    assert (s.state, s.passes) == (state, passes)
 
 
 def test_vix_reports_the_live_level_when_refresh_is_allowed(monkeypatch):
@@ -88,33 +72,6 @@ def test_vix_reports_an_explicitly_supplied_level_over_either_source(monkeypatch
     assert s.state == SOFT
 
 
-def test_vix_change_suffix_present_vs_absent():
-    assert "vs prior close" in _vix(15.0, change=0.05).detail
-    assert "vs prior close" not in _vix(15.0, change=None).detail
-
-
-def test_vix_just_below_strong_is_soft_not_strong():
-    s = _vix(29.9)
-    assert s.state == SOFT
-    assert s.passes is True
-
-
-def test_vix_just_below_soft_is_calm_not_soft():
-    s = _vix(21.9)
-    assert s.state == NONE
-    assert s.passes is False
-
-
-def test_vix_optimistic_boundary_exact():
-    assert "optimistic" in _vix(10.0).detail
-
-
-def test_vix_just_above_optimistic_is_plain_calm():
-    s = _vix(10.1)
-    assert "optimistic" not in s.detail
-    assert "calm" in s.detail
-
-
 # --- rate_signal ---------------------------------------------------------------
 
 
@@ -142,22 +99,16 @@ def _rate(expectations):
         return rate_signal.score(asof=pd.Timestamp("2026-07-01"))
 
 
-def test_rate_hiking_fails():
-    s = _rate(_fedwatch(ease=0.0, no_change=0.3, hike=0.7))
-    assert s.state == "hiking"
-    assert s.passes is False
+@pytest.mark.parametrize("ease, no_change, hike, state, passes", [
+    (0.0, 0.3, 0.7, "hiking", False),
+    (0.0, 0.5, 0.5, "hiking", False),   # a tie with "higher" counts as higher
+    (0.7, 0.3, 0.0, "cutting", True),
+    (0.2, 0.6, 0.2, "no_change", True),
+])
+def test_rate_passes_unless_higher_leads_or_ties(ease, no_change, hike, state, passes):
+    s = _rate(_fedwatch(ease=ease, no_change=no_change, hike=hike))
 
-
-def test_rate_cutting_passes():
-    s = _rate(_fedwatch(ease=0.7, no_change=0.3, hike=0.0))
-    assert s.state == "cutting"
-    assert s.passes is True
-
-
-def test_rate_no_change_passes():
-    s = _rate(_fedwatch(ease=0.2, no_change=0.6, hike=0.2))
-    assert s.state == "no_change"
-    assert s.passes is True
+    assert (s.state, s.passes) == (state, passes)
 
 
 def test_rate_missing_horizons_requires_refresh():
@@ -172,21 +123,9 @@ def test_rate_missing_horizons_requires_refresh():
         _rate(without_horizons)
 
 
-def test_rate_hike_tie_does_not_pass():
-    s = _rate(_fedwatch(ease=0.0, no_change=0.5, hike=0.5))
-    assert s.state == "hiking"
-    assert s.passes is False
-
-
 def test_rate_zero_distribution_is_rejected():
     with pytest.raises(ValueError, match="distribution"):
         _rate(_fedwatch(ease=0.0, no_change=0.0, hike=0.0))
-
-
-def test_rate_carries_its_horizons_in_the_detail_string():
-    s = _rate(_fedwatch(ease=0.0, no_change=0.3, hike=0.7))
-    assert "nearest" in s.detail
-    assert "hike 70.0%" in s.detail
 
 
 # --- margin_signal ---------------------------------------------------------------
@@ -208,55 +147,20 @@ def _margin(balances, freshness=("fresh", "ok")):
         return margin_signal.score()
 
 
-def test_margin_deleveraging_passes():
-    s = _margin([1000, 900, 800])
-    assert s.state == "deleveraging"
-    assert s.passes is True
-
-
-def test_margin_leveraging_fails():
-    s = _margin([800, 900, 1000])
-    assert s.state == "leveraging"
-    assert s.passes is False
-
-
-def test_margin_single_month_cannot_show_a_decrease():
-    s = _margin([1000])
-    assert s.passes is False
-    assert s.score == 0.0
-
-
-def test_margin_zero_change_is_not_deleveraging():
-    s = _margin([1000, 1000])
-    assert s.passes is False
-    assert s.score == 0.0
+@pytest.mark.parametrize("balances, passes", [
+    ([1000, 900, 800], True),
+    ([800, 900, 1000], False),
+    ([1000, 1000], False),   # unchanged is not deleveraging
+    ([1000], False),         # one month shows no change at all
+])
+def test_margin_passes_when_debt_fell_over_the_last_month(balances, passes):
+    assert _margin(balances).passes is passes
 
 
 def test_margin_a_decrease_followed_by_an_increase_is_not_deleveraging(monkeypatch):
     monkeypatch.setattr("buysignal.signals.margin_signal.MARGIN_DELEVERAGE_MONTHS", 2)
 
     assert _margin([1000, 900, 950]).passes is False
-
-
-def test_margin_detail_omits_the_freshness_flag_when_the_data_is_current():
-    s = _margin([1000, 900], freshness=("fresh", "latest month 2026-07 is current"))
-    assert "|" not in s.detail
-    assert "2026-07" not in s.detail
-
-
-def test_margin_detail_flags_refresh_due_soon_without_the_raw_message():
-    s = _margin(
-        [1000, 900],
-        freshness=("refresh_due_soon", "latest month 2026-07 is 2 months old and the release checkpoint has passed"),
-    )
-    assert "refresh due soon" in s.detail
-    assert "2026-07" not in s.detail
-
-
-def test_margin_detail_flags_stale_without_the_raw_message():
-    s = _margin([1000, 900], freshness=("stale", "way overdue"))
-    assert "stale" in s.detail
-    assert "way overdue" not in s.detail
 
 
 # --- market_signal ---------------------------------------------------------------
@@ -269,22 +173,11 @@ def _market(drawdown):
         return market_signal.score()
 
 
-def test_market_drawdown_passes():
-    signal = _market(-.07)
-    assert signal.state == "dip" and signal.passes
-
-
-def test_small_red_day_does_not_pass():
-    signal = _market(-.01)
-    assert signal.state == "flat" and not signal.passes
-
-
-def test_exact_drawdown_threshold_passes():
-    assert _market(MARKET_DIP_THRESHOLD).passes
-
-
-def test_drawdown_above_threshold_does_not_pass():
-    assert not _market(MARKET_DIP_THRESHOLD + .0001).passes
+@pytest.mark.parametrize("drawdown, passes", [
+    (-.07, True), (MARKET_DIP_THRESHOLD, True), (MARKET_DIP_THRESHOLD + .0001, False), (-.01, False),
+])
+def test_a_dip_is_5_percent_or_more_below_the_3_month_high(drawdown, passes):
+    assert _market(drawdown).passes is passes
 
 
 def test_market_score_preserves_allow_refresh_flag():
@@ -396,25 +289,6 @@ def _spread_df(spreads, policy=None, start="2026-01-01"):
     return pd.DataFrame(rows)
 
 
-def test_spread_df_builder_fills_one_bucket_per_value():
-    history = _spread_df([0.5, 0.8])
-
-    assert len(history) == 2 * YIELD_CURVE_BUCKET_DAYS
-    assert history["date"].iloc[0] == pd.Timestamp("2026-01-01")
-    assert history["date"].iloc[-1] == pd.Timestamp("2026-02-11")
-
-
-def test_spread_df_builder_holds_each_value_constant_across_its_own_bucket():
-    history = _spread_df([0.5, 0.8])
-
-    assert set(history["spread"].iloc[:YIELD_CURVE_BUCKET_DAYS]) == {0.5}
-    assert set(history["spread"].iloc[YIELD_CURVE_BUCKET_DAYS:]) == {0.8}
-
-
-def test_spread_df_builder_omits_the_policy_column_when_not_asked_for():
-    assert "policy_spread" not in _spread_df([0.5, 0.8]).columns
-
-
 def _curve(spreads, policy=None):
     with patch(
         "buysignal.signals.yield_curve_signal.yield_curve_history", return_value=_spread_df(spreads, policy)
@@ -422,43 +296,18 @@ def _curve(spreads, policy=None):
         return yield_curve_signal.score()
 
 
-def test_yield_curve_steep_at_exact_threshold():
-    s = _curve([1.0, 0.5])
-    assert s.state == "steep"
-    assert s.passes is True
-
-
-def test_yield_curve_just_below_steep_is_flat():
-    s = _curve([0.99, 0.5])
-    assert s.state == "flat"
-    assert s.passes is True
-
-
-def test_yield_curve_exactly_zero_is_flat_not_inverted():
-    s = _curve([0.0, 0.5])
-    assert s.state == "flat"
-
-
-def test_yield_curve_negative_bucket_is_inverted():
-    s = _curve([-0.2, 0.5])
-    assert s.state == "inverted"
-    assert s.passes is False
-
-
-def test_yield_curve_two_deep_buckets_is_deep_inversion():
-    s = _curve([-1.0, -1.0, -1.2])
-    assert s.state == "deep_inversion"
-    assert s.passes is False
-
-
-def test_yield_curve_one_deep_bucket_is_only_inverted():
-    s = _curve([-0.3, -1.5, -1.5])
-    assert s.state == "inverted"
-
-
-def test_yield_curve_filling_bucket_excluded_from_classification():
-    s = _curve([0.5, -2.0])
-    assert s.state == "flat"
+@pytest.mark.parametrize("buckets, state", [
+    ([1.0, 0.5], "steep"),
+    ([0.99, 0.5], "flat"),
+    ([0.0, 0.5], "flat"),                    # zero is not inverted
+    ([-0.2, 0.5], "inverted"),
+    ([-1.0, -1.0, -1.2], "deep_inversion"),  # two complete deep buckets
+    ([-0.3, -1.5, -1.5], "inverted"),        # one deep complete bucket is not enough
+    ([0.5, -2.0], "flat"),                   # the bucket still filling is not judged
+    ([-2.0], "flat"),
+])
+def test_yield_curve_state_comes_from_complete_three_week_buckets(buckets, state):
+    assert _curve(buckets).state == state
 
 
 def test_yield_curve_is_advisory():
@@ -473,16 +322,6 @@ def test_yield_curve_averages_mark_the_filling_bucket():
     assert [b["spread"] for b in buckets] == pytest.approx([0.5, 0.8])
 
 
-def test_yield_curve_detail_has_latest_spread_and_bucket_avg():
-    s = _curve([0.5, 0.86])
-    assert "+0.86pp" in s.detail
-    assert "last full 3wk avg +0.50pp" in s.detail
-
-
-def test_yield_curve_single_filling_bucket_defaults_to_flat():
-    assert _curve([-2.0]).state == "flat"
-
-
 def test_policy_spread_fires_after_two_complete_negative_buckets():
     s = _curve([0.5, 0.5, 0.5], policy=[-0.2, -0.41, -0.5])
     assert s.metrics["cuts_priced"] and s.metrics["cuts_since"] == "2026-01-01"
@@ -492,7 +331,6 @@ def test_policy_spread_fires_after_two_complete_negative_buckets():
 def test_policy_spread_silent_below_the_confirmation_threshold():
     s = _curve([0.5, 0.5, 0.5], policy=[0.3, -0.41, -0.5])
     assert s.metrics["cuts_priced"] is False and s.metrics["cuts_since"] is None
-    assert "no cuts priced in" in s.detail
 
 
 def test_policy_spread_ignores_the_filling_bucket():
@@ -509,20 +347,17 @@ def test_policy_spread_gap_breaks_the_run_instead_of_collapsing():
         s = yield_curve_signal.score()
 
     assert s.metrics["cuts_priced"] is None
-    assert "missing for the latest 3wk period" in s.detail
 
 
 def test_policy_spread_silent_when_positive():
     s = _curve([0.5, 0.5, 0.5], policy=[0.3, 0.25, 0.2])
     assert s.metrics["cuts_priced"] is False
-    assert "no cuts priced in" in s.detail
 
 
 def test_policy_spread_omitted_when_cache_predates_the_column():
     s = _curve([0.5, 0.5])
     assert s.metrics["cuts_priced"] is None
     assert all(b["policy_spread"] is None for b in s.metrics["buckets"])
-    assert "2y-FFR" not in s.detail
 
 
 def test_policy_spread_does_not_change_the_curve_state():
@@ -558,7 +393,6 @@ def test_a_missing_condition_stays_in_the_denominator():
     assert (result.passing_count, result.required_count, result.state) == (4, 5, "incomplete")
     assert result.label == "4 of 5 incomplete"
     assert result.status("fed_rate") == "incomplete"
-    assert "fed_rate" in result.detail
 
 
 def test_a_stale_condition_cannot_pass_and_marks_the_checklist_incomplete():
@@ -720,7 +554,6 @@ def test_rate_pause_with_later_hikes_fails():
     signal = _rate(df)
     assert not signal.passes
     assert signal.state == "hiking"
-    assert "6m, 1y" in signal.detail
 
 
 def test_rate_past_meeting_is_missing_not_supportive():

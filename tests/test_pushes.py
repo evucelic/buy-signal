@@ -1,6 +1,8 @@
 """pushes.decide(): which message a reading calls for, and what the owner knows once it is delivered."""
 from datetime import date
 
+import pytest
+
 from buysignal.signals.base import SubSignal
 from buysignal.signals.buy_signal import assess
 from buysignal.telegram_bot.pushes import Seen, decide
@@ -45,3 +47,16 @@ def test_unknown_evidence_neither_clears_a_watch_nor_counts_as_a_change():
 def test_a_watch_clears_on_known_calm_evidence():
     heading, after = decide(Seen(alerting=True, count=0), _read(), TODAY)
     assert heading == "<b>Watch trigger cleared (VIX/SPY)</b>\n\n" and not after.alerting
+
+
+@pytest.mark.parametrize("reading, reasons", [
+    (dict(vix=25.), "VIX elevated"),
+    (dict(dip=True), "SPY dip"),
+    (dict(vix=25., dip=True), "VIX elevated, SPY dip"),
+    (dict(passing=3), None),  # Fed, margin and earnings can pass for months; they never start a watch
+])
+def test_only_fear_or_a_dip_starts_a_watch(reading, reasons):
+    heading, after = decide(Seen(count=_read(**reading).passing_count), _read(**reading), TODAY)
+
+    assert after.alerting is (reasons is not None)
+    assert (f"Watch trigger active</b> ({reasons})" in heading) if reasons else heading == ""

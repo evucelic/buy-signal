@@ -200,12 +200,13 @@ def test_telegram_detail_pages_use_supported_html_and_fit_photo_caption_limit():
         assert max(len(line) for line in html.unescape(tables[0].split('</pre>')[0]).splitlines()) <= 32
 
 
-def test_phone_chart_titles_fit_inside_uploaded_image(monkeypatch):
+@pytest.fixture
+def nothing_clipped(monkeypatch):
+    """Every chart saved during the test must keep each heading, label and tick inside the canvas."""
     from matplotlib.figure import Figure
-    from buysignal.analysis import signal_charts
-    from scripts.preview_entry_report import sample_assessment
-    original = Figure.savefig
     from matplotlib.text import Text
+    original, saved = Figure.savefig, []
+
     def checked_save(figure, *args, **kwargs):
         figure.canvas.draw()
         renderer = figure.canvas.get_renderer()
@@ -217,25 +218,36 @@ def test_phone_chart_titles_fit_inside_uploaded_image(monkeypatch):
                 for tick in [*axis.get_major_ticks(), *axis.get_minor_ticks()]:
                     if not low <= tick.get_loc() <= high:
                         undrawn.update((id(tick.label1), id(tick.label2)))
-        # Margins are fixed, so every heading, label and tick must be measured against the canvas.
         for text in figure.findobj(Text):
             if id(text) in undrawn or not text.get_visible() or not text.get_text().strip():
                 continue
             bounds = text.get_window_extent(renderer)
             assert bounds.x0 >= -1 and bounds.x1 <= figure.bbox.width + 1, text.get_text()
             assert bounds.y0 >= -1 and bounds.y1 <= figure.bbox.height + 1, text.get_text()
+        saved.append(1)
         return original(figure, *args, **kwargs)
     monkeypatch.setattr(Figure, 'savefig', checked_save)
-    rendered = 0
+    return saved
+
+
+def test_signal_charts_keep_every_label_inside_the_image(nothing_clipped):
+    from buysignal.analysis import signal_charts
+    from scripts.preview_entry_report import sample_assessment
     for signal in sample_assessment().subsignals:
         if signal.history is None:
             continue
-        for index in (('SPY', 'NASDAQ', 'DOW', 'EURO50') if signal.name == 'market_dip' else (None,)):
+        # SPY draws the dip line, an index without it the plain layout; the other indexes repeat these.
+        for index in (('SPY', 'EURO50') if signal.name == 'market_dip' else (None,)):
             shown = signal if index is None else replace(signal, metrics={**signal.metrics, 'chart_index': index})
             for range_key in signal_charts.available_ranges(shown, index) or (signal_charts.DEFAULT_RANGE,):
                 assert signal_charts._render_signal_chart(shown, range_key)
-                rendered += 1
-    assert rendered >= 20
+    assert len(nothing_clipped) >= 15
+
+
+def test_portfolio_charts_keep_every_label_inside_the_image(nothing_clipped, tmp_path):
+    from scripts.preview_entry_report import sample_personal
+    tabs, _ = sample_personal(tmp_path)
+    assert sum(png is not None for _, png in tabs.values()) == len(nothing_clipped) >= 9
 
 
 def test_panel_numbers_follow_the_range_button():

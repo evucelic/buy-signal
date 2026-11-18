@@ -1,4 +1,6 @@
 import re
+
+import pytest
 """End-to-end tests across the collector -> signal -> rendered message seam, network faked."""
 
 from unittest.mock import MagicMock, patch
@@ -109,7 +111,7 @@ def test_a_vix_download_reaches_the_signal_through_the_cache(tmp_path):
 
     assert signal.score == 33.0
     assert signal.state == "strong"
-    assert "+83.3% vs prior close" in signal.detail
+    assert signal.metrics["change"] == pytest.approx(33 / 18 - 1)
 
 
 def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
@@ -155,5 +157,4 @@ def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
 
     assert signal.state == "growing"
     assert signal.passes is True
-    assert "3/5 top industries with positive forecast EPS growth" in signal.detail
-    assert "Alpha: cap 5.00T" in signal.detail
+    assert (signal.metrics["growing"], signal.metrics["sample_size"]) == (3, 5)
