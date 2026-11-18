@@ -6,7 +6,6 @@ from __future__ import annotations
 import pandas as pd
 
 from buysignal.analysis import signal_charts as style
-from buysignal.analysis.signal_charts import RANGES
 from buysignal.resources import HEAVY_WORK_LOCK
 
 CASH = "CASH"
@@ -34,10 +33,6 @@ def _figure(height: float):
 
 def _png(figure) -> bytes:
     return style.png_bytes(figure)
-
-
-def _span_words(series: pd.Series, range_key: str) -> str:
-    return RANGES[range_key]["words"] or f"since {series.index[0]:%b %Y}"
 
 
 def _spread(ends: dict[str, float], span: float, gap: float = .075) -> dict[str, float]:
@@ -69,14 +64,14 @@ def _labelled_lines(ax, lines: dict[str, pd.Series], fmt: str):
                     va="center", ha="left", fontsize=style._LABEL, fontweight="bold", color=color, annotation_clip=False)
 
 
-def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series], range_key: str) -> bytes | None:
+def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series]) -> bytes | None:
     if account is None or len(account) < 2:
         return None
     with HEAVY_WORK_LOCK:
         figure = _figure(5.8)
         style._place(figure, right=.72)
         ax = figure.subplots()
-        style._frame(ax, "Account value", _span_words(account, range_key) + " · grey = paid in · same deposits")
+        style._frame(ax, "Account value", "grey = paid in")
         paid = paid.reindex(account.index)
         ax.plot(paid.index, paid, color=style._MUTED, linewidth=1.6, drawstyle="steps-post", zorder=2)
         ax.fill_between(account.index, account.to_numpy(), paid.to_numpy(), where=(account >= paid).to_numpy(), interpolate=True,
@@ -91,7 +86,7 @@ def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series],
         return _png(figure)
 
 
-def returns(cumulative: dict[str, pd.Series], range_key: str) -> bytes | None:
+def returns(cumulative: dict[str, pd.Series]) -> bytes | None:
     """Time-weighted returns, and below them the account's fall from its previous high."""
     mine = cumulative.get("You")
     if mine is None or len(mine) < 2:
@@ -100,13 +95,13 @@ def returns(cumulative: dict[str, pd.Series], range_key: str) -> bytes | None:
         figure = _figure(6.6)
         style._place(figure, right=.74, gap=.42, top_points=74)
         top, bottom = figure.subplots(2, 1, gridspec_kw={"height_ratios": [2.2, 1]}, sharex=True)
-        style._frame(top, "Return without deposits", _span_words(mine, range_key) + " · time-weighted")
+        style._frame(top, "Return without deposits")
         top.axhline(0, color=style._AXIS, linewidth=1, zorder=2)
         _labelled_lines(top, {name: series * 100 for name, series in cumulative.items() if len(series) > 1}, "{:+.1f}%")
         style._yticks(top, 5, "{:+.0f}%")
         style._zero(top, "0%")
         style._frame(bottom)
-        style._heading(bottom, "Below the previous high · orange = S&P")
+        style._heading(bottom, "Fall from high · orange = S&P")
         for name in ("S&P 500", "You"):
             series = cumulative.get(name)
             if series is None or len(series) < 2:
@@ -130,7 +125,7 @@ def mix(rows: list[dict], total: float) -> bytes:
     with HEAVY_WORK_LOCK:
         figure = _figure(4.6)
         targeted = any(row.get("target") is not None for row in rows)
-        style._title(figure, "Mix", "outer ring = now" + (" · inner ring = target" if targeted else ""))
+        style._title(figure, "Mix", "outer now" + (" · inner target" if targeted else ""))
         ax = figure.add_axes((.0, .02, .58, .80))
         ax.set_aspect("equal")
         ax.axis("off")
@@ -147,8 +142,7 @@ def mix(rows: list[dict], total: float) -> bytes:
         if targeted:
             ax.pie([row.get("target") or 0 for row in rows], radius=.68, colors=colors, startangle=90, counterclock=False,
                    wedgeprops={"width": .2, "alpha": .55, **edge})
-        ax.text(0, .06, f"€{total:,.0f}", ha="center", va="center", fontsize=style._LABEL + 1, fontweight="bold", color=style._INK)
-        ax.text(0, -.14, "in the account", ha="center", va="center", fontsize=style._NOTE, color=style._SECOND)
+        ax.text(0, 0, f"€{total:,.0f}", ha="center", va="center", fontsize=style._LABEL + 1, fontweight="bold", color=style._INK)
         height = figure.get_figheight() * 72
         for i, (row, color) in enumerate(zip(rows, colors)):
             y = 1 - (100 + i * 34) / height
@@ -174,7 +168,7 @@ def risk(result: dict) -> bytes:
         style._place(figure, left=.17, right=.95, top_points=74, bottom_points=30)
         ax = figure.subplots()
         ax.set_facecolor(style._SURFACE)
-        style._title(figure, "Where the risk is", "grey = share of money · blue = share of swings")
+        style._title(figure, "Where the risk is", "grey money · blue swings")
         positions = list(range(len(symbols)))[::-1]
         money = [result["weights"][s] * 100 for s in symbols]
         swings = [result["risk"][s] * 100 for s in symbols]
@@ -205,7 +199,7 @@ def timing(rows: list[dict], noise: float | None) -> bytes | None:
         style._place(figure, right=.95, bottom_points=46)
         ax = figure.subplots()
         mean = sum(row["diff"] for row in judged) / len(judged) * 100
-        style._frame(ax, "Entry timing", f"vs the month's average · mean {mean:+.1f}%" + (" · grey = usual day" if noise else ""))
+        style._frame(ax, "Entry timing", f"vs month average · mean {mean:+.1f}%")
         diffs = [row["diff"] * 100 for row in judged]
         x = list(range(len(judged)))
         if noise:
@@ -230,7 +224,7 @@ def cash(deposits: pd.Series, balance: pd.Series | None) -> bytes | None:
         figure = _figure(6.2)
         style._place(figure, right=.80, gap=.5, top_points=74)
         top, bottom = figure.subplots(2, 1, gridspec_kw={"height_ratios": [1.4, 1]})
-        style._frame(top, "Deposits", f"since {deposits.index[0]:%b %Y} · grey = cash not yet invested")
+        style._frame(top, "Deposits", "grey = uninvested cash")
         total = deposits.cumsum()
         start = deposits.index[0] - pd.Timedelta(days=1)
         steps = pd.concat([pd.Series([0.], index=[start]), total])
@@ -265,7 +259,7 @@ def tax(schedule: list[tuple], lots: list, today) -> bytes | None:
         figure = _figure(6.2)
         style._place(figure, right=.80, gap=.55, top_points=74, bottom_points=40)
         top, bottom = figure.subplots(2, 1, gridspec_kw={"height_ratios": [1, 1]})
-        style._frame(top, "Tax if you sold everything", "at today's prices · falls as lots pass 2 years")
+        style._frame(top, "Tax if you sold everything", "at today's prices")
         days = [pd.Timestamp(day) for day, _ in schedule]
         amounts = [amount for _, amount in schedule]
         end = max(days[-1] + pd.Timedelta(days=45), pd.Timestamp(today) + pd.Timedelta(days=60))
@@ -278,7 +272,7 @@ def tax(schedule: list[tuple], lots: list, today) -> bytes | None:
         style._yticks(top, 4, "{:,.0f}")
         style._dates(top)
         style._frame(bottom)
-        style._heading(bottom, "Gain per purchase · orange = taxed · green = tax-free")
+        style._heading(bottom, "Gain per purchase · orange taxed · green free")
         dated = [lot for lot in lots if lot.bought is not None]
         for lot in dated:
             free = lot.free_from(None)
@@ -299,7 +293,7 @@ def valuation(history: pd.DataFrame, summary: dict) -> bytes | None:
         figure = _figure(6.8)
         style._place(figure, right=.80, gap=.62, top_points=74, bottom_points=46)
         top, bottom = figure.subplots(2, 1, gridspec_kw={"height_ratios": [1, 1.15]})
-        style._frame(top, "US stocks: CAPE", f"price ÷ 10-year real earnings · since {summary['since']:%Y} · monthly")
+        style._frame(top, "US stocks: CAPE", f"since {summary['since']:%Y}")
         cape = history.set_index("date").cape.dropna()
         top.plot(cape.index, cape, color=style._BLUE, linewidth=1.4, zorder=3)
         top.axhline(summary["cape_median"], color=style._SECOND, linewidth=1.2, linestyle=(0, (5, 4)), zorder=2)
