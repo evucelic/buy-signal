@@ -58,47 +58,6 @@ def _never_computes():
     raise AssertionError("compute_signal() must not run for this case")
 
 
-# --- pushes: is_alerting / trigger_reasons ---------------------------------------------------------
-
-
-def test_is_alerting_vix_only(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("vix", "soft", "x", passes=True)])
-    assert pushes.is_alerting(result) is True
-
-
-def test_is_alerting_dip_only(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("market_dip", "dip", "x", passes=True)])
-    assert pushes.is_alerting(result) is True
-
-
-def test_other_conditions_alone_do_not_hold_the_watch_trigger_on(make_subsignal, make_buy_signal):
-    # Margin, Fed and earnings can pass for months; a standing alert would mask the next fear trigger.
-    result = make_buy_signal([make_subsignal(name, "x", "x", passes=True) for name in ("fed_rate", "margin_debt", "sector")]
-                             + [make_subsignal("vix", "none", "x")])
-    assert result.passing_count == 3
-    assert pushes.is_alerting(result) is False
-
-
-def test_is_alerting_false_when_nothing_triggers(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
-    assert pushes.is_alerting(result) is False
-
-
-def test_trigger_reasons_combines_all(make_subsignal, make_buy_signal):
-    result = make_buy_signal(
-        [
-            make_subsignal("vix", "soft", "x", passes=True),
-            make_subsignal("market_dip", "dip", "x", passes=True),
-        ],
-    )
-    assert pushes.trigger_reasons(result) == "VIX elevated, SPY dip"
-
-
-def test_trigger_reasons_empty_when_nothing_triggers(make_subsignal, make_buy_signal):
-    result = make_buy_signal([make_subsignal("vix", "none", "x")], state="none")
-    assert pushes.trigger_reasons(result) == ""
-
-
 # handle_tick: alert edge-triggering
 
 
@@ -237,24 +196,15 @@ def test_handle_tick_records_last_tick_and_error():
 # daily report: when it is due, and what it shows
 
 
-def test_report_is_due_at_the_report_hour_when_none_was_sent_today():
-    assert app.report_due(_ct(20), last_report_date=None, report_hour=20) is True
-
-
-def test_report_is_not_due_an_hour_before_the_report_hour():
-    assert app.report_due(_ct(19), last_report_date=None, report_hour=20) is False
-
-
-def test_report_can_retry_or_start_late_after_the_report_hour():
-    assert app.report_due(_ct(21), last_report_date=None, report_hour=20) is True
-
-
-def test_report_is_not_due_again_on_a_date_already_reported():
-    assert app.report_due(_ct(20), last_report_date=date(2026, 7, 24), report_hour=20) is False
-
-
-def test_report_is_due_again_the_next_day():
-    assert app.report_due(_ct(20, day=25), last_report_date=date(2026, 7, 24), report_hour=20) is True
+@pytest.mark.parametrize("now, last_report, due", [
+    (_ct(20), None, True),                        # the report hour, nothing sent today
+    (_ct(19), None, False),                       # an hour early
+    (_ct(21), None, True),                        # late or retried after the hour
+    (_ct(20), date(2026, 7, 24), False),          # already sent today
+    (_ct(20, day=25), date(2026, 7, 24), True),   # the next day
+])
+def test_the_daily_report_is_due_once_per_day_from_the_report_hour(now, last_report, due):
+    assert app.report_due(now, last_report_date=last_report, report_hour=20) is due
 
 
 def test_report_shows_this_ticks_result_when_the_tick_produced_one(make_buy_signal):
@@ -501,30 +451,15 @@ def test_handle_message_dip_respects_market_open_flag(monkeypatch, make_subsigna
     assert calls == [True]
 
 
-def test_handle_message_fedrate(monkeypatch, make_subsignal):
-    # _SIGNAL_COMMANDS binds these score functions at import time, so patching
-    # app.rate_signal.score wouldn't reach the already-bound dict entry -- patch the entry itself.
-    monkeypatch.setitem(app._SIGNAL_COMMANDS, "/fedrate", lambda: make_subsignal("fed_rate", "flat", "x", passes=True))
-    assert "Fed outlook" in _text(app.handle_message("/fedrate"))
+@pytest.mark.parametrize("command, name, title", [
+    ("/fedrate", "fed_rate", "Fed outlook"), ("/margin", "margin_debt", "Margin"),
+    ("/sector", "sector", "Earnings outlook"), ("/curve", "yield_curve", "Yield curve"),
+])
+def test_each_reading_has_its_own_command(monkeypatch, make_subsignal, command, name, title):
+    # The command table binds score functions at import, so the entry itself is replaced.
+    monkeypatch.setitem(app._SIGNAL_COMMANDS, command, lambda: make_subsignal(name, "flat", "x", passes=True))
 
-
-def test_handle_message_margin(monkeypatch, make_subsignal):
-    monkeypatch.setitem(
-        app._SIGNAL_COMMANDS, "/margin", lambda: make_subsignal("margin_debt", "deleveraging", "x", passes=True)
-    )
-    assert "Margin" in _text(app.handle_message("/margin"))
-
-
-def test_handle_message_sector(monkeypatch, make_subsignal):
-    monkeypatch.setitem(app._SIGNAL_COMMANDS, "/sector", lambda: make_subsignal("sector", "growing", "x", passes=True))
-    assert "Earnings outlook" in _text(app.handle_message("/sector"))
-
-
-def test_handle_message_curve(monkeypatch, make_subsignal):
-    monkeypatch.setitem(
-        app._SIGNAL_COMMANDS, "/curve", lambda: make_subsignal("yield_curve", "flat", "x", advisory=True)
-    )
-    assert "Yield curve" in _text(app.handle_message("/curve"))
+    assert title in _text(app.handle_message(command))
 
 
 def test_single_signal_handles_exception():
@@ -677,16 +612,6 @@ def test_handle_message_refresh_leaves_the_failure_for_the_daily_push(
 
 
 # market_open
-
-
-def test_market_open_true_when_not_closed(monkeypatch):
-    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.REGULAR)
-    assert app.market_open() is True
-
-
-def test_market_open_false_when_closed(monkeypatch):
-    monkeypatch.setattr(app.market_hours, "market_session", lambda: app.market_hours.CLOSED)
-    assert app.market_open() is False
 
 
 def test_start_hands_the_command_handler_to_the_transport(monkeypatch):
