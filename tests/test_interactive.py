@@ -148,9 +148,9 @@ def test_trend_is_part_of_each_index_panel_and_move_size_is_gone(saved, wire):
         interactive.handle_callback(query(token, view), store)
         caption, markup, _, _ = wire[0][-1]
         assert title in caption
-        assert '200-day avg' in caption and 'Price vs avg' in caption and "Week's move" not in caption
+        assert 'vs 200-day' in caption and '📏 Past year' in caption and "Week's move" not in caption
         assert not any('trend' in text.lower() or 'intensity' in text.lower() for text in labels(markup))
-    assert '· in a dip' in wire[0][0][0] and '· in a dip' not in wire[0][1][0]  # the dip is judged on SPY only
+    assert '✅ in a dip' in wire[0][0][0] and '✅ in a dip' not in wire[0][1][0]  # the dip is judged on SPY only
     assert 'Dip line' not in wire[0][0][0]  # thresholds are drawn on the chart, not listed
 
 
@@ -348,12 +348,12 @@ def test_vix_high_uses_intraday_highs_and_flags_new_high():
         signal = vix_signal.score(vix=29.)
     assert signal.metrics['recent_peak'] == 30
     assert signal.metrics['from_peak'] == pytest.approx(29/30-1)
-    assert re.search(r'20-day high +30.0\n', views.panel_caption(signal, 'vix'))
+    assert re.search(r'20-day peak +30.0', views.panel_caption(signal, 'vix'))
     history.loc[history.index[-1], ['vix','high']] = 31.
     with patch.object(vix_signal, 'daily_history', return_value=history), patch.object(vix_signal, 'vix_change_pct', return_value=.2):
         signal = vix_signal.score(vix=31.)
-    assert re.search(r'20-day high +31.0\n', views.panel_caption(signal, 'vix'))
-    assert '<b>VIX</b> · high fear' in views.panel_caption(signal, 'vix')
+    assert re.search(r'20-day peak +31.0', views.panel_caption(signal, 'vix'))
+    assert '<b>VIX</b> · ✅ high fear' in views.panel_caption(signal, 'vix')
 
 
 def test_absolute_times_use_zagreb_daylight_saving_rules(monkeypatch):

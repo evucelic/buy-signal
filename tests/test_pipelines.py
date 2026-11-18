@@ -1,3 +1,4 @@
+import re
 """End-to-end tests across the collector -> signal -> rendered message seam, network faked."""
 
 from unittest.mock import MagicMock, patch
@@ -61,7 +62,7 @@ def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
 
     caption = views.panel_caption(_score_against(path), "yield_curve")
 
-    assert "10y − 3m" in caption
+    assert "10-year minus 3-month" in caption
     assert "2y − Fed rate" not in caption and "2y−Fed" not in caption
 
 
@@ -80,8 +81,7 @@ def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_
 
     caption = views.panel_caption(_score_against(path), "yield_curve")
 
-    assert "2y−Fed" in caption
-    assert f"2y − Fed rate   {_TWO_YEAR - _FED_FUNDS:+.2f} pp" in caption
+    assert re.search(r"2y − Fed rate +" + re.escape(f"{_TWO_YEAR - _FED_FUNDS:+.2f}"), caption)
 
 
 def test_a_refreshed_cache_no_longer_demands_a_refresh(tmp_path):
@@ -129,7 +129,7 @@ def test_a_market_download_reaches_the_signal_through_the_cache(tmp_path):
         assess([signal]),
         [], pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
     )
-    assert any("SPY -10.0% vs high" in part.text for part in report.messages)
+    assert any("SPY -10.0% from 3-month high" in part.text for part in report.messages)
 
 
 def test_a_sector_fetch_reaches_the_signal_through_the_cache(tmp_path):
