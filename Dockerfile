@@ -25,6 +25,6 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY . .
 
 # Unprivileged, so code that compromises the browser does not run as root. The host's ./data
-# must be owned by uid 1000 (older images wrote it as root).
+# must be owned by uid 1000.
 USER bot
 CMD ["python", "-m", "buysignal"]

@@ -130,10 +130,12 @@ def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
 
 
 def demands_refresh(filepath: Path | str = SECTORS_CSV) -> bool:
+    """A missing, unreadable or expired cache is refreshed now, not at the journal's next daily turn."""
     try:
-        return "estimate_coverage" not in sector_performance(filepath).columns
+        sector_performance(filepath)
     except (OSError, ValueError):
         return True
+    return False
 
 
 

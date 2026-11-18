@@ -70,7 +70,7 @@ def test_status_message_names_the_read():
 def test_status_message_lists_each_collectors_last_attempt():
     statuses = [
         CollectorStatus("yield_curve", NOW - timedelta(hours=2), True, None),
-        CollectorStatus("margin_debt", NOW, False, "cfbypass unreachable"),
+        CollectorStatus("margin_debt", NOW, False, "HTTPError: 503"),
     ]
 
     message = render.status_message(_status(), statuses, NOW)
@@ -78,7 +78,7 @@ def test_status_message_lists_each_collectors_last_attempt():
     assert "collector" in message
     assert "yield_curve" in message
     assert "2h ago" in message
-    assert "cfbypass unreachable" in message
+    assert "HTTPError: 503" in message
 
 
 def test_status_message_says_so_when_nothing_has_been_attempted():

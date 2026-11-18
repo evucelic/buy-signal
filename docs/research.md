@@ -77,13 +77,7 @@ The maximum-history bootstrap was also checked directly: 8,498 SPY sessions from
 
 ## Small-instance deployment
 
-The default Compose service is the bot only. FINRA's official XLSX is requested directly; the old browser-clearance service is available only through the `finra-browser` profile:
-
-```sh
-docker compose --profile finra-browser up -d cfbypass
-```
-
-A FINRA challenge still falls back to that service when it is running. If the sidecar is left over from an older deployment, profile changes alone should not be assumed to have stopped it; check running containers before reclaiming its memory. Source access must be checked from the actual AWS public IP.
+Compose runs the bot only. FINRA's official XLSX is requested directly. Source access must be checked from the actual AWS public IP.
 
 Defaults are a 1 GiB bot memory limit, 0.75 CPU, single-thread numerical libraries and sequential Yahoo downloads. Chromium and charts share a process-wide work lock; macro refresh passes are serialized. Chart imports are lazy, PNGs have an 8 MiB LRU budget, and 150 DPI is the default (900 px wide; set `TELEGRAM_CHART_DPI=120` to return to the previous size). Unchanged source snapshots reuse the existing PNG. `TELEGRAM_CHARTS=0` disables graph rendering without changing the data messages.
 

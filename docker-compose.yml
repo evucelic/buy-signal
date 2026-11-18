@@ -1,35 +1,4 @@
 services:
-  cfbypass:
-    image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
-    container_name: cfbypass
-    profiles: [finra-browser]
-    ports:
-      - "127.0.0.1:8000:8000"   # host-published for local bare-metal testing; not internet-reachable
-    environment:
-      - WORKERS=1
-    shm_size: 256m
-    deploy:
-      resources:
-        limits:
-          memory: ${FINRA_BROWSER_MEMORY_LIMIT:-1g}
-          cpus: ${FINRA_BROWSER_CPUS:-0.5}
-    init: true
-    # Optional browser fallback. The default FINRA path uses the official workbook directly.
-    healthcheck:
-      # A TCP connect, the same thing runner._cf_bypass_ready() treats as "reachable": any
-      # HTTP status means the service is answering, so don't make the check depend on a route.
-      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', 8000), 5).close()\""]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: "3"
-    restart: unless-stopped
-
   bot:
     build: .
     image: ghcr.io/evucelic/buy-signal:latest   # `docker compose pull` fetches this in production
@@ -40,7 +9,6 @@ services:
       - TELEGRAM_CHART_DPI=${TELEGRAM_CHART_DPI:-150}
       - CHART_CACHE_MAX_MB=${CHART_CACHE_MAX_MB:-8}
       - LIVE_CACHE_TTL_SEC=${LIVE_CACHE_TTL_SEC:-300}
-      - CF_BYPASS_HOST=cfbypass   # compose's internal DNS; config.py defaults to localhost otherwise
     volumes:
       - ./data:/app/data   # persists the CSV caches, the refresh journal and the log across redeploys
     # Catch a leak before it degrades the host, without firing on legitimate work: the bot

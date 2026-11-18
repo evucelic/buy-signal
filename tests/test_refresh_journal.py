@@ -80,7 +80,7 @@ def test_a_domain_demand_overrides_the_daily_gate(tmp_path):
 def test_a_domain_demand_does_not_override_the_backoff(tmp_path):
     """Backoff is about the collector being broken right now; no domain rule argues with that."""
     journal = _journal(tmp_path)
-    journal.record("margin_debt", ok=False, error="cfbypass unreachable", now=MORNING)
+    journal.record("margin_debt", ok=False, error="HTTPError: 503", now=MORNING)
 
     assert journal.due(_FakeCollector("margin_debt", demands=True), MORNING + timedelta(minutes=30)) is False
 
@@ -141,7 +141,7 @@ def test_a_collector_that_recovers_stops_being_reported(tmp_path):
 def test_statuses_carry_the_attempt_its_result_and_its_error(tmp_path):
     journal = _journal(tmp_path)
     journal.record("yield_curve", ok=True, error=None, now=MORNING)
-    journal.record("margin_debt", ok=False, error="cfbypass unreachable", now=NOON)
+    journal.record("margin_debt", ok=False, error="HTTPError: 503", now=NOON)
 
     statuses = {s.name: s for s in journal.statuses()}
 
@@ -149,7 +149,7 @@ def test_statuses_carry_the_attempt_its_result_and_its_error(tmp_path):
     assert statuses["yield_curve"].error is None
     assert statuses["yield_curve"].attempted_at == MORNING
     assert statuses["margin_debt"].ok is False
-    assert statuses["margin_debt"].error == "cfbypass unreachable"
+    assert statuses["margin_debt"].error == "HTTPError: 503"
 
 
 def test_statuses_are_empty_before_anything_is_attempted(tmp_path):
@@ -201,17 +201,3 @@ def test_a_missing_data_directory_is_created_on_the_first_write(tmp_path):
     assert path.exists()
 
 
-def test_collectors_that_no_longer_run_are_forgotten(tmp_path, monkeypatch):
-    from buysignal.schedule import runner
-    path = tmp_path / "buysignal.schedule.journal.json"
-    old = RefreshJournal(path, backoff=BACKOFF)
-    old.record("jobs", ok=False, error="HTTPError: 503", now=MORNING)
-    old.record("credit", ok=True, error=None, now=MORNING)
-    monkeypatch.setattr(runner, "REFRESH_JOURNAL_JSON", path)
-    monkeypatch.setattr(runner, "_journal", None)
-
-    journal = runner.macro_journal()
-
-    assert [s.name for s in journal.statuses()] == ["credit"]
-    assert journal.unreported_failures(MORNING) == []  # a removed collector's old failure is never pushed
-    assert [s.name for s in RefreshJournal(path, backoff=BACKOFF).statuses()] == ["credit"]

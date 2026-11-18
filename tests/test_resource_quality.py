@@ -69,24 +69,12 @@ def test_daily_full_reconciliation_is_followed_by_a_small_request(tmp_path):
     assert len(entry.entry_history(path)) == 250
 
 
-def test_direct_finra_workbook_does_not_contact_browser_service():
-    response = MagicMock()
-    response.content = b"PKworkbook"
-    with patch.object(margin_debt.requests, "get", return_value=response), patch.object(margin_debt, "_get_clearance") as clearance:
+def test_finra_margin_data_comes_from_its_official_workbook_and_nothing_else_is_accepted():
+    workbook, page = MagicMock(content=b"PKworkbook"), MagicMock(content=b"<html>challenge</html>")
+    with patch.object(margin_debt.requests, "get", return_value=workbook):
         assert margin_debt._fetch_xlsx_bytes() == b"PKworkbook"
-    clearance.assert_not_called()
-
-
-def test_finra_non_workbook_response_uses_the_existing_clearance_fallback():
-    response = MagicMock()
-    response.content = b"<html>challenge</html>"
-    session = MagicMock()
-    session.get.return_value.content = b"PKrealworkbook"
-    with patch.object(margin_debt.requests, "get", return_value=response), \
-         patch.object(margin_debt, "_get_clearance", return_value=({}, "agent")) as clearance, \
-         patch.object(margin_debt.requests, "Session", return_value=session):
-        assert margin_debt._fetch_xlsx_bytes() == b"PKrealworkbook"
-    clearance.assert_called_once()
+    with patch.object(margin_debt.requests, "get", return_value=page), pytest.raises(ValueError, match="non-workbook"):
+        margin_debt._fetch_xlsx_bytes()
 
 
 def test_earnings_metadata_discloses_missing_heavy_constituent():
@@ -148,13 +136,6 @@ def test_vix_valid_weekend_cache_does_not_refetch(tmp_path):
     with patch.object(vix, 'refresh_vix_cache') as refresh:
         assert vix.get_latest_vix(path, now=pd.Timestamp('2026-11-01T15:00Z')) == 24.
     refresh.assert_not_called()
-
-
-def test_legacy_industry_cache_needs_measured_coverage():
-    data = pd.DataFrame({'industry':list('ABCDE'), 'market_cap':[1e12]*5, 'earnings_growth_estimate_1y':[.3]*5})
-    with patch.object(sector_signal, 'sector_performance', return_value=data):
-        with pytest.raises(ValueError, match='coverage'):
-            sector_signal.score()
 
 
 @pytest.mark.parametrize('value', [float('nan'), float('inf'), 0., -1.])

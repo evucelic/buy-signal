@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import openpyxl
 import pandas as pd
 import pytest
-import requests
 
 from buysignal.collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
 from buysignal.collectors import market as market_mod
@@ -302,12 +301,6 @@ def test_parse_xlsx():
     assert df["debit_balances"].tolist() == [1000, 1100]
 
 
-def test_get_clearance_connection_error_hint():
-    with patch("buysignal.collectors.margin_debt.requests.get", side_effect=requests.exceptions.ConnectionError()):
-        with pytest.raises(RuntimeError, match="docker compose up -d cfbypass"):
-            margin_debt._get_clearance()
-
-
 # --- collectors/sectors.py ---------------------------------------------------------------
 
 
@@ -548,12 +541,6 @@ def test_yield_curve_does_not_demand_refresh_when_the_cache_has_every_column(tmp
     assert yield_curve.demands_refresh(path) is False
 
 
-def test_yield_curve_demands_refresh_when_the_cache_predates_the_policy_column(tmp_path):
-    path = tmp_path / "yieldcurve.csv"
-    path.write_text("date,spread\n2026-08-21,0.86\n")
-    assert yield_curve.demands_refresh(path) is True
-
-
 def test_yield_curve_demands_refresh_when_the_cache_is_truncated(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("")
@@ -645,7 +632,6 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     assert "webdriver" in error
     assert "no chrome" in error
     assert not path.exists()
-
 
 
 # --- collectors/chrome.py -----------------------------------------------------------------

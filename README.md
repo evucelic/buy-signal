@@ -95,11 +95,10 @@ IBKR_FLEX_QUERY_ID=1234567
 IBKR_FLEX_TOKEN_EXPIRES=2027-11-18
 ```
 
-To check the query and token before a deploy, run the check through the image already on the server (it downloads one statement and prints counts, symbols and dates, no balances, and stores nothing):
+To check the query and token, run on the server (it downloads one statement and prints counts, symbols and dates, no balances, and stores nothing):
 
 ```
-cat buysignal/broker/flex.py scripts/check_ibkr.py | \
-  $EC2 'cd ~/buy-signal && docker compose run --rm --no-deps -T --entrypoint python bot -'
+docker compose run --rm --no-deps bot python -m scripts.check_ibkr
 ```
 
 `docker compose up -d` (or the next deploy) picks it up. `/status` then shows the statement date and the days left on the token, and warns from 14 days before expiry. If the read fails, `/status` lists the error beside `ibkr`: 1012 an expired token, 1013 a request from another IP, 1014 a wrong query ID, 1015 a wrong token.

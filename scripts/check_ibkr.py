@@ -1,21 +1,14 @@
 """Download the IBKR Flex statement once and say whether the bot can read it; stores nothing.
 
-On the server, before a deploy, through the image already running there (the token is locked to
-the server's IP and lives in its .env):
-
-    cat buysignal/broker/flex.py scripts/check_ibkr.py | \\
-      $EC2 'cd ~/buy-signal && docker compose run --rm --no-deps -T --entrypoint python bot -'
-
-In the repo, against a saved statement: python -m scripts.check_ibkr --file statement.xml
+On the server, where the token's IP lock and .env are:
+    docker compose run --rm --no-deps bot python -m scripts.check_ibkr
+Against a saved statement: python -m scripts.check_ibkr --file statement.xml
 Prints counts, symbols, currencies and dates; no balances, prices or account number.
 """
 import os
 import sys
 
-try:
-    from buysignal.broker.flex import FlexError, fetch, parse
-except ImportError:  # piped after flex.py into an image that predates it
-    pass
+from buysignal.broker.flex import FlexError, fetch, parse
 
 
 def _summary(statement) -> list[str]:

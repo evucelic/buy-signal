@@ -3,8 +3,7 @@
 Positions and cash are replaced as a whole by each validated statement; trades, daily net asset
 values and deposits accumulate, so history outlives IBKR's 365-day statement limit. The bot only
 reads the account: nothing here can reach the broker. Settings (target mix, fee schedule) and the
-quote cache live in the same SQLite file. The retired hand-entered `purchases` table, if an
-older version created one, is left as it was.
+quote cache live in the same SQLite file.
 """
 from __future__ import annotations
 

@@ -1,12 +1,10 @@
 """Bounded, atomic JSON snapshots keep buttons tied to the original report after restart."""
 from __future__ import annotations
 
-from dataclasses import fields
 from datetime import datetime
 from collections import OrderedDict
 from copy import deepcopy
 import shutil
-from io import StringIO
 import json
 import logging
 import math
@@ -20,8 +18,7 @@ import time
 import pandas as pd
 
 from buysignal import config
-from buysignal.signals.base import SubSignal
-from buysignal.signals.buy_signal import BuySignal, assess
+from buysignal.signals.buy_signal import BuySignal
 
 log = logging.getLogger(__name__)
 _LOCK = threading.RLock()
@@ -121,25 +118,6 @@ class SnapshotStore:
             if manifest.exists():
                 data['panel'] = self.load_views(token).get('panel')
             return data
-
-    def signals(self, data):
-        result = {}
-        for original in data['signals']:
-            values = original.copy()
-            encoded = values.pop('history')
-            dates = values.pop('datetime_index')
-            if encoded is not None:
-                frame = pd.read_json(StringIO(encoded), orient='split', convert_dates=False)
-                if dates:
-                    frame.index = pd.to_datetime(frame.index)
-                for column in ('date', 'month', 'meeting_date'):
-                    if column in frame:
-                        frame[column] = pd.to_datetime(frame[column])
-                values['history'] = frame
-            # Snapshots written by older versions may carry fields that no longer exist.
-            known = {f.name for f in fields(SubSignal)}
-            result[values['name']] = SubSignal(**{k: v for k, v in values.items() if k in known})
-        return result
 
     def _remove(self, token):
         self._path(token).unlink(missing_ok=True)
@@ -257,11 +235,7 @@ class SnapshotStore:
                 if time.time() - data['created'] > MAX_AGE_SEC:
                     raise ValueError('Report expired')
                 return data
-        # Legacy snapshots migrate once. No source download is part of this path.
-        source = self.load(token)
-        signals = list(self.signals(source).values())
-        self.prepare(token, assess(signals), source['sent_at'])
-        return self.load_views(token)
+        raise ValueError('Report has no prepared views')
 
     def chart_bytes(self, token, key):
         self._path(token)

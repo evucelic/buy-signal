@@ -15,7 +15,8 @@ TODAY = pd.Timestamp("2026-10-29")
 def snapshot():
     return pd.DataFrame([
         {"horizon": horizon, "meeting_date": pd.Timestamp(date),
-         "prob_ease": 0.0, "prob_no_change": 0.9, "prob_hike": 0.1}
+         "prob_ease": 0.0, "prob_no_change": 0.9, "prob_hike": 0.1,
+         "reference_lower_bps": 375, "reference_upper_bps": 400}
         for horizon, date in (
             ("nearest", "2026-12-09"),
             ("six_month", "2027-04-28"),
