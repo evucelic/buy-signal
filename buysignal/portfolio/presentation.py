@@ -5,7 +5,7 @@ from buysignal.telegram_bot.render import esc
 from buysignal.signals.base import format_table
 
 
-def quote_block(quotes, *, title='💹 Your listings'):
+def quote_block(quotes, *, title='Your listings'):
     by_symbol = {q['symbol']: q for q in quotes}
     rows, dates, cached, daily = [], {}, [], []
     for instrument in instruments.all():
@@ -49,7 +49,7 @@ def preclose_heading(sessions):
 def orders_message(plan, *, source: str, overlaps=None, notes=()):
     """Whole-share orders for the cash: shares, cost and fees, the mix after, and the alternatives."""
     cash = plan['cash']
-    title = f'🛒 <b>What to buy</b> · {esc(source)} €{cash:,.0f}'
+    title = f'<b>What to buy</b> · {esc(source)} €{cash:,.0f}'
     lines = [title]
     if plan['reserve']:
         lines.append(f'Cash target keeps €{plan["reserve"]:,.0f} · €{plan["spendable"]:,.0f} to invest')
@@ -84,6 +84,6 @@ def orders_message(plan, *, source: str, overlaps=None, notes=()):
         lines.append('⚠️ New York is closed today; wider quotes: ' + esc(', '.join(shut)))
     for window in sorted({window for window in overlaps.values() if window}):
         names = ', '.join(symbol for symbol, item in overlaps.items() if item == window)
-        lines.append(f'🗽 New York open {stamp(window[0])[11:16]}–{stamp(window[1])[11:]} · {esc(names)}')
+        lines.append(f'New York open {stamp(window[0])[11:16]}–{stamp(window[1])[11:]} · {esc(names)}')
     lines += ['⚠️ ' + esc(note) for note in notes]
     return '\n'.join(lines)

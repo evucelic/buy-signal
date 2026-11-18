@@ -56,7 +56,7 @@ def decide(seen: Seen, result: BuySignal, today: date) -> tuple[str, Seen]:
                     count=result.passing_count if complete else seen.count)
     lines = []
     if alerting and not seen.alerting:
-        lines.append(f"🔔 <b>Watch trigger active</b> ({esc(trigger_reasons(result))})")
+        lines.append(f"<b>Watch trigger active</b> ({esc(trigger_reasons(result))})")
         after = replace(after, alerting=True, high_fear_date=today if high else seen.high_fear_date)
     elif high and not seen.high_fear and seen.high_fear_date != today:
         # Already on watch at a lower level: the one level that stands apart gets its own push.
@@ -67,5 +67,5 @@ def decide(seen: Seen, result: BuySignal, today: date) -> tuple[str, Seen]:
         after = replace(after, alerting=False)
     # The first complete reading after a start is the baseline, not a change.
     if complete and seen.count is not None and seen.count != result.passing_count:
-        lines.append(f"🔢 <b>Checklist {seen.count} → {result.passing_count} of {result.required_count}</b>")
+        lines.append(f"<b>Checklist {seen.count} → {result.passing_count} of {result.required_count}</b>")
     return ("\n".join(lines) + "\n\n" if lines else ""), after

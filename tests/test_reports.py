@@ -60,7 +60,7 @@ def test_report_is_one_numeric_overview_with_absolute_times():
     assert len(report.messages) == 1
     text = report.messages[0].text
     assert text.startswith(
-        "📊 <b>Entry checklist · 4 of 5</b>\n●●●●○\n\n"
+        "<b>Entry checklist · 4 of 5</b>\n●●●●○\n\n"
         "✅ <b>Fear</b> VIX 25.0\n"
         "❌ <b>Fed</b> higher leads 79% by Apr 27\n"
         "✅ <b>Margin</b> -2.0% in Sep\n"
@@ -90,7 +90,7 @@ def test_every_data_as_of_row_carries_a_date():
 def test_missing_required_data_stays_in_the_count_and_is_named():
     result = assess([], ["fed_rate"])
     text = render.signal_report(result, [], NOW).messages[0].text
-    assert text.startswith("📊 <b>Entry checklist · 0 of 5 incomplete</b>\n○○○○○\n\n❔ <b>Fear</b> no data\n❔ <b>Fed</b> no data\n")
+    assert text.startswith("<b>Entry checklist · 0 of 5 incomplete</b>\n○○○○○\n\n❔ <b>Fear</b> no data\n❔ <b>Fed</b> no data\n")
     assert "⚠️ No current data: Fear, Fed, Margin, Dip, EPS" in text
     assert "❔ <b>Credit</b> no data" in text
 
@@ -256,7 +256,7 @@ def test_panel_numbers_follow_the_range_button():
     planned, _ = prepared.plan(sample_assessment(), 'abcdef123456', NOW.isoformat())
     year, everything = planned['credit']['caption'], planned['credit@max']['caption']
     assert year != everything
-    assert '📏 Past year' in year and '1 yr ago' in year
-    assert '📏 Since 2016' in everything and 'Nov 2016' in everything
+    assert 'Past year' in year and '1 yr ago' in year
+    assert 'Since 2016' in everything and 'Nov 2016' in everything
     assert 'Stress line' in year and 'wider only 1 day in 5' in year  # the line is explained once, briefly
     assert planned['vix@3m']['caption'] != planned['vix@5y']['caption']

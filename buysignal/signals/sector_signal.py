@@ -18,7 +18,7 @@ def _human_cap(n: float) -> str:
 
 def _format_industry(row) -> str:
     qualified = pd.notna(row["estimate_coverage"]) and row["estimate_coverage"] >= SECTOR_MIN_ESTIMATE_COVERAGE
-    trend = ("📈" if row["earnings_growth_estimate_1y"] > 0 else "📉") if qualified else "❔"
+    trend = ("▲" if row["earnings_growth_estimate_1y"] > 0 else "▼") if qualified else "❔"
     line = (
         f"{trend} {row['industry']}: cap {_human_cap(row['market_cap'])}, "
         f"next-yr EPS growth (est.) {row['earnings_growth_estimate_1y']:+.1%}"

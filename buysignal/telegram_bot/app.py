@@ -229,7 +229,7 @@ def handle_tick(result: BuySignal | None, error: Exception | None, now: datetime
                 with _lock:
                     seen = _state.seen
                 heading, after = pushes.decide(seen, reported, now_ct.date())
-                if _deliver_report(reported, "📅 <b>End of day</b>\n\n" + heading, prefix, now=now):
+                if _deliver_report(reported, "<b>End of day</b>\n\n" + heading, prefix, now=now):
                     with _lock:
                         _state.last_report_date = now_ct.date()
                         _state.last_result = reported
@@ -306,11 +306,11 @@ def _status_message() -> str:
     if broker_sync.configured():
         statement = _get_portfolio_store().account().get('statement_to', 'none yet')
         left = broker_sync.token_days_left(_utc_now().date())
-        text += f"\n🏦 IBKR statement {render.esc(statement)}" + ("" if left is None else f" · token {left} days left")
+        text += f"\nIBKR statement {render.esc(statement)}" + ("" if left is None else f" · token {left} days left")
     return text
 
 
-_NOT_CONNECTED = ("🔌 <b>IBKR not connected</b>\nSet IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in .env "
+_NOT_CONNECTED = ("<b>IBKR not connected</b>\nSet IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in .env "
                   "(README → Interactive Brokers). Meanwhile: /whattobuy 500 plans 500 € against your target.")
 
 
@@ -417,7 +417,7 @@ def _whattobuy(text: str) -> str:
     store = _get_portfolio_store()
     targets = store.targets()
     if not targets:
-        return '🎯 Set a target mix first: /target ' + 'VUAA 60 VWCG 20 AVWS 15 CASH 5'
+        return 'Set a target mix first: /target ' + 'VUAA 60 VWCG 20 AVWS 15 CASH 5'
     amount = float(match.group(1)) if match.group(1) else None
     if amount is None and not broker_sync.configured() and not store.cash():
         return _NOT_CONNECTED

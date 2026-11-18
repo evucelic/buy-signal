@@ -259,17 +259,17 @@ def test_human_cap_units(value, expected):
 
 def test_format_industry_trend_icon_positive():
     row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": 0.1}
-    assert "📈" in sector_signal._format_industry(row)
+    assert "▲" in sector_signal._format_industry(row)
 
 
 def test_format_industry_trend_icon_negative():
     row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": -0.1}
-    assert "📉" in sector_signal._format_industry(row)
+    assert "▼" in sector_signal._format_industry(row)
 
 
 def test_format_industry_trend_icon_zero_is_not_growth():
     row = {"industry": "X", "market_cap": 1e12, "estimate_coverage": 1., "covered_companies": 8, "sampled_companies": 8, "covered_weight": .8, "earnings_growth_estimate_1y": 0.0}
-    assert "📉" in sector_signal._format_industry(row)
+    assert "▼" in sector_signal._format_industry(row)
 
 
 # yield_curve_signal

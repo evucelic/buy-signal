@@ -24,7 +24,7 @@ def test_a_quiet_reading_sets_the_baseline_without_a_message():
 
 def test_a_watch_trigger_and_a_count_change_share_one_heading():
     heading, after = decide(Seen(count=1), _read(vix=25., passing=1), TODAY)
-    assert heading == "🔔 <b>Watch trigger active</b> (VIX elevated)\n🔢 <b>Checklist 1 → 2 of 5</b>\n\n"
+    assert heading == "<b>Watch trigger active</b> (VIX elevated)\n<b>Checklist 1 → 2 of 5</b>\n\n"
     assert after == Seen(alerting=True, count=2)
 
 

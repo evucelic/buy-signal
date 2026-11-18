@@ -140,7 +140,7 @@ def test_a_change_in_the_count_sends_one_push(monkeypatch, sent):
     app.handle_tick(_count(1), None, now)
     assert sent == []  # the first complete read after a start is the baseline
     app.handle_tick(_count(2), None, now + timedelta(hours=1))
-    assert len(sent) == 1 and sent[0].startswith("🔢 <b>Checklist 1 → 2 of 5</b>") and "Entry checklist · 2 of 5" in sent[0]
+    assert len(sent) == 1 and sent[0].startswith("<b>Checklist 1 → 2 of 5</b>") and "Entry checklist · 2 of 5" in sent[0]
     app.handle_tick(_count(2), None, now + timedelta(hours=2))
     from buysignal.signals.buy_signal import assess
     app.handle_tick(assess([]), None, now + timedelta(hours=3))  # an incomplete read is not a change
@@ -178,7 +178,7 @@ def test_the_end_of_day_report_carries_a_count_change_and_logs_the_session(monke
     monkeypatch.setattr(app, "compute_signal", lambda: result)
     app.handle_tick(result, None, now=_ct(20))
     app.handle_tick(result, None, now=_ct(21))
-    assert len(sent) == 1 and sent[0].startswith("📅 <b>End of day</b>\n\n🔢 <b>Checklist 1 → 3 of 5</b>")
+    assert len(sent) == 1 and sent[0].startswith("<b>End of day</b>\n\n<b>Checklist 1 → 3 of 5</b>")
     rows = checklist_log.read(checklist_log_path)
     assert len(rows) == 1 and rows[0]["session"] == "2026-07-24" and rows[0]["count"] == 3
     assert rows[0]["etfs"] == {"VWCG": {"close": 60.5, "observed": "2026-07-24", "currency": "EUR"}}
@@ -544,7 +544,7 @@ def test_whattobuy_spends_the_cash_at_ibkr(account):
 
     reply = app.handle_message("/whattobuy")
 
-    assert reply.startswith("🛒 <b>What to buy</b> · IBKR cash 2026-11-17")
+    assert reply.startswith("<b>What to buy</b> · IBKR cash 2026-11-17")
     assert "Cash target keeps" in reply and "VUAA" in reply.split("<pre>")[1]
 
 

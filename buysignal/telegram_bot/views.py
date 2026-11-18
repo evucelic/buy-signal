@@ -21,8 +21,6 @@ INDEX_NAMES = {"SPY": "S&P 500 (SPY)", "NASDAQ": "Nasdaq", "DOW": "Dow Jones", "
 _INDEX_BUTTONS = {"NASDAQ": "Nasdaq", "DOW": "Dow", "EURO50": "Euro50"}
 TITLES = {"vix": "VIX", "fed_rate": "Fed outlook", "margin_debt": "Margin debt",
           "sector": "Earnings outlook", "credit": "Credit spread", "yield_curve": "Yield curve"}
-_ICONS = {"vix": "😨", "fed_rate": "🏛", "margin_debt": "💳", "market_dip": "📉", "sector": "💹",
-          "credit": "🏦", "yield_curve": "〰️"}
 # One line for what a measure is, where the name alone does not say it.
 GLOSSES = {
     "fed_rate": "CME futures odds of where the Fed's rate will be on each date, against today's range.",
@@ -221,7 +219,7 @@ def _sources(by_name: dict, caches, now: datetime) -> str:
     refreshed = dict(caches)
     labels = (("market_dip", "Prices"), ("vix", "VIX"), ("fed_rate", "Fed"), ("margin_debt", "Margin"),
               ("sector", "Earnings"), ("credit", "Credit"), ("yield_curve", "Curve"))
-    lines = ["🕒 <b>Data as of</b> · (last refresh)"]
+    lines = ["<b>Data as of</b> · (last refresh)"]
     for key, label in labels:
         signal = by_name.get(key)
         observed = stamp(signal.observed_at if signal else None, short=True)
@@ -240,20 +238,20 @@ def _sources(by_name: dict, caches, now: datetime) -> str:
 def overview(result: BuySignal, caches, now: datetime):
     by_name = {s.name: s for s in result.subsignals}
     passed = sum(result.status(name) == "pass" for name in REQUIRED_SIGNALS)
-    lines = [f"📊 <b>Entry checklist · {esc(result.label)}</b>", _meter(passed, len(REQUIRED_SIGNALS)), ""]
+    lines = [f"<b>Entry checklist · {esc(result.label)}</b>", _meter(passed, len(REQUIRED_SIGNALS)), ""]
     for name in REQUIRED_SIGNALS:
         signal, status = by_name.get(name), result.status(name)
         # ❔ marks a reading that is missing or stale; the warning below names it.
         value = _check_value(signal) if signal is not None else "no data"
         lines.append(f"{_MARKS[status]} <b>{_CHECK_NAMES[name]}</b> {esc(value)}")
-    lines += ["", "🧭 <b>Context</b>", _context_line(by_name.get("credit"), "Credit"),
+    lines += ["", "<b>Context</b>", _context_line(by_name.get("credit"), "Credit"),
               _context_line(by_name.get("yield_curve"), "Curve")]
     market = by_name.get("market_dip")
     changes = market.metrics.get("index_changes", {}) if market else {}
     if changes:
         rows = [("", "Day", "Week", "Month")]
         rows += [(_INDEX_BUTTONS.get(name, name), *[f"{value:+.1%}" for value in item["changes"]]) for name, item in changes.items()]
-        lines += ["", "🌍 <b>Markets</b>", _pre(_lines(rows))]
+        lines += ["", "<b>Markets</b>", _pre(_lines(rows))]
     if result.state == INCOMPLETE:
         unknown = [_CHECK_NAMES[name] for name in REQUIRED_SIGNALS if not usable(by_name.get(name))]
         lines.append("⚠️ No current data: " + esc(", ".join(unknown)))
@@ -341,7 +339,7 @@ def _range_block(window: pd.Series, range_key: str, show, change) -> list[tuple]
 def _story(window: pd.Series, range_key: str, *facts: str) -> list[str]:
     """One line on how today compares with the range on screen: 'Past year · wider on 43% of days'."""
     span = _span(window, range_key)
-    return ["📏 " + esc(" · ".join([span[0].upper() + span[1:], *facts]))]
+    return [esc(" · ".join([span[0].upper() + span[1:], *facts]))]
 
 
 def _vix_panel(signal: SubSignal, range_key: str) -> tuple[str, list[tuple], list[str]]:
@@ -508,7 +506,7 @@ def panel_caption(signal: SubSignal, view: str, sent_at: str | None = None, rang
     if signal.name == "market_dip":
         name = base.removeprefix("index_") if base and base.startswith("index_") else "SPY"
         head, rows, stories = _market_panel(signal, name, range_key)
-        title = f"{_ICONS['market_dip']} <b>{esc(INDEX_NAMES.get(name, name))}</b>"
+        title = f"<b>{esc(INDEX_NAMES.get(name, name))}</b>"
         if not head:
             return f"{title}\nNot enough history for this index."
         if name == "SPY":
@@ -520,7 +518,7 @@ def panel_caption(signal: SubSignal, view: str, sent_at: str | None = None, rang
         if signal.metrics.get("stale"):
             lines.append("⚠️ Prices are not from the latest session")
         return "\n".join(line for line in lines if line)
-    title = f"{_ICONS.get(signal.name, '')} <b>{esc(TITLES.get(signal.name, signal.name))}</b> · {_mark(signal)} {esc(verdict(signal))}"
+    title = f"<b>{esc(TITLES.get(signal.name, signal.name))}</b> · {_mark(signal)} {esc(verdict(signal))}"
     lines = [title]
     if signal.name in _PANELS:
         head, rows, stories = _PANELS[signal.name](signal, range_key)

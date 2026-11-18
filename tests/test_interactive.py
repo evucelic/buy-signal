@@ -128,7 +128,7 @@ def test_trend_is_part_of_each_index_panel_and_move_size_is_gone(saved, wire):
         interactive.handle_callback(query(token, view), store)
         caption, markup, _, _ = wire[0][-1]
         assert title in caption
-        assert 'vs 200-day' in caption and '📏 Past year' in caption and "Week's move" not in caption
+        assert 'vs 200-day' in caption and 'Past year' in caption and "Week's move" not in caption
         assert not any('trend' in text.lower() or 'intensity' in text.lower() for text in labels(markup))
     assert '✅ in a dip' in wire[0][0][0] and '✅ in a dip' not in wire[0][1][0]  # the dip is judged on SPY only
     assert 'Dip line' not in wire[0][0][0]  # thresholds are drawn on the chart, not listed

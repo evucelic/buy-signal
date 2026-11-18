@@ -16,14 +16,14 @@ def target(text, store):
     pairs = re.findall(r'([A-Za-z0-9.]+)\s+(\d+(?:\.\d+)?)', argument)
     if not pairs or re.sub(r'([A-Za-z0-9.]+)\s+(\d+(?:\.\d+)?)|\s|%', '', argument):
         held = ' '.join(i.symbol for i in instruments.all())
-        return f'🎯 <b>Target mix</b>: {esc(_mix(store.targets()))}\nHeld: {esc(held)}\n{esc(TARGET_USAGE)}'
+        return f'<b>Target mix</b>: {esc(_mix(store.targets()))}\nHeld: {esc(held)}\n{esc(TARGET_USAGE)}'
     try:
         current = store.set_targets(dict(pairs)) if len({s.upper() for s, _ in pairs}) == len(pairs) else None
     except ValueError as exc:
         return '⚠️ ' + esc(str(exc))
     if current is None:
         return '⚠️ Name each listing once.'
-    return f'🎯 <b>Target mix set</b>: {esc(_mix(current))}\n/portfolio → Mix shows the gaps · /whattobuy the orders'
+    return f'<b>Target mix set</b>: {esc(_mix(current))}\n/portfolio → Mix shows the gaps · /whattobuy the orders'
 
 
 def fees(text, store):
@@ -56,7 +56,7 @@ def fees(text, store):
     rows.append(f'{"FX":<5}{minimum:>6.2f} EUR{rate:>8.3%}')
     unset = [name for name in [*(i.symbol for i in instruments.all()), 'FX'] if name not in chosen]
     note = '\nIBKR tiered, as published: ' + ', '.join(unset) if unset else ''
-    return ('🧾 <b>Fees per order</b>\n<pre>' + esc('\n'.join(['      Minimum   Of order  Paid', *rows])) + '</pre>\n'
+    return ('<b>Fees per order</b>\n<pre>' + esc('\n'.join(['      Minimum   Of order  Paid', *rows])) + '</pre>\n'
             + '<i>Paid: commission on your latest IBKR purchase.</i>' + esc(note))
 
 

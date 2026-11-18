@@ -32,12 +32,12 @@ COMMANDS = [
 ]
 
 HELP_TEXT = (
-    "📊 /signal — entry checklist, with charts\n"
-    "💼 /portfolio — holdings, mix, growth, entries, cash, P/E (read from IBKR)\n"
-    "🛒 /whattobuy — orders for your IBKR cash · /whattobuy 500 for 500 €\n"
-    "🎯 /target — /target VUAA 60 VWCG 20 AVWS 15 CASH 5\n"
-    "🧾 /fees — fee schedule: /fees tiered, /fees VUAA 1.70 0.05\n"
-    "🔄 /refresh — fresh data · /status — bot and data health\n\n"
+    "/signal — entry checklist, with charts\n"
+    "/portfolio — holdings, mix, growth, entries, cash, P/E (read from IBKR)\n"
+    "/whattobuy — orders for your IBKR cash · /whattobuy 500 for 500 €\n"
+    "/target — /target VUAA 60 VWCG 20 AVWS 15 CASH 5\n"
+    "/fees — fee schedule: /fees tiered, /fees VUAA 1.70 0.05\n"
+    "/refresh — fresh data · /status — bot and data health\n\n"
     "Shortcuts: /vix /fedrate /margin /dip /sector /credit /curve"
 )
 
@@ -149,7 +149,7 @@ def status_message(status: RunnerStatus, statuses: list[CollectorStatus], now: d
         f"read        {status.read or 'unknown'}",
     ]
     collectors = collector_table(statuses, now)
-    return "<pre>" + esc("\n".join(lines)) + "</pre>" + f"\n\n🔄 <b>Collectors</b>\n{collectors}"
+    return "<pre>" + esc("\n".join(lines)) + "</pre>" + f"\n\n<b>Collectors</b>\n{collectors}"
 
 
 def stale_collector_notes(
