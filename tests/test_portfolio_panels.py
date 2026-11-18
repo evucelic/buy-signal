@@ -152,3 +152,16 @@ def test_returns_show_the_money_weighted_figure_of_the_value_tab_beside_the_time
     # Same deposits: ahead of the S&P 500 in euros exactly when ahead in money-weighted return.
     assert (percent(you[1]) > percent(sp[1])) == (money(value, "S&P 500") > 0)
 
+
+def test_trades_list_the_last_twelve_purchases_within_a_caption(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.sqlite3")
+    buy = STATEMENT.trades[0]
+    days = pd.bdate_range("2025-06-02", periods=20, freq="15B")
+    many = tuple(replace(buy, trade_id=str(i), trade_date=day.date()) for i, day in enumerate(days))
+    store.save_statement(replace(STATEMENT, trades=many), datetime(2026, 11, 18, 7, tzinfo=timezone.utc))
+    caption = panels.build(make_account(store))["pf_trades"][0]
+
+    listed = re.findall(r"^\s?\d{1,2} \w{3} \d{2} ", re.sub(r"<[^>]+>", "", unescape(caption)), re.M)
+    assert len(listed) == 12 and listed[-1].strip() == panels._day(days[-1]).strip()
+    assert len(caption) <= 1024
+    instruments.set_current(None)

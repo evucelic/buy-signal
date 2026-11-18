@@ -23,6 +23,7 @@ PORTFOLIO_RANGES = ("3m", "1y", "max")
 TARGET_MIX = "Target mix"
 _SHORT = {"S&P 500": "S&P 500", TARGET_MIX: "Target mix", "All-World": "All-World"}
 _RECENT = 6
+_TRADE_ROWS = 12  # fits the 1024-character photo caption
 _RECONCILE_TOLERANCE = 0.005  # holdings plus cash may differ from IBKR's total by rounding, not more
 
 
@@ -342,7 +343,7 @@ def trades_tab(account: Account) -> tuple[str, bytes | None]:
     summary = card["summary"]
     rows = [("", "", "Paid", "vs avg")]
     running = False
-    for row in card["rows"][-_RECENT:]:
+    for row in card["rows"][-_TRADE_ROWS:]:
         mark = "" if row["complete"] or row["diff"] is None else "*"
         running = running or bool(mark)
         rows.append((_day(row["date"]), row["symbol"], f"{row['price']:,.2f}", "—" if row["diff"] is None else _pct(row["diff"]) + mark))

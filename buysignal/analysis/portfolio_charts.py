@@ -193,30 +193,33 @@ def risk(result: dict) -> bytes:
 
 
 def timing(rows: list[dict], noise: float | None) -> bytes | None:
-    """Each purchase against its month's average; the grey band is a usual day's distance from it."""
     judged = [row for row in rows if row.get("diff") is not None]
     if not judged:
         return None
     with HEAVY_WORK_LOCK:
         figure = _figure(5.0)
-        style._place(figure, right=.95, bottom_points=46)
+        style._place(figure, right=.95, bottom_points=40, top_points=86)
         ax = figure.subplots()
         mean = sum(row["diff"] for row in judged) / len(judged) * 100
-        style._frame(ax, "Entry timing", f"vs month average · mean {mean:+.1f}%")
-        diffs = [row["diff"] * 100 for row in judged]
-        x = list(range(len(judged)))
+        style._frame(ax, "Entry timing", f"vs month average · mean {mean:+.1f}%".replace("-", "−"))
         if noise:
             ax.axhspan(-noise * 100, noise * 100, color=style._MUTED, alpha=.14, linewidth=0, zorder=1)
-        colors = [style._MET if d < 0 else style._RED for d in diffs]
-        ax.bar(x, diffs, width=.62, color=colors, edgecolor=style._SURFACE, linewidth=2, zorder=3)
         ax.axhline(0, color=style._AXIS, linewidth=1, zorder=2)
-        ax.set_xticks(x, [f"{row['symbol']}\n{pd.Timestamp(row['date']):%b %y}" for row in judged], fontsize=style._NOTE)
-        ax.tick_params(axis="x", colors=style._SECOND, length=0)
-        ax.axhline(mean, color=style._INK, linewidth=1.4, linestyle=(0, (5, 4)), zorder=4)
+        ax.axhline(mean, color=style._INK, linewidth=1.2, linestyle=(0, (5, 4)), zorder=2)
+        symbols = sorted({row["symbol"] for row in judged})  # the Mix tab's order, so colours match
+        for i, symbol in enumerate(symbols):
+            color = _SLICES[i % len(_SLICES)]
+            mine = [row for row in judged if row["symbol"] == symbol]
+            days = [pd.Timestamp(row["date"]) for row in mine]
+            diffs = [row["diff"] * 100 for row in mine]
+            ax.vlines(days, 0, diffs, color=color, linewidth=1.2, alpha=.5, zorder=3)
+            ax.scatter(days, diffs, s=46, linewidths=1.6, zorder=4, label=symbol, edgecolors=color,
+                       facecolors=[color if row["complete"] else style._SURFACE for row in mine])
+        ax.legend(loc="lower right", bbox_to_anchor=(1, 1.01), frameon=False, fontsize=style._NOTE, ncol=len(symbols),
+                  handletextpad=.2, columnspacing=.8, borderaxespad=0)
         style._yticks(ax, 5, "{:+.0f}%")
         style._zero(ax, "0%")
-        if len(judged) > 10:
-            ax.set_xticks(x[::max(1, len(x) // 8)])
+        style._dates(ax)
         return _png(figure)
 
 
