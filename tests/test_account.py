@@ -118,3 +118,42 @@ def test_token_expiry_is_counted_from_the_date_chosen_when_it_was_made(monkeypat
 
     monkeypatch.delenv("IBKR_FLEX_TOKEN_EXPIRES")
     assert sync.token_days_left(date(2026, 11, 18)) is None
+
+
+def test_history_older_than_a_year_is_read_window_by_window_until_the_account_starts(store, monkeypatch):
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "t" * 24)
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+    funded = replace(STATEMENT, nav=STATEMENT.nav[1:])  # the year opens with money already in the account
+    store.save_statement(funded, NOW)
+    old_buy = replace(STATEMENT.trades[0], trade_id="1", trade_date=date(2025, 3, 3))
+    older = {date(2025, 11, 17): replace(STATEMENT, from_date=date(2024, 11, 18), to_date=date(2025, 11, 17), positions=(),
+                                         cash={}, trades=(old_buy,), nav=((date(2025, 3, 3), Decimal(0), Decimal(900)),),
+                                         deposits=((date(2025, 3, 3), Decimal(900)),)),
+             date(2024, 11, 17): replace(STATEMENT, from_date=date(2023, 11, 19), to_date=date(2024, 11, 17), positions=(),
+                                         cash={}, trades=(), nav=(), deposits=())}
+    asked = []
+    monkeypatch.setattr(sync.flex, "parse", lambda period: older[period[1]])
+
+    while sync.history_due(store):
+        sync.backfill(store, fetch=lambda token, query, period: asked.append(period) or period)
+
+    assert asked == [(date(2024, 11, 18), date(2025, 11, 17)), (date(2023, 11, 19), date(2024, 11, 17))]
+    assert store.trades()[0]["trade_date"] == "2025-03-03" and store.deposits()[0] == (date(2025, 3, 3), 900.)
+    assert set(store.holdings()) == {"VUAA", "VWCG", "AVWS"}  # holdings come only from the latest statement
+
+
+def test_a_statement_starting_from_nothing_needs_no_older_history(store):
+    store.save_statement(STATEMENT, NOW)  # its first daily value is 0
+
+    assert not sync.history_due(store)
+
+
+def test_a_period_ibkr_did_not_honour_is_refused(store, monkeypatch):
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "t" * 24)
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+    store.save_statement(replace(STATEMENT, nav=STATEMENT.nav[1:]), NOW)
+    monkeypatch.setattr(sync.flex, "parse", lambda payload: STATEMENT)  # the default year again
+
+    with pytest.raises(ValueError, match="instead of"):
+        sync.backfill(store, fetch=lambda token, query, period: b"")
+    assert sync.history_due(store)

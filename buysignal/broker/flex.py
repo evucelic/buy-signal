@@ -54,6 +54,7 @@ class Position:
     value: Decimal
     cost: Decimal          # cost basis in the listing currency, commissions included
     report_date: date
+    fx_rate: Decimal = Decimal(1)  # base currency per unit of the listing currency, IBKR's own rate
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class Trade:
     price: Decimal
     commission: Decimal    # what IBKR charged, positive, in commission_currency
     commission_currency: str
+    fx_rate: Decimal = Decimal(1)  # base currency per unit of the trade currency on the trade date
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,7 @@ def parse(payload: bytes) -> Statement:
             quantity=_number(item.get("position")), mark_price=_number(item.get("markPrice")),
             value=_number(item.get("positionValue")), cost=_number(item.get("costBasisMoney")),
             report_date=_day(item.get("reportDate") or node.get("toDate")),
+            fx_rate=_number(item.get("fxRateToBase") or "1"),
         ))
     trades = []
     for item in _finest(node.iterfind("./Trades/Trade"), ("EXECUTION", "ORDER")):
@@ -156,6 +159,7 @@ def parse(payload: bytes) -> Statement:
             quantity=_number(item.get("quantity")), price=_number(item.get("tradePrice")),
             commission=abs(_number(item.get("ibCommission"))),
             commission_currency=item.get("ibCommissionCurrency") or item.get("currency", ""),
+            fx_rate=_number(item.get("fxRateToBase") or "1"),
         ))
     cash, summary = {}, None
     for item in node.iterfind("./CashReport/CashReportCurrency"):
@@ -216,14 +220,16 @@ def _statement_url(envelope: ET.Element) -> str:
     return url if trusted and parsed.path.endswith("/GetStatement") else f"{BASE_URL}/GetStatement"
 
 
-def fetch(token: str, query_id: str, *, session=None, sleep=time.sleep) -> bytes:
-    """The statement XML for `query_id`, waiting while IBKR generates it.
+def fetch(token: str, query_id: str, *, period: tuple[date, date] | None = None, session=None, sleep=time.sleep) -> bytes:
+    """The statement XML for `query_id`, polling while IBKR generates it.
 
-    Two requests at least a few seconds apart, then a slowing poll: well inside IBKR's limit of
-    one request a second and ten a minute per token.
+    `period` (first and last day, at most 365 days) overrides the query's own period.
     """
     session = session or requests.Session()
-    envelope = _response(_get(session, f"{BASE_URL}/SendRequest", {"t": token, "q": query_id, "v": VERSION}))
+    params = {"t": token, "q": query_id, "v": VERSION}
+    if period:
+        params.update(fd=f"{period[0]:%Y%m%d}", td=f"{period[1]:%Y%m%d}")
+    envelope = _response(_get(session, f"{BASE_URL}/SendRequest", params))
     reference = envelope.findtext("ReferenceCode") if envelope is not None else None
     if not reference:
         raise FlexError("?", "SendRequest returned no reference code")

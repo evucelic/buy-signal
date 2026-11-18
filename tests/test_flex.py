@@ -110,6 +110,21 @@ def test_a_trade_listed_both_per_order_and_per_execution_counts_once():
     assert len(flex.parse(both).trades) == len(flex.parse(STATEMENT).trades)
 
 
+def test_an_older_period_is_asked_for_by_its_first_and_last_day():
+    ibkr = FakeIbkr(ACCEPTED, STATEMENT)
+
+    flex.fetch(TOKEN, "42", period=(date(2024, 11, 18), date(2025, 11, 17)), session=ibkr, sleep=lambda s: None)
+
+    assert (ibkr.requests[0][1]["fd"], ibkr.requests[0][1]["td"]) == ("20241118", "20251117")
+
+
+def test_trades_and_positions_carry_ibkrs_rate_to_the_base_currency():
+    statement = flex.parse(STATEMENT)
+
+    assert next(p for p in statement.positions if p.symbol == "VUAA").fx_rate == Decimal("0.92")
+    assert statement.trades[0].fx_rate == Decimal("0.92")
+
+
 def test_a_deposit_counts_on_the_day_ibkr_booked_it():
     booked_later = STATEMENT.replace(b'dateTime="20260515" reportDate="20260515"', b'dateTime="20260515" reportDate="20260518"')
 

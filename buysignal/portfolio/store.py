@@ -67,24 +67,46 @@ class PortfolioStore:
                 'symbol': p.symbol, 'name': p.description, 'currency': p.currency, 'exchange': p.exchange,
                 'isin': p.isin, 'quantity': str(p.quantity), 'mark_price': str(p.mark_price),
                 'value': str(p.value), 'cost': str(p.cost), 'report_date': p.report_date.isoformat(),
+                'fx_rate': str(p.fx_rate),
             })) for p in statement.positions if p.quantity])
             db.execute('DELETE FROM cash')
             db.executemany('INSERT INTO cash VALUES (?,?)', [(c, str(a)) for c, a in statement.cash.items()])
-            db.executemany('INSERT OR REPLACE INTO trades VALUES (?,?)', [(t.trade_id, json.dumps({
-                'trade_id': t.trade_id, 'symbol': t.symbol, 'currency': t.currency, 'exchange': t.exchange,
-                'trade_date': t.trade_date.isoformat(), 'quantity': str(t.quantity), 'price': str(t.price),
-                'commission': str(t.commission), 'commission_currency': t.commission_currency,
-            })) for t in statement.trades if t.trade_id])
-            db.executemany('INSERT OR REPLACE INTO nav VALUES (?,?,?)',
-                           [(d.isoformat(), str(c), str(t)) for d, c, t in statement.nav])
-            # Deposits are replaced within the statement's period, where it is complete.
-            db.execute('DELETE FROM deposits WHERE day BETWEEN ? AND ?', (statement.from_date.isoformat(), statement.to_date.isoformat()))
-            db.executemany('INSERT OR REPLACE INTO deposits VALUES (?,?)', [(d.isoformat(), str(a)) for d, a in statement.deposits])
+            self._add_history(db, statement)
             db.executemany('INSERT OR REPLACE INTO account VALUES (?,?)', [
                 ('base_currency', statement.base_currency), ('statement_to', statement.to_date.isoformat()),
                 ('generated_at', statement.generated_at.isoformat()), ('synced_at', now.astimezone(timezone.utc).isoformat()),
             ])
         self._publish_instruments()
+
+    def save_history(self, statement) -> None:
+        """Add an older statement's trades, daily values and deposits; holdings and cash stay as they are."""
+        with self.connection() as db:
+            self._add_history(db, statement)
+            if not any(total for _, _, total in statement.nav):
+                # an empty period: the account did not exist yet
+                db.execute("INSERT OR REPLACE INTO account VALUES ('history_complete','1')")
+
+    @staticmethod
+    def _add_history(db, statement) -> None:
+        db.executemany('INSERT OR REPLACE INTO trades VALUES (?,?)', [(t.trade_id, json.dumps({
+            'trade_id': t.trade_id, 'symbol': t.symbol, 'currency': t.currency, 'exchange': t.exchange,
+            'trade_date': t.trade_date.isoformat(), 'quantity': str(t.quantity), 'price': str(t.price),
+            'commission': str(t.commission), 'commission_currency': t.commission_currency, 'fx_rate': str(t.fx_rate),
+        })) for t in statement.trades if t.trade_id])
+        db.executemany('INSERT OR REPLACE INTO nav VALUES (?,?,?)', [(d.isoformat(), str(c), str(t)) for d, c, t in statement.nav])
+        # Deposits are replaced within the statement's period, where it is complete.
+        db.execute('DELETE FROM deposits WHERE day BETWEEN ? AND ?', (statement.from_date.isoformat(), statement.to_date.isoformat()))
+        db.executemany('INSERT OR REPLACE INTO deposits VALUES (?,?)', [(d.isoformat(), str(a)) for d, a in statement.deposits])
+        stored = db.execute("SELECT value FROM account WHERE key='history_from'").fetchone()
+        start = min(statement.from_date, date.fromisoformat(stored[0])) if stored else statement.from_date
+        db.execute("INSERT OR REPLACE INTO account VALUES ('history_from',?)", (start.isoformat(),))
+
+    def history_complete(self) -> bool:
+        """Whether stored history reaches the account's start."""
+        if self.account().get('history_complete'):
+            return True
+        nav = self.nav()
+        return bool(nav) and nav[0][2] <= 0.01
 
     def account(self) -> dict:
         """base_currency, statement_to, generated_at and synced_at of the stored statement; {} before the first."""

@@ -7,7 +7,9 @@ import os
 from buysignal.broker import flex
 
 NAME = "ibkr"
+HISTORY = "ibkr_history"
 RETRY_HOURS = 3  # a statement not yet covering the last weekday is asked for again after this
+OLDEST = date(2000, 1, 1)  # never ask for history before this, whatever IBKR answers
 
 
 def configured() -> bool:
@@ -28,6 +30,29 @@ def update(store=None, *, now: datetime | None = None, fetch=flex.fetch) -> str 
     statement = flex.parse(payload)
     _store(store).save_statement(statement, now)
     return None
+
+
+def backfill(store=None, *, fetch=flex.fetch) -> str | None:
+    """Store the 365 days before the oldest stored day, one statement per call."""
+    store = _store(store)
+    start = store.account().get('history_from')
+    if not start or store.history_complete():
+        return None
+    last = date.fromisoformat(start) - timedelta(days=1)
+    first = max(OLDEST, last - timedelta(days=364))
+    payload = fetch(os.environ["IBKR_FLEX_TOKEN"], os.environ["IBKR_FLEX_QUERY_ID"], period=(first, last))
+    statement = flex.parse(payload)
+    if statement.to_date > last:
+        raise ValueError(f"IBKR sent {statement.from_date}..{statement.to_date} instead of {first}..{last}")
+    store.save_history(statement)
+    return None
+
+
+def history_due(store=None) -> bool:
+    """Whether the stored history still starts after the account opened."""
+    store = _store(store)
+    start = store.account().get('history_from')
+    return bool(start) and date.fromisoformat(start) > OLDEST and not store.history_complete()
 
 
 def last_weekday(today: date) -> date:
