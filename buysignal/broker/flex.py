@@ -113,6 +113,14 @@ def _generated(value: str) -> datetime:
     return datetime(day.year, day.month, day.day, int(clock[:2]), int(clock[2:4]), int(clock[4:6]))
 
 
+def _finest(items, levels: tuple[str, ...]):
+    """Rows at the finest level of detail the query includes, so ticking two levels never counts twice."""
+    rows = list(items)
+    present = {(row.get("levelOfDetail") or "").upper() for row in rows}
+    chosen = next((level for level in levels if level in present), None)
+    return [row for row in rows if (row.get("levelOfDetail") or "").upper() in (chosen, "")]
+
+
 def parse(payload: bytes) -> Statement:
     """One account's Activity statement; a missing required section is an error, never an empty list.
 
@@ -144,8 +152,8 @@ def parse(payload: bytes) -> Statement:
             report_date=_day(item.get("reportDate") or node.get("toDate")),
         ))
     trades = []
-    for item in node.iterfind("./Trades/Trade"):
-        if item.get("assetCategory", "STK") != "STK" or item.get("levelOfDetail", "EXECUTION") not in ("EXECUTION", "ORDER"):
+    for item in _finest(node.iterfind("./Trades/Trade"), ("EXECUTION", "ORDER")):
+        if item.get("assetCategory", "STK") != "STK":
             continue
         trades.append(Trade(
             trade_id=item.get("tradeID") or item.get("ibExecID") or "", symbol=item.get("symbol", ""),
@@ -155,18 +163,22 @@ def parse(payload: bytes) -> Statement:
             commission=abs(_number(item.get("ibCommission"))),
             commission_currency=item.get("ibCommissionCurrency") or item.get("currency", ""),
         ))
-    cash = {}
+    cash, summary = {}, None
     for item in node.iterfind("./CashReport/CashReportCurrency"):
         currency = item.get("currency", "")
-        if currency and currency != "BASE_SUMMARY" and item.get("levelOfDetail", "Currency") in ("Currency", "CURRENCY"):
+        if currency == "BASE_SUMMARY" or item.get("levelOfDetail", "").lower() == "basecurrency":
+            summary = _number(item.get("endingCash"))
+        elif currency:
             cash[currency] = _number(item.get("endingCash"))
+    if not cash and summary is not None:
+        cash = {base: summary}  # no currency breakout: the whole balance, in the base currency
     nav = tuple(sorted(
         (_day(item.get("reportDate")), _number(item.get("cash")), _number(item.get("total")))
         for item in node.iterfind("./EquitySummaryInBase/EquitySummaryByReportDateInBase") if item.get("reportDate")
     ))
     deposits = {}
-    for item in node.iterfind("./CashTransactions/CashTransaction"):
-        if item.get("type") == "Deposits/Withdrawals" and item.get("levelOfDetail", "DETAIL") == "DETAIL":
+    for item in _finest(node.iterfind("./CashTransactions/CashTransaction"), ("DETAIL", "SUMMARY")):
+        if item.get("type") == "Deposits/Withdrawals":
             day = _day(item.get("dateTime") or item.get("reportDate"))
             amount = _number(item.get("amount")) * _number(item.get("fxRateToBase") or "1")
             deposits[day] = deposits.get(day, Decimal(0)) + amount
