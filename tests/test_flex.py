@@ -94,3 +94,17 @@ def test_a_network_failure_never_carries_the_token():
         flex.fetch(TOKEN, "42", session=FakeIbkr(failure), sleep=lambda _: None)
 
     assert TOKEN not in str(raised.value) and "ConnectionError" in str(raised.value)
+
+
+def test_without_a_currency_breakout_the_cash_is_the_base_currency_total():
+    summary_only = STATEMENT.replace(b'<CashReportCurrency accountId="U0000000" currency="EUR" levelOfDetail="Currency" endingCash="1650.10" />', b"")
+    summary_only = summary_only.replace(b'<CashReportCurrency accountId="U0000000" currency="USD" levelOfDetail="Currency" endingCash="67.75" />', b"")
+
+    assert flex.parse(summary_only).cash == {"EUR": Decimal("1712.40")}
+
+
+def test_a_trade_listed_both_per_order_and_per_execution_counts_once():
+    order_rows = STATEMENT.replace(b'levelOfDetail="EXECUTION"', b'levelOfDetail="ORDER"')
+    both = STATEMENT.replace(b"</Trades>", order_rows.split(b"<Trades>")[1].split(b"</Trades>")[0] + b"</Trades>")
+
+    assert len(flex.parse(both).trades) == len(flex.parse(STATEMENT).trades)
