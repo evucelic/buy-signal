@@ -95,7 +95,7 @@ def test_money_held_before_the_oldest_day_read_is_shown_so_the_value_adds_up(tmp
 
     assert held > 0 and held + deposits + gain == pytest.approx(now, abs=2)
     # €299 gained on about €4,900 of average capital over the year: every deposit counted once.
-    assert 5 < float(re.search(r"([+−-][\d.]+)% on money in", caption).group(1).replace("−", "-")) < 7
+    assert 5 < float(re.search(r"MWR ([+−-][\d.]+)%", caption).group(1).replace("−", "-")) < 7
     instruments.set_current(None)
 
 
@@ -130,3 +130,25 @@ def test_days_before_the_account_was_funded_do_not_stretch_the_history(tmp_path)
     for view in ("pf_value", "pf_returns"):
         assert panels.build(padded)[view][0] == panels.build(account)[view][0], view
     instruments.set_current(None)
+
+
+def table_row(caption: str, label: str) -> list[str]:
+    text = re.sub(r"<[^>]+>", "", unescape(caption))
+    return next(line for line in text.splitlines() if line.startswith(label + " ")).split()[1:]
+
+
+def percent(cell: str) -> float:
+    return float(cell.replace("−", "-").rstrip("%"))
+
+
+
+def test_returns_show_the_money_weighted_figure_of_the_value_tab_beside_the_time_weighted_one(deck):
+    value, returns = deck["pf_value"][0], deck["pf_returns"][0]
+    assert "TWR" in returns and "MWR" in returns
+
+    you, sp = table_row(returns, "You"), table_row(returns, "S&P")
+    assert f"MWR {you[1]}" in re.sub(r"<[^>]+>", "", unescape(value))
+    assert 0 < float(re.search(r"Avg euro in\s+([\d.]+) yr", value).group(1)) < 1
+    # Same deposits: ahead of the S&P 500 in euros exactly when ahead in money-weighted return.
+    assert (percent(you[1]) > percent(sp[1])) == (money(value, "S&P 500") > 0)
+

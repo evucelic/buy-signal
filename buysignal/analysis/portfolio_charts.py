@@ -11,7 +11,7 @@ from buysignal.resources import HEAVY_WORK_LOCK
 CASH = "CASH"
 _VIOLET = "#7d5bc6"
 LINES = {"You": style._BLUE, "S&P 500": style._ORANGE, "Target mix": _VIOLET, "All-World": style._SECOND}
-_NAMES = {"S&P 500": "S&P", "Target mix": "Mix", "All-World": "World", "You": "You"}  # short, to fit beside the plot
+SHORT_NAMES = {"S&P 500": "S&P", "Target mix": "Mix", "All-World": "World", "You": "You"}
 # Listings in the mix, in the order they are drawn; cash is always light grey.
 _SLICES = (style._BLUE, style._ORANGE, style._MET, _VIOLET, "#d9a521", "#3fa7b5", style._RED)
 _SPANS = {"3m": pd.DateOffset(months=3), "1y": pd.DateOffset(years=1), "5y": pd.DateOffset(years=5)}
@@ -60,11 +60,11 @@ def _labelled_lines(ax, lines: dict[str, pd.Series], fmt: str):
                 linestyle=(0, (4, 2)) if name == "All-World" else "-")
         x, y = series.index[-1], series.iloc[-1]
         ax.scatter([x], [y], s=46 if you else 30, color=color, edgecolors=style._SURFACE, linewidths=1.5, zorder=6)
-        ax.annotate(f"{_NAMES.get(name, name)} {fmt.format(y)}", (x, y), xytext=(8, nudges[name]), textcoords="offset points",
+        ax.annotate(f"{SHORT_NAMES.get(name, name)} {fmt.format(y)}", (x, y), xytext=(8, nudges[name]), textcoords="offset points",
                     va="center", ha="left", fontsize=style._LABEL, fontweight="bold", color=color, annotation_clip=False)
 
 
-def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series]) -> bytes | None:
+def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series], mwr: str | None = None) -> bytes | None:
     if account is None or len(account) < 2:
         return None
     with HEAVY_WORK_LOCK:
@@ -72,6 +72,9 @@ def value(account: pd.Series, paid: pd.Series, benchmarks: dict[str, pd.Series])
         style._place(figure, right=.72)
         ax = figure.subplots()
         style._frame(ax, "Account value", "grey = paid in")
+        if mwr:
+            ax.text(.02, .97, f"{mwr}\nmoney-weighted", transform=ax.transAxes, va="top", ha="left", fontsize=style._LABEL,
+                    fontweight="bold", color=style._BLUE, linespacing=1.3)
         paid = paid.reindex(account.index)
         ax.plot(paid.index, paid, color=style._MUTED, linewidth=1.6, drawstyle="steps-post", zorder=2)
         ax.fill_between(account.index, account.to_numpy(), paid.to_numpy(), where=(account >= paid).to_numpy(), interpolate=True,
@@ -95,7 +98,7 @@ def returns(cumulative: dict[str, pd.Series]) -> bytes | None:
         figure = _figure(6.6)
         style._place(figure, right=.74, gap=.42, top_points=74)
         top, bottom = figure.subplots(2, 1, gridspec_kw={"height_ratios": [2.2, 1]}, sharex=True)
-        style._frame(top, "Return without deposits")
+        style._frame(top, "Time-weighted return (TWR)", "deposits removed · every day weighs the same")
         top.axhline(0, color=style._AXIS, linewidth=1, zorder=2)
         _labelled_lines(top, {name: series * 100 for name, series in cumulative.items() if len(series) > 1}, "{:+.1f}%")
         style._yticks(top, 5, "{:+.0f}%")

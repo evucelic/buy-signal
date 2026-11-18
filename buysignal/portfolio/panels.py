@@ -76,8 +76,8 @@ def _date(value) -> str:
     return f"{value.day} {value:%b %y}"
 
 
-def _fall(value: float | None) -> str:
-    return "—" if value is None else f"{min(value, 0.):.1%}".replace("-", "−")
+def _fall(value: float | None, digits: int = 1) -> str:
+    return "—" if value is None else f"{min(value, 0.):.{digits}%}".replace("-", "−")
 
 
 def _range_words(range_key: str, start) -> str:
@@ -185,68 +185,98 @@ def _cut(series: pd.Series, range_key: str) -> pd.Series:
     return charts.window(series.dropna(), range_key)
 
 
+@dataclass
+class Money:
+    opening: float  # on All, less the first day's deposit
+    paid_in: float
+    flows: list  # (day, amount)
+
+
+def _money(account: Account, past: History, value: pd.Series, whole: bool) -> Money:
+    start, end = value.index[0], value.index[-1]
+    paid_in = float(past.paid[end] - past.paid[start])
+    opening = float(value.iloc[0])
+    if whole:  # the first day's own deposit is money in, not a starting balance
+        first_flow = float(past.paid[start])
+        paid_in, opening = paid_in + first_flow, opening - first_flow
+    flows = [(start, opening)] if opening > 0.5 else []
+    # On All, a deposit dated before the first daily value is part of that first value.
+    flows += [(max(pd.Timestamp(day), start), amount) for day, amount in account.deposits
+              if pd.Timestamp(day) <= end and (whole or pd.Timestamp(day) > start)]
+    return Money(opening, paid_in, flows)
+
+
+def _yearly(value: pd.Series) -> bool:
+    """Per year from 365 days, as performance.money_weighted."""
+    return (value.index[-1] - value.index[0]).days >= 365
+
+
 def value_tab(account: Account, past: History | None, range_key: str) -> tuple[str, bytes | None]:
     if past is None:
         return _empty("Value", "IBKR has sent no daily account values yet.", account)
     value = _cut(past.value, range_key)
     start, end = value.index[0], value.index[-1]
     whole = range_key == "max"
-    paid_in = float(past.paid[end] - past.paid[start])
-    opening = float(value.iloc[0])
-    if whole:  # the first day's own deposit is money in, not a starting balance
-        first_flow = float(past.paid[start])
-        paid_in, opening = paid_in + first_flow, opening - first_flow
+    money = _money(account, past, value, whole)
+    opening, paid_in = money.opening, money.paid_in
     gain = float(value.iloc[-1]) - opening - paid_in
-    flows = [(start, opening)] if opening > 0.5 else []
-    # On All, a deposit dated before the first daily value is part of that first value.
-    flows += [(max(pd.Timestamp(day), start), amount) for day, amount in account.deposits
-              if pd.Timestamp(day) <= end and (whole or pd.Timestamp(day) > start)]
-    mwr = performance.money_weighted(flows, float(value.iloc[-1]), end)
+    mwr = performance.money_weighted(money.flows, float(value.iloc[-1]), end)
+    mwr_words = None if mwr is None else f"MWR {_pct(mwr)}" + ("/yr" if _yearly(value) else "")
     rows = []
     if not whole or opening > 0.5:
         label = f"Start {_date(start)}" if not whole else f"Held {_date(start)}"
         rows.append((label, _euros(opening)))
     rows += [("Deposits", _signed(paid_in)), ("Market gain", _signed(gain)), ("Now", _euros(value.iloc[-1]))]
+    invested = [(pd.Timestamp(day), amount) for day, amount in money.flows if amount > 0]
+    if invested:
+        years = sum(amount * (end - day).days for day, amount in invested) / sum(amount for _, amount in invested) / 365.25
+        rows.append(("Avg euro in", f"{years:.2f} yr"))
     compared = _comparisons(account, past, value)
     if compared:
         rows += [(), ("Same deposits in", "Value", "You")]
         for name, series in compared.items():
             rows.append((_SHORT[name], _euros(series.iloc[-1]), _signed(float(value.iloc[-1]) - float(series.iloc[-1]))))
     lines = [_head("Value", _range_words(range_key, start)),
-             f"<b>{_euros(value.iloc[-1])}</b>" + (f" · {_pct(mwr)} on money in" if mwr is not None else ""),
+             " · ".join([f"<b>{_euros(value.iloc[-1])}</b>",
+                         *([f"{_pct(gain / (opening + paid_in))} on money in"] if opening + paid_in > 0 else []),
+                         *([mwr_words] if mwr_words else [])]),
              _pre(_lines(rows))]
     if whole and opening > 0.5 and not account.history_complete:
         lines.append(f"<i>Held: money in before {_date(start)}, the oldest IBKR day read so far.</i>")
     lines += _footer(account)
     money_in = opening + past.paid.reindex(value.index) - (0. if whole else float(past.paid[start]))
-    return "\n".join(lines), partial(charts.value, value, money_in, compared)
+    return "\n".join(lines), partial(charts.value, value, money_in, compared, mwr_words)
 
 
 def returns_tab(account: Account, past: History | None, range_key: str) -> tuple[str, bytes | None]:
     if past is None:
         return _empty("Returns", "IBKR has sent no daily account values yet.", account)
     value = _cut(past.value, range_key)
+    end = value.index[-1]
     deposits = [(day, amount) for day, amount in account.deposits if pd.Timestamp(day) > value.index[0]]
+    flows = _money(account, past, value, range_key == "max").flows
     cumulative = {"You": performance.rebase(_cut(performance.time_weighted(past.value, account.deposits), range_key))}
+    finals = {"You": float(value.iloc[-1])}
     for name, series in _comparisons(account, past, value).items():
         cumulative[name] = performance.time_weighted(series, deposits)
-    days = (value.index[-1] - value.index[0]).days
-    yearly = days > 400
-    rows = [("", "Per yr" if yearly else "Return", "Fall", "Vol")]
+        finals[name] = float(series.iloc[-1])
+    yearly = _yearly(value)
+    unit = "/yr" if yearly else ""
+    rows = [("", "TWR" + unit, "MWR" + unit, "Fall", "Vol")]
+    twr, mwr = {}, {}
     for name, series in cumulative.items():
-        result = performance.annualised(series) if yearly else float(series.iloc[-1])
+        twr[name] = performance.annualised(series) if yearly else float(series.iloc[-1])
+        mwr[name] = performance.money_weighted(flows, finals[name], end)
         vol = performance.volatility(series)
-        rows.append((_SHORT.get(name, name), _pct(result), _fall(performance.max_drawdown(series)), "—" if vol is None else f"{vol:.0%}"))
-    mine = cumulative["You"]
+        rows.append((charts.SHORT_NAMES.get(name, name), _pct(twr[name]), _pct(mwr[name]),
+                     _fall(performance.max_drawdown(series), 0), "—" if vol is None else f"{vol:.0%}"))
     lead = []
-    if "S&P 500" in cumulative:
-        gap = float(mine.iloc[-1] - cumulative["S&P 500"].iloc[-1])
-        lead.append(f"{gap * 100:+.1f} pts vs S&P 500".replace("-", "−"))
-    if TARGET_MIX in cumulative:
-        gap = float(mine.iloc[-1] - cumulative[TARGET_MIX].iloc[-1])
-        lead.append(f"{gap * 100:+.1f} vs target".replace("-", "−"))
+    for name, words in (("S&P 500", "S&P 500"), (TARGET_MIX, "target")):
+        if name in cumulative and mwr.get(name) is not None and mwr["You"] is not None:
+            lead.append(f"vs {words}: TWR {(twr['You'] - twr[name]) * 100:+.1f} · MWR {(mwr['You'] - mwr[name]) * 100:+.1f} pts"
+                        .replace("-", "−"))
     lines = [_head("Returns", _range_words(range_key, value.index[0])),
-             "<b>" + esc(" · ".join(lead)) + "</b>" if lead else "", _pre(_lines(rows)), *_footer(account)]
+             *("<b>" + esc(line) + "</b>" for line in lead), _pre(_lines(rows)), *_footer(account)]
     return "\n".join(line for line in lines if line), partial(charts.returns, cumulative)
 
 
