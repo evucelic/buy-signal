@@ -18,7 +18,7 @@ TABS = (("pf_value", "Value"), ("pf_returns", "Returns"), ("pf_mix", "Mix"),
         ("pf_tax", "Tax"), ("pf_valuation", "Valuation"))
 FIRST = "pf_value"
 RANGED = {"pf_value", "pf_returns"}
-DEFAULT_RANGE = "1y"
+DEFAULT_RANGE = "max"
 PORTFOLIO_RANGES = ("3m", "1y", "max")
 TARGET_MIX = "Target mix"
 _SHORT = {"S&P 500": "S&P 500", TARGET_MIX: "Target mix", "All-World": "All-World"}

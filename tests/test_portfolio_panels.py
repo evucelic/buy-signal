@@ -70,8 +70,8 @@ def test_every_tab_has_a_chart(deck):
 
 
 def test_value_and_returns_follow_the_range_button(deck):
-    assert deck["pf_value"][0] != deck["pf_value@3m"][0]
-    assert "since Nov 2025" in deck["pf_returns@max"][0] and "3 months" in deck["pf_returns@3m"][0]
+    assert deck["pf_value"][0] != deck["pf_value@1y"][0] != deck["pf_value@3m"][0]
+    assert "since Nov 2025" in deck["pf_returns"][0] and "3 months" in deck["pf_returns@3m"][0]
 
 
 def test_value_compares_the_same_deposits_in_the_sp500_the_target_mix_and_the_world(deck):
@@ -89,7 +89,7 @@ def money(caption: str, label: str) -> float:
 def test_money_held_before_the_oldest_day_read_is_shown_so_the_value_adds_up(tmp_path):
     store = PortfolioStore(tmp_path / "portfolio.sqlite3")
     store.save_statement(replace(STATEMENT, nav=STATEMENT.nav[1:]), datetime(2026, 11, 18, 7, tzinfo=timezone.utc))
-    caption = panels.build(make_account(store))["pf_value@max"][0]
+    caption = panels.build(make_account(store))["pf_value"][0]
 
     held, deposits, gain, now = (money(caption, label) for label in ("Held", "Deposits", "Market gain", "Now"))
 
@@ -127,6 +127,6 @@ def test_days_before_the_account_was_funded_do_not_stretch_the_history(tmp_path)
     account = make_account(store)
     padded = replace(account, nav=list(unfunded) + account.nav)
 
-    for view in ("pf_value@max", "pf_returns@max"):
+    for view in ("pf_value", "pf_returns"):
         assert panels.build(padded)[view][0] == panels.build(account)[view][0], view
     instruments.set_current(None)
