@@ -82,7 +82,7 @@ def test_total_provider_failure_keeps_cached_numbers_and_does_not_pass_stale_gat
     assert assess([signal]).state=='incomplete'
     text=render.signal_report(assess([signal]),[],NOW.to_pydatetime()).messages[0].text
     assert '-7.0%' in text and 'Prices cached through 2026-11-03' in text
-    assert 'SPY -7.0% vs high' in text and '[?] Dip' in text and 'line ' not in text and 'Nasdaq' in text
+    assert 'SPY -7.0% from 3-month high' in text and '❔ <b>Dip</b>' in text and 'line ' not in text and 'Nasdaq' in text
 
 
 def test_retry_cooldown_prevents_multiple_full_attempts_during_outage(tmp_path):

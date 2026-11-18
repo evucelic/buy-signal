@@ -59,18 +59,17 @@ def test_report_is_one_numeric_overview_with_absolute_times():
     report = render.signal_report(result, [(s.name, NOW) for s in result.subsignals], NOW)
     assert len(report.messages) == 1
     text = report.messages[0].text
-    assert text.startswith("<pre>CHECKLIST  4 of 5\n")
-    sheet = html.unescape(text.split("<pre>")[1].split("</pre>")[0])
-    assert sheet.startswith(
-        "CHECKLIST  4 of 5\n"
-        "[x] Fear    VIX 25.0\n"
-        "[ ] Fed     higher 79% Apr 27\n"
-        "[x] Margin  -2.0% in Sep\n"
-        "[x] Dip     SPY -7.1% vs high\n"
-        "[x] EPS     4 of 5 up\n"
+    assert text.startswith(
+        "📊 <b>Entry checklist · 4 of 5</b>\n●●●●○\n\n"
+        "✅ <b>Fear</b> VIX 25.0\n"
+        "❌ <b>Fed</b> higher leads 79% by Apr 27\n"
+        "✅ <b>Margin</b> -2.0% in Sep\n"
+        "✅ <b>Dip</b> SPY -7.1% from 3-month high\n"
+        "✅ <b>EPS</b> 4 of 5 industries growing\n"
     )
-    assert "CONTEXT\nCredit  212 bp\nCurve   +0.80 pp\n" in sheet and "line" not in sheet
-    assert max(len(line) for line in sheet.splitlines()) <= 32  # a phone shows the sheet without wrapping
+    assert "🟢 <b>Credit</b> 212 bp · stress line 228\n🟢 <b>Curve</b> +0.80 pp · flat\n" in text
+    sheet = html.unescape(text.split("<pre>")[1].split("</pre>")[0])
+    assert max(len(line) for line in sheet.splitlines()) <= 32  # a phone shows the table without wrapping
     assert "AFTER" not in sheet and "Jobs" not in sheet and "Recession" not in sheet
     assert "Report 2026-11-02 20:00 CET" in text
     assert "last refresh" in text and "ago" not in text
@@ -91,9 +90,9 @@ def test_every_data_as_of_row_carries_a_date():
 def test_missing_required_data_stays_in_the_count_and_is_named():
     result = assess([], ["fed_rate"])
     text = render.signal_report(result, [], NOW).messages[0].text
-    assert text.startswith("<pre>CHECKLIST  0 of 5 incomplete\n[?] Fear    no data\n[?] Fed     no data\n")
+    assert text.startswith("📊 <b>Entry checklist · 0 of 5 incomplete</b>\n○○○○○\n\n❔ <b>Fear</b> no data\n❔ <b>Fed</b> no data\n")
     assert "⚠️ No current data: Fear, Fed, Margin, Dip, EPS" in text
-    assert "Credit  no data" in text
+    assert "❔ <b>Credit</b> no data" in text
 
 
 def test_checklist_boxes_show_pass_fail_and_stale():
@@ -102,10 +101,10 @@ def test_checklist_boxes_show_pass_fail_and_stale():
     stale = SubSignal("market_dip", -.07, "flat", "", passes=False, metrics={"stale": True, "index_changes": {}})
     margin = SubSignal("margin_debt", .01, "leveraging", "", passes=False, observed_at="2026-09-01")
     text = html.unescape(render.signal_report(assess([vix, fed, stale, margin]), [], NOW).messages[0].text)
-    assert "CHECKLIST  2 of 5 incomplete" in text
-    assert "[x] Fear    VIX 34.0 high" in text
-    assert "[ ] Margin  +1.0% in Sep" in text
-    assert "[?] Dip     SPY -7.0% vs high" in text
+    assert "Entry checklist · 2 of 5 incomplete" in text
+    assert "✅ <b>Fear</b> VIX 34.0 · high fear" in text
+    assert "❌ <b>Margin</b> +1.0% in Sep" in text
+    assert "❔ <b>Dip</b> SPY -7.0% from 3-month high" in text
     assert "No current data: Dip, EPS" in text
 
 
@@ -237,3 +236,15 @@ def test_phone_chart_titles_fit_inside_uploaded_image(monkeypatch):
                 assert signal_charts._render_signal_chart(shown, range_key)
                 rendered += 1
     assert rendered >= 20
+
+
+def test_panel_numbers_follow_the_range_button():
+    from scripts.preview_entry_report import sample_assessment
+    from buysignal.telegram_bot import prepared
+    planned, _ = prepared.plan(sample_assessment(), 'abcdef123456', NOW.isoformat())
+    year, everything = planned['credit']['caption'], planned['credit@max']['caption']
+    assert year != everything
+    assert '📏 Past year' in year and '1 yr ago' in year
+    assert '📏 Since 2016' in everything and 'Nov 2016' in everything
+    assert 'Stress line' in year and 'wider only 1 day in 5' in year  # the line is explained once, briefly
+    assert planned['vix@3m']['caption'] != planned['vix@5y']['caption']

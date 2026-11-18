@@ -22,7 +22,7 @@ def handle_callback(query, store):
         try:
             manifest = store.load_views(token)
         except (OSError, ValueError, KeyError, TypeError):
-            transport.answer_callback(query['id'], 'This report has expired. Use /signal for a new overview.')
+            transport.answer_callback(query['id'], 'This message has expired. Send the command again.')
             return
         panel = manifest.get('panel')
         if requested == 'close':

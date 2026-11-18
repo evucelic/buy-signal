@@ -1,8 +1,4 @@
-"""Overview and panel captions: every number behind a reading, laid out to scan; no collection or IO.
-
-Tables are monospace and stay within about 32 characters so a phone does not wrap them; warnings
-for missing or stale data stay in the message.
-"""
+"""Overview and panel captions: status markers first, numbers in phone-width monospace tables."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from buysignal.analysis.signal_charts import DEFAULT_RANGE, RANGES
-from buysignal.config import SECTOR_MIN_ESTIMATE_COVERAGE, VIX_SOFT, VIX_STRONG
+from buysignal.config import MARKET_DIP_THRESHOLD, MARKET_DRAWDOWN_SESSIONS, SECTOR_MIN_ESTIMATE_COVERAGE, VIX_SOFT, VIX_STRONG
 from buysignal.signals.base import SubSignal
 from buysignal.signals.buy_signal import BuySignal, INCOMPLETE, REQUIRED_SIGNALS, usable
 from buysignal.telegram_bot.render import esc, fmt
@@ -25,15 +21,27 @@ INDEX_NAMES = {"SPY": "S&P 500 (SPY)", "NASDAQ": "Nasdaq", "DOW": "Dow Jones", "
 _INDEX_BUTTONS = {"NASDAQ": "Nasdaq", "DOW": "Dow", "EURO50": "Euro50"}
 TITLES = {"vix": "VIX", "fed_rate": "Fed outlook", "margin_debt": "Margin debt",
           "sector": "Earnings outlook", "credit": "Credit spread", "yield_curve": "Yield curve"}
+_ICONS = {"vix": "😨", "fed_rate": "🏛", "margin_debt": "💳", "market_dip": "📉", "sector": "💹",
+          "credit": "🏦", "yield_curve": "〰️"}
+# One line for what a measure is, where the name alone does not say it.
+GLOSSES = {
+    "fed_rate": "CME futures odds of where the Fed's rate will be on each date, against today's range.",
+    "margin_debt": "Money investors borrow from brokers to buy shares. FINRA, monthly, about 3 weeks late.",
+    "market_dip": f"Dip: {-MARKET_DIP_THRESHOLD:.0%} or more below the highest close of the prior {MARKET_DRAWDOWN_SESSIONS} sessions.",
+    "sector": "Analysts' growth forecast for next year's earnings, largest firms of the 5 biggest industries.",
+    "credit": ("Extra yield Baa-rated companies pay over the 10-year Treasury. It widens when lenders fear defaults. "
+               "Stress line: the spread was wider only 1 day in 5 over the last 10 years."),
+    "yield_curve": "Long minus short Treasury yield. Below 0 (inverted) has come before most US recessions.",
+}
 VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES}
 # Retired view names that old reports' buttons still send.
 LEGACY_VIEWS = {"market_info", "eps_info", "fed_changes"}
 _SELECTED = "● "
 _HISTORY_ROWS = 6  # recent observations listed in a monthly panel
 
-# Checklist rows: the condition's short name, and its box for pass, fail and no current data.
+# Checklist rows: the condition's short name, and its mark for pass, fail and no current data.
 _CHECK_NAMES = {"vix": "Fear", "fed_rate": "Fed", "margin_debt": "Margin", "market_dip": "Dip", "sector": "EPS"}
-_BOXES = {"pass": "[x]", "fail": "[ ]", "incomplete": "[?]"}
+_MARKS = {"pass": "✅", "fail": "❌", "incomplete": "❔"}
 _CURVE_STATES = {"steep": "steep", "flat": "flat", "inverted": "inverted", "deep_inversion": "deeply inverted"}
 
 
@@ -72,14 +80,14 @@ def section_of(base: str) -> str:
     return "market_dip" if base.startswith("index_") else base
 
 
-def _year(value) -> str:
-    return str(pd.Timestamp(value).year) if value else "the start"
-
-
 def _share(value: float) -> str:
     # Never round a rare reading to "0%" or a common one to "100%".
+    if value <= 0:
+        return "0%"
     if value < .01:
         return "under 1%"
+    if value >= 1:
+        return "100%"
     if value > .99:
         return "over 99%"
     return f"{value:.0%}"
@@ -113,9 +121,10 @@ def _pre(lines: list[str]) -> str:
     return "<pre>" + esc("\n".join(lines)) + "</pre>"
 
 
-def _since(year, *rows) -> list[tuple]:
-    """Rows that describe a reading against its own history, under a 'Since <year>' heading."""
-    return [(), (f"Since {year}",), *rows] if rows else []
+def _day(value) -> str:
+    """'9 Dec 26' with the day padded, so a column of dates lines up."""
+    value = pd.Timestamp(value)
+    return f"{value.day:>2} {value:%b %y}"
 
 
 def _fed_rows(signal: SubSignal):
@@ -165,54 +174,58 @@ def verdict(signal: SubSignal) -> str:
     return signal.state.replace("_", " ")
 
 
+def _mark(signal: SubSignal) -> str:
+    """✅/❌ for a checklist condition, 🟢/🟠 for context: whether the reading is in the owner's favour."""
+    if signal.advisory or signal.name not in REQUIRED_SIGNALS:
+        if signal.name == "yield_curve":
+            return "🟠" if signal.state in ("inverted", "deep_inversion") else "🟢"
+        return "🟢" if signal.passes else "🟠"
+    return _MARKS["pass" if signal.passes else "fail"]
+
+
 def _check_value(signal: SubSignal) -> str:
-    """The number behind one checklist condition, short enough for a 32-character row."""
+    """The number behind one checklist condition, in a few words."""
     m = signal.metrics
     if signal.name == "vix":
-        return f"VIX {signal.score:.1f}" + (" high" if signal.score >= VIX_STRONG else "")
+        return f"VIX {signal.score:.1f}" + (" · high fear" if signal.score >= VIX_STRONG else "")
     if signal.name == "fed_rate":
         rows = _fed_rows(signal)
         if not rows:
             return "odds unavailable"
-        date, label, odds = next((row for row in rows if row[1] == "higher"), rows[0])
-        return f"{label} {odds:.0%} {date:%b %y}"
+        date, label, odds = next((row for row in rows if row[1] == "higher"), rows[-1])
+        return f"{label} leads {odds:.0%} by {date:%b %y}"
     if signal.name == "margin_debt":
         month = pd.Timestamp(signal.observed_at).strftime("%b") if signal.observed_at else "latest"
         return f"{signal.score:+.1%} in {month}"
     if signal.name == "market_dip":
-        return f"SPY {signal.score:+.1%} vs high"
+        return f"SPY {signal.score:+.1%} from 3-month high"
     if signal.name == "sector":
-        return f"{m.get('growing', '—')} of {m.get('sample_size', '—')} up"
+        return f"{m.get('growing', '—')} of {m.get('sample_size', '—')} industries growing"
     return f"{signal.score:+.2f}"
 
 
-def _sheet(result: BuySignal, by_name: dict) -> list[str]:
-    """The data sheet: the checklist, then context, then the index moves."""
-    checks = []
-    for name in REQUIRED_SIGNALS:
-        signal, status = by_name.get(name), result.status(name)
-        # [?] marks a reading that is missing or stale; the warning under the sheet names it.
-        value = _check_value(signal) if signal is not None else "no data"
-        checks.append((f"{_BOXES[status]} {_CHECK_NAMES[name]}", value))
-    credit, curve = by_name.get("credit"), by_name.get("yield_curve")
-    context = [("Credit", f"{credit.score * 100:.0f} bp" if credit else "no data"),
-               ("Curve", f"{curve.score:+.2f} pp" if curve else "no data")]
-    lines = [f"CHECKLIST  {result.label}", *_lines(checks, notes=True), "",
-             "CONTEXT", *_lines(context, notes=True)]
-    market = by_name.get("market_dip")
-    changes = market.metrics.get("index_changes", {}) if market else {}
-    if changes:
-        rows = [("", "Day", "Week", "Month")]
-        rows += [(_INDEX_BUTTONS.get(name, name), *[f"{value:+.1%}" for value in item["changes"]]) for name, item in changes.items()]
-        lines += ["", *_lines(rows)]
-    return lines
+def _meter(passed: int, total: int) -> str:
+    return "●" * passed + "○" * (total - passed)
+
+
+def _context_line(signal: SubSignal | None, label: str) -> str:
+    if signal is None:
+        return f"❔ <b>{label}</b> no data"
+    if signal.name == "credit":
+        m = signal.metrics
+        value = f"{signal.score * 100:.0f} bp"
+        if m.get("stress") is not None:
+            value += f" · stress line {m['stress'] * 100:.0f}"
+    else:
+        value = f"{signal.score:+.2f} pp · {verdict(signal)}"
+    return f"{_mark(signal)} <b>{label}</b> {esc(value)}"
 
 
 def _sources(by_name: dict, caches, now: datetime) -> str:
     refreshed = dict(caches)
     labels = (("market_dip", "Prices"), ("vix", "VIX"), ("fed_rate", "Fed"), ("margin_debt", "Margin"),
               ("sector", "Earnings"), ("credit", "Credit"), ("yield_curve", "Curve"))
-    lines = ["<b>Data as of</b> · (last refresh)"]
+    lines = ["🕒 <b>Data as of</b> · (last refresh)"]
     for key, label in labels:
         signal = by_name.get(key)
         observed = stamp(signal.observed_at if signal else None, short=True)
@@ -230,21 +243,33 @@ def _sources(by_name: dict, caches, now: datetime) -> str:
 
 def overview(result: BuySignal, caches, now: datetime):
     by_name = {s.name: s for s in result.subsignals}
-    lines = [_pre(_sheet(result, by_name))]
+    passed = sum(result.status(name) == "pass" for name in REQUIRED_SIGNALS)
+    lines = [f"📊 <b>Entry checklist · {esc(result.label)}</b>", _meter(passed, len(REQUIRED_SIGNALS)), ""]
+    for name in REQUIRED_SIGNALS:
+        signal, status = by_name.get(name), result.status(name)
+        # ❔ marks a reading that is missing or stale; the warning below names it.
+        value = _check_value(signal) if signal is not None else "no data"
+        lines.append(f"{_MARKS[status]} <b>{_CHECK_NAMES[name]}</b> {esc(value)}")
+    lines += ["", "🧭 <b>Context</b>", _context_line(by_name.get("credit"), "Credit"),
+              _context_line(by_name.get("yield_curve"), "Curve")]
+    market = by_name.get("market_dip")
+    changes = market.metrics.get("index_changes", {}) if market else {}
+    if changes:
+        rows = [("", "Day", "Week", "Month")]
+        rows += [(_INDEX_BUTTONS.get(name, name), *[f"{value:+.1%}" for value in item["changes"]]) for name, item in changes.items()]
+        lines += ["", "🌍 <b>Markets</b>", _pre(_lines(rows))]
     if result.state == INCOMPLETE:
         unknown = [_CHECK_NAMES[name] for name in REQUIRED_SIGNALS if not usable(by_name.get(name))]
         lines.append("⚠️ No current data: " + esc(", ".join(unknown)))
-    market = by_name.get("market_dip")
     if market:
         m = market.metrics
         if m.get("stale"):
             lines.append(f"⚠️ Prices cached through {esc(market.observed_at or 'unknown')}; expected {esc(m.get('expected_session') or 'latest session')}.")
         elif m.get("refresh_failed"):
             lines.append("⚠️ Price refresh failed; showing cached observations.")
-        changes = m.get("index_changes", {})
         if len({item["date"] for item in changes.values()}) > 1:
             lines.append("Index dates: " + esc(" · ".join(f"{name} {item['date']}" for name, item in changes.items())))
-    lines.extend(["", _sources(by_name, caches, now)])
+    lines.append(_sources(by_name, caches, now))
     return "\n".join(lines)
 
 
@@ -270,79 +295,155 @@ def keyboard(token, view=None, available_indexes=INDEXES, sections=None, ranges=
     return {"inline_keyboard": rows}
 
 
-# --- panels: the numbers behind each reading ---------------------------------------------------
+def _measure(signal: SubSignal, name: str = "") -> pd.Series | None:
+    """The plotted measure as a date-indexed series, in the unit the panel shows."""
+    frame = signal.history
+    if frame is None or frame.empty:
+        return None
+    if signal.name == "market_dip":
+        return frame[name].dropna() if name in frame else None
+    column, dates, scale = {"vix": ("vix", "date", 1), "credit": ("spread", "date", 100),
+                            "yield_curve": ("spread", "date", 1), "margin_debt": ("debit_balances", "month", 1)}.get(signal.name, (None,) * 3)
+    if column not in frame or dates not in frame:
+        return None
+    series = pd.Series(pd.to_numeric(frame[column], errors="coerce").to_numpy() * scale, index=pd.to_datetime(frame[dates]))
+    return series.dropna().sort_index()
 
 
-def _day(value) -> str:
-    """'9 Dec 26' with the day padded, so a column of dates lines up."""
-    value = pd.Timestamp(value)
-    return f"{value.day:>2} {value:%b %y}"
+def _window(series: pd.Series, range_key: str, monthly: bool = False) -> pd.Series:
+    size = RANGES[range_key]["months" if monthly else "sessions"]
+    if size is None and range_key != "max":
+        size = 3  # a monthly series has no 3-month button; never let one show all history
+    return series if size is None else series.tail(size + 1)
 
 
-def _earlier(series, sessions: int) -> float | None:
-    return float(series.iloc[-1 - sessions]) if series is not None and len(series) > sessions else None
+def _span(series: pd.Series, range_key: str) -> str:
+    """'past year', 'past 5 years', or 'since 2016' for the whole history."""
+    words = RANGES[range_key]["words"]
+    if words is None:
+        return f"since {series.index[0].year}"
+    return "past " + words.removeprefix("1 ")
 
 
-def _market_rows(signal: SubSignal, name: str) -> list[tuple]:
-    facts = _index_facts(signal, name)
-    if not facts:
-        return []
-    rows = [("Price", _price(facts["price"]))]
-    if facts.get("peak") is not None:
-        rows.append(("3-month high", _price(facts["peak"])))
-        if facts.get("peak_date"):
-            rows.append(("High set", f"{pd.Timestamp(facts['peak_date']):%-d %b}"))
-    rows.append(("From high", f"{facts.get('drawdown', 0.):+.1%}"))
-    rows += [("Day", percent(facts.get("daily"))), ("Week", percent(facts.get("weekly"))), ("Month", percent(facts.get("monthly")))]
-    if facts.get("ma200"):
-        rows += [("200-day avg", _price(facts["ma200"])), ("Price vs avg", f"{facts['price'] / facts['ma200'] - 1:+.1%}"),
-                 ("Avg, 20 days", percent(facts.get("ma_slope")))]
-    past = []
-    if facts.get("drawdown_share") is not None:
-        past.append(("Days this low", _share(facts["drawdown_share"])))
-    if name == "SPY" and facts.get("rule_share") is not None:
-        past.append(("Days in a dip", _share(facts["rule_share"])))
-    return rows + _since(_year(facts.get("history_since")), *past)
+def _ago(range_key: str, series: pd.Series) -> str:
+    words = RANGES[range_key]["words"]
+    return f"{series.index[0]:%b %Y}" if words is None else words.replace("months", "mo").replace("years", "yrs").replace("year", "yr") + " ago"
 
 
-def _vix_rows(signal: SubSignal) -> list[tuple]:
+def _extremes(window: pd.Series, show) -> list[tuple]:
+    high, low = window.idxmax(), window.idxmin()
+    return [("High", show(window[high]), _day(high).strip()), ("Low", show(window[low]), _day(low).strip()),
+            ("Average", show(window.mean()), "")]
+
+
+def _range_block(window: pd.Series, range_key: str, show, change) -> list[tuple]:
+    """Where the range started, what changed, and its high, low and average."""
+    return [(_ago(range_key, window), show(window.iloc[0]), ""), ("Change", change(window.iloc[-1], window.iloc[0]), ""),
+            *_extremes(window, show)]
+
+
+def _story(window: pd.Series, range_key: str, *facts: str) -> list[str]:
+    """One line on how today compares with the range on screen: 'Past year · wider on 43% of days'."""
+    span = _span(window, range_key)
+    return ["📏 " + esc(" · ".join([span[0].upper() + span[1:], *facts]))]
+
+
+def _vix_panel(signal: SubSignal, range_key: str) -> tuple[str, list[tuple], list[str]]:
     m = signal.metrics
-    closes = signal.history.vix if signal.history is not None else None
-    rows = [("Now", f"{signal.score:.1f}")]
-    if m.get("change") is not None:
-        rows.append(("Today", percent(m["change"])))
-    for label, sessions in (("1 week ago", 5), ("1 month ago", 21)):
-        earlier = _earlier(closes, sessions)
-        if earlier is not None:
-            rows.append((label, f"{earlier:.1f}"))
+    head = f"<b>{signal.score:.1f}</b>" + (f" · {esc(percent(m['change']))} today" if m.get("change") is not None else "")
+    series = _measure(signal)
+    if series is None or len(series) < 2:
+        return head, [], []
+    window = _window(series, range_key)
+    rows = _range_block(window, range_key, lambda v: f"{v:.1f}", lambda a, b: f"{a - b:+.1f}")
     if m.get("recent_peak"):
-        rows.append(("20-day high" if m.get("peak_basis") == "intraday" else "20-day close high", f"{m['recent_peak']:.1f}"))
-    if m.get("usual_low") is not None:
-        rows.append(("Usual range", f"{m['usual_low']:.1f}–{m['usual_high']:.1f}"))
-    past = []
-    if m.get("percentile") is not None:
-        past.append(("Days below it", _share(m["percentile"])))
-    if m.get("rule_share") is not None:
-        past.append((f"Days at {VIX_SOFT:g}+", _share(m["rule_share"])))
-    return rows + _since(_year(m.get("since")), *past)
+        rows.append(("20-day peak", f"{m['recent_peak']:.1f}", ""))
+    higher = float((window.iloc[:-1] > signal.score).mean())
+    fear = float((window >= VIX_SOFT).mean())
+    stories = _story(window, range_key, f"higher on {_share(higher)} of days", f"fear ({VIX_SOFT:g}+) on {_share(fear)}")
+    return head, rows, stories
 
 
-def _credit_rows(signal: SubSignal) -> list[tuple]:
+def _credit_panel(signal: SubSignal, range_key: str) -> tuple[str, list[tuple], list[str]]:
     m = signal.metrics
     now = signal.score * 100
-    spreads = signal.history.spread if signal.history is not None else None
-    rows = [("Now", f"{now:.0f} bp")]
-    for label, sessions in (("1 week ago", 5), ("1 month ago", 21)):
-        earlier = _earlier(spreads, sessions)
-        if earlier is not None:
-            rows.append((label, f"{earlier * 100:.0f} bp"))
-    if m.get("stress") is not None:
-        line = m["stress"] * 100
-        rows += [("Stress line", f"{line:.0f} bp"), ("Below line by" if now < line else "Above line by", f"{abs(line - now):.0f} bp")]
-    if m.get("usual_low") is not None:
-        rows.append(("Usual range", f"{m['usual_low'] * 100:.0f}–{m['usual_high'] * 100:.0f} bp"))
-    past = [("Days below it", _share(m["percentile"]))] if m.get("percentile") is not None else []
-    return rows + _since(_year(m.get("since")), *past)
+    head = f"<b>{now:.0f} bp</b> = {signal.score:.2f}% a year extra"
+    series = _measure(signal)
+    rows, stories = [], []
+    line = m["stress"] * 100 if m.get("stress") is not None else None
+    if line is not None:
+        rows += [("Stress line", f"{line:.0f} bp", ""),
+                 ("To the line" if now < line else "Over the line", f"{abs(line - now):.0f} bp", "")]
+    if series is not None and len(series) > 1:
+        window = _window(series, range_key)
+        rows += _range_block(window, range_key, lambda v: f"{v:.0f} bp", lambda a, b: f"{a - b:+.0f} bp")
+        facts = [f"wider on {_share(float((window.iloc[:-1] > now).mean()))} of days"]
+        if line is not None:
+            facts.append(f"over the line on {_share(float((window >= line).mean()))}")
+        stories = _story(window, range_key, *facts)
+    return head, rows, stories
+
+
+def _curve_panel(signal: SubSignal, range_key: str) -> tuple[str, list[tuple], list[str]]:
+    m = signal.metrics
+    head = f"<b>{signal.score:+.2f} pp</b> 10-year minus 3-month"
+    rows = []
+    if m.get("policy_spread") is not None:
+        rows.append(("2y − Fed rate", f"{m['policy_spread']:+.2f}", "cuts priced" if m.get("cuts_priced") else ""))
+    series = _measure(signal)
+    stories = []
+    if series is not None and len(series) > 1:
+        window = _window(series, range_key)
+        rows += _range_block(window, range_key, lambda v: f"{v:+.2f}", lambda a, b: f"{a - b:+.2f}")
+        stories = _story(window, range_key, f"inverted on {_share(float((window < 0).mean()))} of days")
+    return head, rows, stories
+
+
+def _margin_panel(signal: SubSignal, range_key: str) -> tuple[str, list[tuple], list[str]]:
+    m = signal.metrics
+    head = f"<b>${m.get('latest', 0) / 1e6:.3f}T</b> · {esc(percent(signal.score))} in a month"
+    series = _measure(signal)
+    if series is None or len(series) < 2:
+        return head, [], []
+    window = _window(series, range_key, monthly=True)
+    show = lambda v: f"${v / 1e6:.3f}T"  # noqa: E731
+    recent = series.pct_change().tail(_HISTORY_ROWS).iloc[::-1]
+    rows = [(f"{month:%b %Y}", show(series[month]), "" if pd.isna(change) else f"{change:+.1%}") for month, change in recent.items()]
+    peak = window.idxmax()
+    rows += [(), (_ago(range_key, window), show(window.iloc[0]), f"{window.iloc[-1] / window.iloc[0] - 1:+.1%}"),
+             ("Peak", show(window[peak]), f"{peak:%b %y}"), ("From peak", "", f"{window.iloc[-1] / window[peak] - 1:+.1%}")]
+    changes = window.pct_change().dropna()
+    facts = [f"fell in {int((changes < 0).sum())} of {len(changes)} months"]
+    if m.get("falling_months", 0) > 1:
+        facts.append(f"{m['falling_months']} in a row now")
+    stories = _story(window, range_key, *facts)
+    return head, rows, stories
+
+
+def _market_panel(signal: SubSignal, name: str, range_key: str) -> tuple[str, list[tuple], list[str]]:
+    facts = _index_facts(signal, name)
+    if not facts:
+        return "", [], []
+    head = f"<b>{_price(facts['price'])}</b> · {esc(percent(facts.get('daily')))} today"
+    rows = []
+    if facts.get("peak") is not None:
+        when = f"{pd.Timestamp(facts['peak_date']):%-d %b}" if facts.get("peak_date") else ""
+        rows += [("3-mo high", _price(facts["peak"]), when), ("From high", f"{facts.get('drawdown', 0.):+.1%}", "")]
+    if facts.get("ma200"):
+        rows.append(("vs 200-day", f"{facts['price'] / facts['ma200'] - 1:+.1%}", ""))
+    series = _measure(signal, name)
+    stories = []
+    if series is not None and len(series) > 1:
+        window = _window(series, range_key)
+        rows += [()] + _range_block(window, range_key, _price, lambda a, b: f"{a / b - 1:+.1%}")
+        drawdowns = (series / series.shift(1).rolling(MARKET_DRAWDOWN_SESSIONS).max() - 1).clip(upper=0).reindex(window.index).dropna()
+        told = []
+        if len(drawdowns) and facts.get("drawdown", 0) < 0:
+            told.append(f"this far off the high on {_share(float((drawdowns.iloc[:-1] <= facts['drawdown']).mean()))} of days")
+        if len(drawdowns):
+            told.append(f"in a dip on {_share(float((drawdowns <= MARKET_DIP_THRESHOLD + 1e-12).mean()))}" + ("" if told else " of days"))
+        stories = _story(window, range_key, *told) if told else []
+    return head, rows, stories
 
 
 def _fed_table(signal: SubSignal) -> list[tuple]:
@@ -363,23 +464,6 @@ def _fed_table(signal: SubSignal) -> list[tuple]:
         rows += [(_day(row.meeting_date), f"{row.delta_ease_pp:+.0f}", f"{row.delta_no_change_pp:+.0f}", f"{row.delta_hike_pp:+.0f}")
                  for row in moved.itertuples()]
     return rows
-
-
-def _margin_rows(signal: SubSignal) -> list[tuple]:
-    m = signal.metrics
-    rows = []
-    if signal.history is not None and len(signal.history):
-        frame = signal.history.assign(change=signal.history.debit_balances.pct_change()).tail(_HISTORY_ROWS).iloc[::-1]
-        rows = [(f"{row.month:%b %Y}", f"${row.debit_balances / 1e6:.3f}T", "" if pd.isna(row.change) else f"{row.change:+.1%}")
-                for row in frame.itertuples()]
-    else:
-        rows = [("Latest", f"${m.get('latest', 0) / 1e6:.3f}T", f"{signal.score:+.1%}")]
-    if m.get("yearly") is not None:
-        rows.append(("In a year", "", f"{m['yearly']:+.1%}"))
-    if m.get("falling_months", 0) > 1:
-        rows.append(("Falls in a row", "", str(m["falling_months"])))
-    past = [("Months falling", "", _share(m["falling_share"]))] if m.get("falling_share") is not None else []
-    return rows + _since(_year(m.get("since")), *past)
 
 
 def _sector_table(signal: SubSignal) -> tuple[list[tuple], list[str]]:
@@ -405,32 +489,7 @@ def _sector_table(signal: SubSignal) -> tuple[list[tuple], list[str]]:
     return rows, warnings
 
 
-def _curve_rows(signal: SubSignal) -> list[tuple]:
-    m = signal.metrics
-    rows = [("10y − 3m", f"{signal.score:+.2f} pp")]
-    if m.get("policy_spread") is not None:
-        rows.append(("2y − Fed rate", f"{m['policy_spread']:+.2f} pp"))
-    if m.get("cuts_priced") is not None:
-        since = f"since {pd.Timestamp(m['cuts_since']):%-d %b}" if m.get("cuts_since") else "yes"
-        rows.append(("Cuts priced in", since if m["cuts_priced"] else "no"))
-    buckets = m.get("buckets") or []
-    if buckets:
-        policy = any(bucket.get("policy_spread") is not None for bucket in buckets)
-        rows += [(), ("3-week avg to", "10y−3m", "2y−Fed") if policy else ("3-week avg to", "10y−3m")]
-        for bucket in buckets:
-            label = f"{pd.Timestamp(bucket['thru']):%-d %b}" + ("*" if bucket.get("partial") else "")
-            cells = [label, f"{bucket['spread']:+.2f}"]
-            if policy:
-                cells.append("n/a" if bucket.get("policy_spread") is None else f"{bucket['policy_spread']:+.2f}")
-            rows.append(tuple(cells))
-        if any(bucket.get("partial") for bucket in buckets):
-            rows.append(("* still filling",))
-    past = [("Days inverted", _share(m["inverted_share"]))] if m.get("inverted_share") is not None else []
-    return rows + _since(_year(m.get("since")), *past)
-
-
-_ROWS = {"vix": _vix_rows, "credit": _credit_rows, "fed_rate": _fed_table,
-         "margin_debt": _margin_rows, "yield_curve": _curve_rows}
+_PANELS = {"vix": _vix_panel, "credit": _credit_panel, "yield_curve": _curve_panel, "margin_debt": _margin_panel}
 
 
 def _data_line(signal: SubSignal) -> str:
@@ -442,26 +501,50 @@ def _data_line(signal: SubSignal) -> str:
     return "Data " + stamp(signal.observed_at)
 
 
-def panel_caption(signal: SubSignal, view: str, sent_at: str | None = None):
-    base, _ = split_view(view)
+def _gloss(name: str) -> str:
+    return f"<i>{esc(GLOSSES[name])}</i>" if name in GLOSSES else ""
+
+
+def panel_caption(signal: SubSignal, view: str, sent_at: str | None = None, range_key: str | None = None):
+    """The panel's text; for a ranged reading its numbers describe `range_key` (by default the view's)."""
+    base, chosen = split_view(view)
+    range_key = range_key if range_key in RANGES else chosen
     if signal.name == "market_dip":
         name = base.removeprefix("index_") if base and base.startswith("index_") else "SPY"
-        title = f"<b>{esc(INDEX_NAMES.get(name, name))}</b>"
-        rows = _market_rows(signal, name)
-        if not rows:
+        head, rows, stories = _market_panel(signal, name, range_key)
+        title = f"{_ICONS['market_dip']} <b>{esc(INDEX_NAMES.get(name, name))}</b>"
+        if not head:
             return f"{title}\nNot enough history for this index."
-        lines = [title + (f" · {verdict(signal)}" if name == "SPY" else ""), _pre(_lines(rows))]
+        if name == "SPY":
+            title += f" · {_mark(signal)} {verdict(signal)}"
+        lines = [title, head, _pre(_lines(rows, notes=True)), *stories]
+        if name == "SPY":
+            lines.append(_gloss("market_dip"))
         lines.append("Data " + stamp(_index_facts(signal, name).get("observed_at") or signal.observed_at))
         if signal.metrics.get("stale"):
             lines.append("⚠️ Prices are not from the latest session")
-        return "\n".join(lines)
-    lines = [f"<b>{esc(TITLES.get(signal.name, signal.name))}</b> · {esc(verdict(signal))}"]
-    rows, warnings = _sector_table(signal) if signal.name == "sector" else (_ROWS[signal.name](signal), [])
-    if rows:
-        lines.append(_pre(_lines(rows)))
+        return "\n".join(line for line in lines if line)
+    title = f"{_ICONS.get(signal.name, '')} <b>{esc(TITLES.get(signal.name, signal.name))}</b> · {_mark(signal)} {esc(verdict(signal))}"
+    lines = [title]
+    if signal.name in _PANELS:
+        head, rows, stories = _PANELS[signal.name](signal, range_key)
+        lines.append(head)
+        if rows:
+            lines.append(_pre(_lines(rows, notes=True)))
+        lines += stories
+        warnings = []
+    elif signal.name == "sector":
+        rows, warnings = _sector_table(signal)
+        if rows:
+            lines.append(_pre(_lines(rows)))
+    else:
+        rows, warnings = _fed_table(signal), []
+        if rows:
+            lines.append(_pre(_lines(rows)))
     lines.extend(esc(warning) for warning in warnings)
+    lines.append(_gloss(signal.name))
     lines.append(_data_line(signal))
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)
 
 
 def caption_pages(text, limit=950):

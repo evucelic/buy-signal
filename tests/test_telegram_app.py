@@ -180,7 +180,7 @@ def test_a_change_in_the_count_sends_one_push(monkeypatch, sent):
     app.handle_tick(_count(1), None, now)
     assert sent == []  # the first complete read after a start is the baseline
     app.handle_tick(_count(2), None, now + timedelta(hours=1))
-    assert len(sent) == 1 and sent[0].startswith("🔢 <b>Checklist 1 → 2 of 5</b>") and "CHECKLIST  2 of 5" in sent[0]
+    assert len(sent) == 1 and sent[0].startswith("🔢 <b>Checklist 1 → 2 of 5</b>") and "Entry checklist · 2 of 5" in sent[0]
     app.handle_tick(_count(2), None, now + timedelta(hours=2))
     from buysignal.signals.buy_signal import assess
     app.handle_tick(assess([]), None, now + timedelta(hours=3))  # an incomplete read is not a change
@@ -471,7 +471,7 @@ def test_handle_message_signal(monkeypatch, make_buy_signal):
     fake = make_buy_signal([])
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
     monkeypatch.setattr(app, "market_open", lambda: True)
-    assert "CHECKLIST  0 of 5 incomplete" in _text(app.handle_message("/signal"))
+    assert "Entry checklist · 0 of 5 incomplete" in _text(app.handle_message("/signal"))
 
 
 def test_handle_message_vix_respects_market_open_flag(monkeypatch, make_subsignal):
@@ -650,7 +650,7 @@ def test_handle_message_refresh_forces_macro_and_returns_fresh_signal(monkeypatc
     monkeypatch.setattr(app, "compute_signal", lambda allow_refresh: fake)
     reply = _text(app.handle_message("/refresh"))
     assert calls == [True]
-    assert "CHECKLIST  0 of 5 incomplete" in reply
+    assert "Entry checklist · 0 of 5 incomplete" in reply
 
 
 def test_handle_message_refresh_surfaces_collector_errors(monkeypatch, make_buy_signal):
