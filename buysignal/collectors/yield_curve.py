@@ -106,18 +106,13 @@ def yield_curve_history(filepath: Path | str = YIELD_CURVE_CSV) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
-def _cache_has_policy_spread(filepath: Path) -> bool:
-    try:
-        return "policy_spread" in pd.read_csv(filepath, nrows=0).columns
-    except Exception:
-        return False
-
-
 def demands_refresh(filepath: Path | str = YIELD_CURVE_CSV) -> bool:
-    """Refresh regardless of when we last did: a cache written before the policy-spread column
-    existed can't render the signal, so the daily gate (schedule/journal.py) must not hold it.
-    """
-    return not _cache_has_policy_spread(Path(filepath))
+    """A missing or unreadable cache is refreshed now, not at the journal's next daily turn."""
+    try:
+        yield_curve_history(filepath)
+    except Exception:
+        return True
+    return False
 
 
 if __name__ == "__main__":

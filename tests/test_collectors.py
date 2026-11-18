@@ -13,13 +13,10 @@ from unittest.mock import MagicMock, patch
 import openpyxl
 import pandas as pd
 import pytest
-import requests
 
 from buysignal.collectors import chrome, fed_rate, fred, margin_debt, sectors, valuations, yield_curve
-from buysignal.collectors import market as market_mod
 from buysignal.collectors import vix as vix_mod
 from buysignal.collectors.freshness import last_modified
-from buysignal.config import MARKET_MONTHLY_LOOKBACK_DAYS, MARKET_WEEKLY_LOOKBACK_DAYS
 
 # freshness
 
@@ -120,102 +117,6 @@ def test_vix_change_pct_missing_file(tmp_path):
     assert vix_mod.vix_change_pct(tmp_path / "nope.csv") is None
 
 
-# collectors/market.py
-
-
-_IGNORED_CLOSE = 1.0
-
-
-def _spy_closes(latest, yesterday, a_week_ago, a_month_ago):
-    closes = [_IGNORED_CLOSE] * (MARKET_MONTHLY_LOOKBACK_DAYS + 1)
-    closes[-1] = latest
-    closes[-2] = yesterday
-    closes[-1 - MARKET_WEEKLY_LOOKBACK_DAYS] = a_week_ago
-    closes[-1 - MARKET_MONTHLY_LOOKBACK_DAYS] = a_month_ago
-    return closes
-
-
-def _market_cache(tmp_path, spy_closes, extra_same_day_close=None):
-    path = tmp_path / "market.csv"
-    index = pd.date_range("2026-01-01 14:00", periods=len(spy_closes), freq="D", tz="UTC")
-    closes = list(spy_closes)
-    if extra_same_day_close is not None:
-        index = index.append(pd.DatetimeIndex([index[-1] + pd.Timedelta(hours=1)]))
-        closes.append(extra_same_day_close)
-    filler = [100.0] * len(closes)
-    pd.DataFrame({"SPY": closes, "NASDAQ": filler, "DOW": filler}, index=index).to_csv(path)
-    return path
-
-
-def test_spy_closes_builder_places_each_lookback_at_its_own_offset():
-    closes = _spy_closes(latest=1.0, yesterday=2.0, a_week_ago=3.0, a_month_ago=4.0)
-    assert closes[-1] == 1.0
-    assert closes[-2] == 2.0
-    assert closes[-6] == 3.0
-    assert closes[-22] == 4.0
-
-
-def test_market_refresh_cache_first_run(tmp_path):
-    path = tmp_path / "market.csv"
-    idx = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
-    df = pd.DataFrame({"SPY": [100, 101], "NASDAQ": [200, 201], "DOW": [300, 301]}, index=idx)
-    with patch("buysignal.collectors.market._download_closes", return_value=df):
-        assert market_mod.refresh_market_cache(path) is True
-    assert path.exists()
-
-
-def test_market_daily_change_compares_the_latest_close_to_the_previous_day(tmp_path):
-    path = _market_cache(
-        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
-    )
-    assert market_mod.latest_changes(path)["SPY"]["daily"] == pytest.approx(0.10)
-
-
-def test_market_weekly_change_compares_the_latest_close_to_five_trading_days_back(tmp_path):
-    path = _market_cache(
-        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
-    )
-    assert market_mod.latest_changes(path)["SPY"]["weekly"] == pytest.approx(0.25)
-
-
-def test_market_monthly_change_compares_the_latest_close_to_twenty_one_trading_days_back(tmp_path):
-    path = _market_cache(
-        tmp_path, _spy_closes(latest=110.0, yesterday=100.0, a_week_ago=88.0, a_month_ago=50.0)
-    )
-    assert market_mod.latest_changes(path)["SPY"]["monthly"] == pytest.approx(1.20)
-
-
-def test_market_daily_change_uses_the_last_bar_of_the_day_not_the_first(tmp_path):
-    path = _market_cache(
-        tmp_path,
-        _spy_closes(latest=100.0, yesterday=100.0, a_week_ago=100.0, a_month_ago=100.0),
-        extra_same_day_close=150.0,
-    )
-    assert market_mod.latest_changes(path)["SPY"]["daily"] == pytest.approx(0.50)
-
-
-def test_market_latest_changes_missing_file(tmp_path):
-    assert market_mod.latest_changes(tmp_path / "nope.csv") is None
-
-
-def test_market_latest_changes_raises_insufficient_history_below_the_monthly_lookback(tmp_path):
-    path = _market_cache(tmp_path, [100.0] * MARKET_MONTHLY_LOOKBACK_DAYS)
-    with pytest.raises(market_mod.InsufficientHistory):
-        market_mod.latest_changes(path)
-
-
-def test_market_latest_changes_succeeds_at_exactly_the_monthly_lookback(tmp_path):
-    path = _market_cache(tmp_path, [100.0] * (MARKET_MONTHLY_LOOKBACK_DAYS + 1))
-    assert market_mod.latest_changes(path)["SPY"]["monthly"] == pytest.approx(0.0)
-
-
-def test_get_latest_market_changes_raises_when_no_cache_and_download_fails(tmp_path):
-    path = tmp_path / "market.csv"
-    with patch("buysignal.collectors.market._download_closes", return_value=None):
-        with pytest.raises(RuntimeError):
-            market_mod.get_latest_market_changes(path)
-
-
 # collectors/margin_debt.py
 
 
@@ -302,12 +203,6 @@ def test_parse_xlsx():
     assert df["debit_balances"].tolist() == [1000, 1100]
 
 
-def test_get_clearance_connection_error_hint():
-    with patch("buysignal.collectors.margin_debt.requests.get", side_effect=requests.exceptions.ConnectionError()):
-        with pytest.raises(RuntimeError, match="docker compose up -d cfbypass"):
-            margin_debt._get_clearance()
-
-
 # collectors/sectors.py
 
 
@@ -337,7 +232,7 @@ def test_industry_earnings_growth_weighted_average(monkeypatch):
 
     monkeypatch.setattr(sectors.yf, "Industry", FakeIndustry)
     monkeypatch.setattr(sectors.yf, "Ticker", FakeTicker)
-    result = sectors._industry_earnings_growth("some-key")
+    result = sectors._industry_earnings_data("some-key")["earnings_growth_estimate_1y"]
     assert result == pytest.approx(0.6 * 0.1 + 0.4 * 0.2)
 
 
@@ -357,7 +252,7 @@ def test_industry_earnings_growth_skips_missing_growth_column(monkeypatch):
 
     monkeypatch.setattr(sectors.yf, "Industry", FakeIndustry)
     monkeypatch.setattr(sectors.yf, "Ticker", FakeTicker)
-    assert sectors._industry_earnings_growth("k") == 0.3
+    assert sectors._industry_earnings_data("k")["earnings_growth_estimate_1y"] == 0.3
 
 
 def test_industry_earnings_growth_no_top_companies(monkeypatch):
@@ -366,7 +261,7 @@ def test_industry_earnings_growth_no_top_companies(monkeypatch):
             self.top_companies = None
 
     monkeypatch.setattr(sectors.yf, "Industry", FakeIndustry)
-    result = sectors._industry_earnings_growth("k")
+    result = sectors._industry_earnings_data("k")["earnings_growth_estimate_1y"]
     assert result != result  # NaN
 
 
@@ -548,12 +443,6 @@ def test_yield_curve_does_not_demand_refresh_when_the_cache_has_every_column(tmp
     assert yield_curve.demands_refresh(path) is False
 
 
-def test_yield_curve_demands_refresh_when_the_cache_predates_the_policy_column(tmp_path):
-    path = tmp_path / "yieldcurve.csv"
-    path.write_text("date,spread\n2026-08-21,0.86\n")
-    assert yield_curve.demands_refresh(path) is True
-
-
 def test_yield_curve_demands_refresh_when_the_cache_is_truncated(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     path.write_text("")
@@ -645,7 +534,6 @@ def test_update_valuations_webdriver_failure_returns_error(tmp_path):
     assert "webdriver" in error
     assert "no chrome" in error
     assert not path.exists()
-
 
 
 # collectors/chrome.py

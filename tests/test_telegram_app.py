@@ -12,7 +12,7 @@ import pytest
 
 from buysignal.portfolio.store import PortfolioStore
 from buysignal.schedule.journal import RefreshJournal
-from buysignal.telegram_bot import app, pushes
+from buysignal.telegram_bot import app
 from buysignal.telegram_bot.messages import Report
 
 def _text(reply):
@@ -558,11 +558,6 @@ def test_whattobuy_with_an_amount_plans_that_many_euros_without_the_cash_target(
 
 def test_whattobuy_asks_for_a_target_first(account):
     assert "Set a target mix first" in app.handle_message("/whattobuy")
-
-
-@pytest.mark.parametrize("retired", ["/buy 10 VUAA @ 100", "bought 10 VUAA @ 100", "/cash 500", "/entries", "/trades", "/holdings"])
-def test_hand_entered_purchase_commands_are_gone(retired):
-    assert app.handle_message(retired) == "Unrecognized command, try /help."
 
 
 # /refresh

@@ -6,11 +6,10 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Lock
-from time import monotonic, sleep, time as wall_time
+from time import sleep, time as wall_time
 
-import requests
 
-from buysignal.config import CF_BYPASS_URL, REFRESH_JOURNAL_JSON, TICK_INTERVAL_SEC
+from buysignal.config import REFRESH_JOURNAL_JSON, TICK_INTERVAL_SEC
 from buysignal.schedule.journal import RefreshJournal
 from buysignal.schedule.market_hours import (
     AFTER_HOURS,
@@ -26,43 +25,17 @@ from buysignal.signals.buy_signal import REQUIRED_SIGNALS, compute_signal
 log = logging.getLogger(__name__)
 
 
-def _cf_bypass_ready(timeout: float = 30.0) -> bool:
-    """Poll the (compose-managed, always-running) bypass service until it accepts connections."""
-    deadline = monotonic() + timeout
-    while monotonic() < deadline:
-        try:
-            requests.get(CF_BYPASS_URL, timeout=2)
-            return True
-        except requests.exceptions.ConnectionError:
-            sleep(1)
-    log.warning("cfbypass never became reachable at %s", CF_BYPASS_URL)
-    return False
-
-
-def _no_precondition() -> str | None:
-    return None
-
-
-def _cf_bypass_precondition() -> str | None:
-    if _cf_bypass_ready():
-        return None
-    return f"cfbypass service unreachable at {CF_BYPASS_URL}"
-
-
 def _never() -> bool:
     return False
 
 
 @dataclass(frozen=True)
 class MacroCollector:
-    """One refreshable macro cache: its refresh, any precondition to refreshing, and any domain
-    rule that demands a refresh sooner than the journal's once-a-day schedule would.
-    """
+    """A refreshable macro cache, with an optional rule that asks for a refresh before its daily turn."""
 
     name: str
     update: Callable[[], str | None]
     demands_refresh: Callable[[], bool] = field(default=_never)
-    precondition: Callable[[], str | None] = field(default=_no_precondition)
 
 
 def _macro_collectors() -> list[MacroCollector]:
@@ -96,7 +69,6 @@ def macro_journal() -> RefreshJournal:
     with _journal_lock:
         if _journal is None:
             _journal = RefreshJournal(REFRESH_JOURNAL_JSON)
-            _journal.retain(collector.name for collector in _macro_collectors())
         return _journal
 
 
@@ -130,7 +102,7 @@ def _refresh_macro(
         if not (force or journal.due(collector, now)):
             continue
         try:
-            error = collector.precondition() or collector.update()
+            error = collector.update()
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
         journal.record(collector.name, ok=error is None, error=error, now=now)

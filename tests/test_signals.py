@@ -354,7 +354,7 @@ def test_policy_spread_silent_when_positive():
     assert s.metrics["cuts_priced"] is False
 
 
-def test_policy_spread_omitted_when_cache_predates_the_column():
+def test_policy_spread_omitted_when_its_legs_were_never_fetched():
     s = _curve([0.5, 0.5])
     assert s.metrics["cuts_priced"] is None
     assert all(b["policy_spread"] is None for b in s.metrics["buckets"])

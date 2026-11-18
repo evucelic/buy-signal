@@ -76,11 +76,6 @@ def _industry_earnings_data(industry_key: str) -> dict:
     return result
 
 
-def _industry_earnings_growth(industry_key: str) -> float:
-    """The growth estimate alone, from _industry_earnings_data()."""
-    return _industry_earnings_data(industry_key)["earnings_growth_estimate_1y"]
-
-
 def update_sector_data(filepath: Path = SECTORS_CSV) -> str | None:
     """Refresh the cached top industries; the error text, or None."""
     filepath = Path(filepath)
@@ -126,10 +121,12 @@ def sector_performance(filepath: Path = SECTORS_CSV) -> pd.DataFrame:
 
 
 def demands_refresh(filepath: Path | str = SECTORS_CSV) -> bool:
+    """A missing, unreadable or expired cache is refreshed now, not at the journal's next daily turn."""
     try:
-        return "estimate_coverage" not in sector_performance(filepath).columns
+        sector_performance(filepath)
     except (OSError, ValueError):
         return True
+    return False
 
 
 

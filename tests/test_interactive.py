@@ -59,26 +59,6 @@ def test_snapshot_survives_restart_and_keeps_original_values(saved, wire):
     assert reloaded.chart_bytes(token, 'market_dip:SPY') == store.chart_bytes(token, 'market_dip:SPY')
 
 
-def test_legacy_report_prepares_once_without_downloading(tmp_path, wire, monkeypatch):
-    store = SnapshotStore(tmp_path)
-    result = sample_assessment()
-    signals = []
-    for signal in result.subsignals:
-        values = {k: v for k, v in vars(signal).items() if k != 'history'}
-        frame = signal.history
-        values['history'] = None if frame is None else frame.tail(460).to_json(orient='split', date_format='iso')
-        values['datetime_index'] = frame is not None and isinstance(frame.index, pd.DatetimeIndex)
-        signals.append(values)
-    import time
-    token = 'abcdef123456'
-    store._write(token, {'created': time.time(), 'sent_at': NOW.isoformat(), 'signals': signals, 'panel': None})
-    monkeypatch.setattr(app, 'compute_signal', lambda **kw: pytest.fail('Legacy navigation must not collect'))
-    interactive.handle_callback(query(token, 'vix'), store)
-    monkeypatch.setattr(store, 'signals', lambda *a: pytest.fail('Legacy history must only be decoded once'))
-    interactive.handle_callback(query(token, 'fed_rate'), store)
-    assert len(wire[0]) == 2
-
-
 def test_switching_index_uses_selected_series_and_buttons(saved, wire):
     store, token, _ = saved
     interactive.handle_callback(query(token, 'index_NASDAQ'), store)
@@ -184,17 +164,6 @@ def test_ranges_follow_the_available_history():
     monthly = SubSignal('margin_debt', 0, 'leveraging', '', history=pd.DataFrame({'month': pd.date_range('1997-01-01', periods=357, freq='MS'), 'debit_balances': 1.}))
     assert available_ranges(monthly) == ('1y', '5y', 'max')
     assert available_ranges(SubSignal('fed_rate', 0, 'flat', '', history=pd.DataFrame({'a': [1]}))) == ()
-
-
-def test_buttons_from_reports_sent_before_the_redesign_still_open(tmp_path, wire):
-    import time
-    store = SnapshotStore(tmp_path)
-    token = 'abcdef123456'
-    store._write(token, {'created': time.time(), 'sent_at': NOW.isoformat(), 'panel': None})
-    store._write_views(token, {'created': time.time(), 'panel': None, 'file_ids': {}, 'views': {
-        'fed_changes': {'caption': 'Old probability changes', 'keyboard': {'inline_keyboard': []}, 'chart_key': None}}})
-    interactive.handle_callback(query(token, 'fed_changes'), store)
-    assert wire[0][-1][0] == 'Old probability changes'
 
 
 def test_background_ranges_are_announced_until_drawn_and_never_plotted_on_click(tmp_path, wire, monkeypatch):
@@ -380,7 +349,6 @@ def test_callback_uses_prepared_view_without_rendering_or_history_parsing(saved,
     def fail(*args):
         raise AssertionError('Buttons must not render or parse histories')
     monkeypatch.setattr(prepared.signal_charts, 'render_signal_chart', fail)
-    monkeypatch.setattr(store, 'signals', fail)
     monkeypatch.setattr(store, 'load', fail)
     interactive.handle_callback(query(token, 'vix'), store)
     assert len(wire[0]) == 1 and wire[1] == [None]

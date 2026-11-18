@@ -1,10 +1,6 @@
-"""The owner's account as last read from Interactive Brokers, plus their own settings.
+"""The account as last read from IBKR, the owner's settings and the quote cache, in one SQLite file.
 
-Positions and cash are replaced as a whole by each validated statement; trades, daily net asset
-values and deposits accumulate, so history outlives IBKR's 365-day statement limit. The bot only
-reads the account: nothing here can reach the broker. Settings (target mix, fee schedule) and the
-quote cache live in the same SQLite file. The retired hand-entered `purchases` table, if an
-older version created one, is left as it was.
+Positions and cash are replaced by each statement; trades, daily values and deposits accumulate.
 """
 from __future__ import annotations
 

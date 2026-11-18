@@ -56,16 +56,6 @@ class RefreshJournal:
         self._lock = threading.Lock()  # /refresh runs on the Telegram thread, ticks on the main one
         self._entries = self._load()
 
-    def retain(self, names) -> None:
-        """Forget collectors that no longer run, so /status and the failure pushes never
-        name them again; a journal written by an older version may still hold them."""
-        with self._lock:
-            gone = set(self._entries) - set(names)
-            if gone:
-                for name in gone:
-                    del self._entries[name]
-                self._save()
-
     def due(self, collector: Refreshable, now: datetime) -> bool:
         """Whether `collector` should be attempted now."""
         with self._lock:

@@ -14,7 +14,6 @@ VIX_HISTORY_CSV = DATA_DIR / "vixhistory.csv"  # long daily closes, context only
 FEDWATCH_CSV = DATA_DIR / "fedwatch.csv"
 MARGIN_DEBT_CSV = DATA_DIR / "margindebt.csv"
 SECTORS_CSV = DATA_DIR / "sectors.csv"
-MARKET_CSV = DATA_DIR / "market.csv"
 MARKET_DAILY_CSV = DATA_DIR / "marketdaily.csv"
 CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread (credit.csv is a different series)
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
@@ -54,28 +53,14 @@ SCRAPE_BACKOFF_SEC = 5.0        # base for exponential backoff between scrape re
 FEDWATCH_PAGE_LOAD_TIMEOUT_SEC = 120
 
 # FINRA margin debt (#3)
-MARGIN_STATS_URL = "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics"
 MARGIN_XLSX_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx"
 MARGIN_SHEET_NAME = "Customer Margin Balances"
 MARGIN_DELEVERAGE_MONTHS = 1    # min consecutive months of decrease = deleveraging
 MARGIN_REFRESH_WINDOW_DAY = 21  # FINRA's stated "third week"; past this, expect a newer release
-# finra.org sits behind Cloudflare Turnstile; the cfbypass compose service solves it and hands
-# back clearance cookies (collectors/margin_debt.py). CF_BYPASS_HOST is the compose service
-# name in production (docker-compose.yml sets it), localhost for local/bare-metal dev.
-CF_BYPASS_HOST = os.environ.get("CF_BYPASS_HOST", "localhost")
-CF_BYPASS_PORT = 8000
-CF_BYPASS_URL = f"http://{CF_BYPASS_HOST}:{CF_BYPASS_PORT}"
-# cfbypass has taken 90-120s+ to solve Turnstile in production.
-CF_BYPASS_TIMEOUT_SEC = 180
 
-# Market index % change (#6): daily/weekly/monthly, dip watch
+# Indexes behind the dip and the Markets table
 INDEX_TICKERS = {"SPY": "SPY", "NASDAQ": "^IXIC", "DOW": "^DJI"}
 OPTIONAL_INDEX_TICKERS = {"EURO50": "^STOXX50E"}
-MARKET_PRIMARY_INDEX = "SPY"
-MARKET_INTERVAL = "1h"              # same cadence as VIX, for live intraday daily-change tracking
-MARKET_LOOKBACK_DAYS = 90           # bar history fetched (buffer over monthly lookback)
-MARKET_WEEKLY_LOOKBACK_DAYS = 5     # trading days
-MARKET_MONTHLY_LOOKBACK_DAYS = 21   # trading days
 MARKET_DIP_THRESHOLD = -0.05        # 5% below the recent closing high qualifies, even on rebound days
 MARKET_DRAWDOWN_SESSIONS = 63       # prior completed sessions; current price is compared with their closing high
 MARKET_TREND_SESSIONS = 200

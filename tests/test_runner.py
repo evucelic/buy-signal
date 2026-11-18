@@ -112,19 +112,15 @@ def test_tick_regular_refreshes_whatever_the_journal_says_is_due_even_if_vix_not
 class _FakeCollector:
     """Stands in for one entry of runner's registry: a name, an update, and its outcome."""
 
-    def __init__(self, name, demands=False, error=None, blocked_by=None, raises=None):
+    def __init__(self, name, demands=False, error=None, raises=None):
         self.name = name
         self.demands = demands
         self.error = error
-        self.blocked_by = blocked_by
         self.raises = raises
         self.refreshed = False
 
     def demands_refresh(self):
         return self.demands
-
-    def precondition(self):
-        return self.blocked_by
 
     def update(self):
         self.refreshed = True
@@ -193,25 +189,6 @@ def test_refresh_macro_reports_nothing_when_every_collector_succeeds(journal):
     assert failed == []
 
 
-def test_refresh_macro_skips_the_update_of_a_collector_whose_precondition_fails(journal):
-    blocked = _FakeCollector("margin_debt", blocked_by="cfbypass service unreachable")
-    collectors = [_FakeCollector("fed_rate"), blocked]
-
-    refreshed, failed = _refresh(collectors, journal)
-
-    assert refreshed == ["fed_rate"]
-    assert failed == [("margin_debt", "cfbypass service unreachable")]
-
-
-def test_refresh_macro_does_not_check_the_precondition_of_a_collector_that_is_not_due(journal):
-    blocked = _FakeCollector("margin_debt", blocked_by="cfbypass service unreachable")
-    journal.record("margin_debt", ok=True, error=None, now=NOW)
-
-    _, failed = _refresh([blocked], journal, now=NOW + timedelta(hours=2))
-
-    assert failed == []
-
-
 def test_refresh_macro_keeps_going_when_a_collector_raises(journal):
     """One collector raising must not cost the others their refresh."""
     collectors = [
@@ -251,19 +228,6 @@ def test_refresh_macro_does_not_record_a_collector_it_skipped(journal):
     _refresh([_FakeCollector("fed_rate")], journal, now=NOW + timedelta(hours=2))
 
     assert [s.name for s in journal.statuses()] == ["sector", "fed_rate"]
-
-
-def test_cf_bypass_precondition_passes_when_the_service_is_reachable():
-    with patch("buysignal.schedule.runner._cf_bypass_ready", return_value=True):
-        assert runner._cf_bypass_precondition() is None
-
-
-def test_cf_bypass_precondition_reports_the_url_when_the_service_is_unreachable():
-    with patch("buysignal.schedule.runner._cf_bypass_ready", return_value=False):
-        error = runner._cf_bypass_precondition()
-
-    assert "cfbypass" in error
-    assert runner.CF_BYPASS_URL in error
 
 
 def test_macro_collectors_covers_every_macro_cache_cheapest_first():
@@ -318,18 +282,6 @@ def test_run_forever_keyboard_interrupt_from_sleep_stops_cleanly(caplog):
     ):
         runner.run_forever(interval_sec=0)
     assert "Runner stopped." in caplog.text
-
-
-def test_cf_bypass_ready_true_when_reachable():
-    with patch("buysignal.schedule.runner.requests.get", return_value=None):
-        assert runner._cf_bypass_ready(timeout=1.0) is True
-
-
-def test_cf_bypass_ready_false_when_unreachable():
-    import requests
-
-    with patch("buysignal.schedule.runner.requests.get", side_effect=requests.exceptions.ConnectionError()):
-        assert runner._cf_bypass_ready(timeout=0.1) is False
 
 
 # tick(): CLOSED-but-vix-active behavior

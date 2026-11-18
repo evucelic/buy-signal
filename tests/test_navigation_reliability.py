@@ -53,7 +53,7 @@ def test_charts_upload_once_then_reuse_telegram_ids_across_restart(report,wire,m
     interactive.handle_callback(query(token,'vix'),store)
     interactive.handle_callback(query(token,'fed_rate'),store)
     restarted=SnapshotStore(store.directory)
-    with patch.object(prepared.signal_charts,'render_signal_chart',side_effect=AssertionError('No render on click')), patch.object(restarted,'signals',side_effect=AssertionError('No pandas on click')):
+    with patch.object(prepared.signal_charts,'render_signal_chart',side_effect=AssertionError('No render on click')):
         interactive.handle_callback(query(token,'vix'),restarted)
     assert len(posted)==3 and sum(bool(kw.get('files')) for _,kw in posted)==2
     assert posted[-1][1]['json']['media']['media'].startswith('file:png:vix')

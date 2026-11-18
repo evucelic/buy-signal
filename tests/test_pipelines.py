@@ -58,7 +58,7 @@ def _score_against(path):
         return yield_curve_signal.score()
 
 
-def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
+def test_a_curve_without_the_policy_legs_renders_without_them(tmp_path):
     path = tmp_path / "yieldcurve.csv"
     _write_pre_schema_cache(path)
 
@@ -66,13 +66,6 @@ def test_a_cache_predating_the_policy_column_renders_without_it(tmp_path):
 
     assert "10-year minus 3-month" in caption
     assert "2y − Fed rate" not in caption and "2y−Fed" not in caption
-
-
-def test_a_cache_predating_the_policy_column_demands_a_refresh_however_recent_it_is(tmp_path):
-    path = tmp_path / "yieldcurve.csv"
-    _write_pre_schema_cache(path)
-
-    assert yield_curve.demands_refresh(path) is True
 
 
 def test_refreshing_a_pre_schema_cache_puts_the_policy_column_in_the_report(tmp_path):

@@ -466,8 +466,7 @@ def handle_message(text: str) -> str | Report | None:
         return _signal_report(compute_signal(allow_refresh=open_now))
     if text == "/vix":
         return _single_signal(lambda: vix_signal.score(allow_refresh=open_now))
-    if text in ("/dip", "/trend"):
-        # /trend is an alias: trend sits in each index's panel.
+    if text == "/dip":
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])

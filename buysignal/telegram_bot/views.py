@@ -36,8 +36,6 @@ GLOSSES = {
 # The /portfolio tabs share the panel machinery; their names are listed here so buttons validate.
 PORTFOLIO_VIEWS = {"pf_overview", "pf_returns", "pf_mix", "pf_risk", "pf_entries", "pf_fees", "pf_cash", "pf_pe"}
 VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES} | PORTFOLIO_VIEWS
-# Retired view names that old reports' buttons still send.
-LEGACY_VIEWS = {"market_info", "eps_info", "fed_changes"}
 _SELECTED = "● "
 _HISTORY_ROWS = 6  # recent observations listed in a monthly panel
 
@@ -75,7 +73,7 @@ def view_name(base: str, range_key: str = DEFAULT_RANGE) -> str:
 
 def is_view(requested: str) -> bool:
     base, _, chosen = requested.partition("@")
-    return (base in VIEWS and (not chosen or chosen in RANGES)) or requested in LEGACY_VIEWS
+    return base in VIEWS and (not chosen or chosen in RANGES)
 
 
 def section_of(base: str) -> str:
@@ -145,11 +143,7 @@ def _fed_rows(signal: SubSignal):
 
 
 def _index_facts(signal: SubSignal, name: str = "SPY") -> dict:
-    facts = signal.metrics.get("index_facts", {}).get(name)
-    if facts:
-        return facts
-    # Signals built before per-index facts existed describe SPY at the top level.
-    return signal.metrics if name == "SPY" else {}
+    return signal.metrics.get("index_facts", {}).get(name) or {}
 
 
 def verdict(signal: SubSignal) -> str:

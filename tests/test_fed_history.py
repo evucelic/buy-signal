@@ -52,8 +52,8 @@ def test_new_meeting_does_not_inherit_another_meetings_change():
     assert "New meeting" in result.comparison_status.iloc[0]
 
 
-def test_legacy_cache_without_reference_has_no_fabricated_change():
-    previous = snapshot().drop(columns=["reference_lower_bps", "reference_upper_bps"])
+def test_a_snapshot_without_a_reference_range_has_no_fabricated_change():
+    previous = snapshot().assign(reference_lower_bps=None, reference_upper_bps=None)
     result = fed_rate._add_comparisons(snapshot(), previous)
     assert result.delta_hike_pp.isna().all()
 

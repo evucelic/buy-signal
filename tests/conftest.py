@@ -9,6 +9,13 @@ from buysignal.signals.buy_signal import assess
 
 
 @pytest.fixture(autouse=True)
+def no_broker(monkeypatch):
+    """The bot loads a local .env at import; a real IBKR token there must not reach any test."""
+    for name in ("IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID", "IBKR_FLEX_TOKEN_EXPIRES"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def checklist_log_path(monkeypatch, tmp_path):
     """The checklist log is append-only real data: no test may write to the one in data/."""
     from buysignal.analysis import checklist_log

@@ -1,4 +1,4 @@
-"""Collect FINRA monthly balances from its official workbook; optional clearance fallback."""
+"""Collect FINRA monthly balances from its official workbook."""
 
 from __future__ import annotations
 
@@ -15,13 +15,10 @@ import requests
 from buysignal.collectors.cache import write_csv
 
 from buysignal.config import (
-    CF_BYPASS_TIMEOUT_SEC,
-    CF_BYPASS_URL,
     FETCH_JITTER_SEC,
     MARGIN_DEBT_CSV,
     MARGIN_REFRESH_WINDOW_DAY,
     MARGIN_SHEET_NAME,
-    MARGIN_STATS_URL,
     MARGIN_XLSX_URL,
     SCRAPE_BACKOFF_SEC,
     SCRAPE_RETRIES,
@@ -37,40 +34,13 @@ _COLUMN_MAP = {
 }
 
 
-def _get_clearance() -> tuple[dict, str]:
-    """Fetch Cloudflare clearance cookies + UA for MARGIN_STATS_URL from the local bypass service."""
-    try:
-        resp = requests.get(f"{CF_BYPASS_URL}/cookies", params={"url": MARGIN_STATS_URL}, timeout=CF_BYPASS_TIMEOUT_SEC)
-    except requests.exceptions.ConnectionError as exc:
-        raise RuntimeError(
-            f"Cloudflare bypass service not reachable at {CF_BYPASS_URL}. "
-            "Start it with: docker compose up -d cfbypass"
-        ) from exc
-    resp.raise_for_status()
-    data = resp.json()
-    return data["cookies"], data["user_agent"]
-
-
 def _fetch_xlsx_bytes() -> bytes:
-    """Use FINRA's official workbook directly; browser clearance is a fallback."""
-    try:
-        response = requests.get(MARGIN_XLSX_URL, timeout=30, headers={"User-Agent": "BuySignal/1.0"})
-        response.raise_for_status()
-        if not response.content.startswith(b"PK"):
-            raise ValueError("FINRA returned non-workbook content")
-        return response.content
-    except (requests.exceptions.RequestException, ValueError) as exc:
-        log.info("Direct FINRA workbook unavailable (%s); trying clearance service", type(exc).__name__)
-    cookies, user_agent = _get_clearance()
-
-    session = requests.Session()
-    session.headers.update({"User-Agent": user_agent})
-    for name, value in cookies.items():
-        session.cookies.set(name, value, domain=".finra.org")
-
-    resp = session.get(MARGIN_XLSX_URL, timeout=60)
-    resp.raise_for_status()
-    return resp.content
+    """FINRA's official workbook (an xlsx is a zip, so it starts with "PK")."""
+    response = requests.get(MARGIN_XLSX_URL, timeout=30, headers={"User-Agent": "BuySignal/1.0"})
+    response.raise_for_status()
+    if not response.content.startswith(b"PK"):
+        raise ValueError("FINRA returned non-workbook content")
+    return response.content
 
 
 def _parse_xlsx(raw: bytes) -> pd.DataFrame:

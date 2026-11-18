@@ -97,13 +97,12 @@ def _validate_snapshot(snapshot: pd.DataFrame, today: pd.Timestamp) -> pd.DataFr
         raise ValueError("FedWatch horizon dates are out of order; refresh required")
     for row in snapshot.itertuples():
         _validate_probabilities((float(row.prob_ease), float(row.prob_no_change), float(row.prob_hike)))
-    if {"reference_lower_bps", "reference_upper_bps"}.issubset(snapshot.columns):
-        references = snapshot[["reference_lower_bps", "reference_upper_bps"]]
-        if references.notna().any().any():
-            if references.isna().any().any() or len(references.drop_duplicates()) != 1:
-                raise ValueError("FedWatch reference range changed or was incomplete during collection")
-            if (references.reference_lower_bps >= references.reference_upper_bps).any():
-                raise ValueError("Invalid FedWatch reference target range")
+    references = snapshot[["reference_lower_bps", "reference_upper_bps"]]
+    if references.notna().any().any():
+        if references.isna().any().any() or len(references.drop_duplicates()) != 1:
+            raise ValueError("FedWatch reference range changed or was incomplete during collection")
+        if (references.reference_lower_bps >= references.reference_upper_bps).any():
+            raise ValueError("Invalid FedWatch reference target range")
     return snapshot
 
 
