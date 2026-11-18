@@ -36,7 +36,7 @@ Every NYSE session, the end-of-day report appends one line to `data/checklistlog
 | `/vix` `/fedrate` `/margin` `/dip` `/sector` `/credit` `/curve` | one reading's panel |
 | `/refresh`, `/status` | fresh data; bot, collector and IBKR health |
 
-The `/portfolio` tabs (Value and Returns follow the 3M / 1Y / All buttons):
+The `/portfolio` tabs (Value and Returns follow the 3M / 1Y / All buttons and open on All):
 
 | Tab | Chart | Numbers |
 |---|---|---|
@@ -48,6 +48,8 @@ The `/portfolio` tabs (Value and Returns follow the 3M / 1Y / All buttons):
 | Cash | deposits over time, running total and per month; cash left uninvested | totals, last 12 months, median days to invest, cash per currency, recent deposits |
 | Tax | tax a full sale would cost on each coming date at today's prices; gain per purchase | holdings, cost, gain taxed and tax-free, tax, what you keep |
 | Valuation | Shiller's CAPE since 1881; every month's excess CAPE yield against the next ten years' real return | CAPE, earnings yield, real bond yield, excess yield, what followed similar months, each ETF's forward earnings yield over the 10-year TIPS |
+
+Columns: *Fall* is the deepest fall from a previous high, *Vol* the yearly volatility of daily returns. *Swings* is a holding's share of the portfolio's variance; *effective bets* the number of equal, unrelated holdings with the same spread. *vs avg* is the price paid against that month's average close. *Excess yield* is 1/CAPE minus the real 10-year yield; *Low* and *High* are the 10th and 90th percentiles; *Over* is a forward earnings yield minus the 10-year TIPS yield. The account's history starts the day before its first deposit.
 
 Benchmarks: the S&P 500 (`SXR8.DE`, iShares Core S&P 500 Acc) and the FTSE All-World (`VWCE.DE`, Vanguard All-World Acc), both accumulating and quoted in euros on Xetra, and the target mix: each deposit split by the `/target` weights into the held listings, cash kept as cash, no rebalancing. Every benchmark starts with the range's opening value and receives each later deposit on the day IBKR booked it, so it answers "what if every euro had gone there instead". The target mix is the policy benchmark of Brinson, Hood and Beebower (1986); the All-World index is the usual yardstick for a global equity investor. A sector index such as the Nasdaq-100 is left out: it does not match the strategy.
 
