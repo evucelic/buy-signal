@@ -9,13 +9,14 @@ from datetime import date, datetime, timezone
 
 from buysignal import config
 from buysignal.resources import force_refreshes
+from buysignal.broker import sync as broker_sync
 from buysignal.portfolio import plan as portfolio_plan, commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
-from buysignal.portfolio.instruments import resolve as resolve_instrument
-from buysignal.portfolio.journal import PortfolioStore
+from buysignal.portfolio.instruments import CASH, resolve as resolve_instrument
+from buysignal.portfolio.store import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import chart, checklist_log, opportunity
+from buysignal.analysis import checklist_log
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
@@ -300,70 +301,53 @@ def _status_message() -> str:
             read=_state.last_result.label if _state.last_result is not None else None,
         )
     statuses = runner.macro_journal().statuses()
-    return render.status_message(status, statuses, datetime.now(timezone.utc))
+    text = render.status_message(status, statuses, datetime.now(timezone.utc))
+    if broker_sync.configured():
+        statement = _get_portfolio_store().account().get('statement_to', 'none yet')
+        left = broker_sync.token_days_left(_utc_now().date())
+        text += f"\n🏦 IBKR statement {render.esc(statement)}" + ("" if left is None else f" · token {left} days left")
+    return text
 
 
-def _whattobuy() -> str:
+_NOT_CONNECTED = ("🔌 <b>IBKR not connected</b>\nSet IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in .env "
+                  "(README → Interactive Brokers). Meanwhile: /whattobuy 500 plans 500 € against your target.")
+
+
+def _read_account(store) -> list[str]:
+    """Read IBKR now if the stored statement is behind; the failure, if any, as a note."""
+    if not broker_sync.configured() or not broker_sync.demands_refresh(store):
+        return []
     with buy_signal.SIGNAL_LOCK:
-        failed = runner.refresh_macro(only=("valuations",))
-        opp = opportunity.analyze()
-    opp.notes.extend(
-        render.stale_collector_notes("valuations", failed, runner.macro_journal().statuses())
-    )
-    store = _get_portfolio_store()
-    try:
-        # Each ETF's own distance below its high; a failed listing is simply left blank.
-        dips = personal_quotes.dips(store)
-    except Exception:
-        log.exception('ETF dip context unavailable')
-        dips = {}
-    plan, notes = None, []
-    try:
-        holdings = store.holdings()
-        if holdings:
-            rate, fx_date, fx_stale = personal_quotes.eurusd(store)
-            plan = portfolio_plan.allocation(holdings, personal_quotes.all_quotes(store), rate, store.targets())
-            if plan is None:
-                notes.append("positions cannot be valued: a price or the EUR/USD rate is missing")
-            else:
-                plan["fx_date"] = fx_date
-                if fx_stale:
-                    notes.append("EUR/USD refresh failed; using the last rate")
-                if plan["destination"] is None:
-                    notes.append("no mix set: /target VUAA 60 VWCG 20 AVWS 20")
-    except Exception:
-        log.exception('Allocation unavailable')
-        notes.append("allocation unavailable")
-    try:
-        transport.send_photo(chart.render_chart(opp, dips=dips), "Forward P/E by market")
-    except Exception as exc:
-        opp.notes.append(f"chart rendering failed ({type(exc).__name__}: {exc})")
-
-    real = None
-    try:
-        rate, observed, old = personal_quotes.real_yield(store)
-        if rate is not None:
-            real = (rate, observed)
-        if old:
-            notes.append("real yield refresh failed" + ("; using the last value" if rate is not None else ""))
-    except Exception:
-        log.exception('Real yield unavailable')
-    reply = render.opportunity_message(opp, dips, plan, notes, real)
-    return f"{render.refresh_failures(failed)}\n\n{reply}" if failed else reply
+        failed = runner.refresh_macro(force=True, only=(broker_sync.NAME,))
+    return [f"IBKR read failed ({error.splitlines()[0][:120]}); showing the statement through "
+            f"{store.account().get('statement_to', 'none')}" for _, error in failed]
 
 
-def _cash(text: str) -> str:
-    match = re.fullmatch(r'/cash\s+(\d+(?:\.\d+)?)(?:\s*(?:eur|€))?', text.strip(), re.I)
+def _whattobuy(text: str) -> str:
+    match = re.fullmatch(r'/whattobuy(?:\s+(\d+(?:\.\d+)?)\s*(?:eur|€)?)?', text.strip(), re.I)
     if not match:
-        return 'Use: /cash 500 (euros you want to invest now)'
+        return 'Use: /whattobuy for the cash at IBKR, or /whattobuy 500 for 500 €'
     store = _get_portfolio_store()
     targets = store.targets()
     if not targets:
-        return 'Set your mix first: /target VUAA 60 VWCG 20 AVWS 20'
-    rate, _, fx_stale = personal_quotes.eurusd(store)
+        return '🎯 Set a target mix first: /target ' + 'VUAA 60 VWCG 20 AVWS 15 CASH 5'
+    amount = float(match.group(1)) if match.group(1) else None
+    if amount is None and not broker_sync.configured() and not store.cash():
+        return _NOT_CONNECTED
+    notes = _read_account(store) if amount is None else []
+    quotes = personal_quotes.all_quotes(store)
+    eurusd, _, fx_stale = personal_quotes.eurusd(store)
+    if fx_stale:
+        notes.append('EUR/USD refresh failed; using the last rate')
     fees = store.fees()
-    result = portfolio_plan.purchase_plan(float(match.group(1)), store.holdings(), personal_quotes.all_quotes(store), rate,
-                                          targets, fees, fees.get('FX'))
+    if amount is None:
+        cash, source = store.cash(), f"IBKR cash {store.account().get('statement_to', '')}".strip()
+    else:
+        # A typed amount is new money: the cash target applies to the account, not to it.
+        cash, source = {"EUR": amount}, "for"
+        targets = {s: w for s, w in targets.items() if s != CASH}
+    result = portfolio_plan.purchase_plan(cash, store.holdings(), portfolio_plan.prices(quotes, store.positions()),
+                                          eurusd, targets, fees, fees.get('FX'))
     if result is None:
         return '⚠️ A price or the EUR/USD rate is missing; no plan.'
     overlaps = {}
@@ -371,20 +355,9 @@ def _cash(text: str) -> str:
         now = _utc_now()
         for order in result['chosen']['orders']:
             instrument = resolve_instrument(order['symbol'])
-            if instrument.us_hours:
+            if instrument.us_hours and instrument.exchange:
                 overlaps[instrument.symbol] = personal_sessions.us_overlap(now, instrument.exchange)
-    reply = personal_presentation.cash_message(result, overlaps)
-    notes = []
-    if fx_stale:
-        notes.append('⚠️ EUR/USD refresh failed; using the last rate')
-    return '\n'.join([reply, *notes])
-
-
-def _entries() -> str:
-    store = _get_portfolio_store()
-    purchases = store.purchases(limit=1000)
-    closes, stale = personal_quotes.daily_closes(store) if purchases else ({}, [])
-    return personal_presentation.entries_message(portfolio_plan.scorecard(purchases, closes), stale)
+    return personal_presentation.orders_message(result, source=source, overlaps=overlaps, notes=notes)
 
 
 def _refresh() -> Report:
@@ -397,13 +370,8 @@ def _refresh() -> Report:
 
 def handle_message(text: str) -> str | Report | None:
     text = text.strip()
-    if text.lower().startswith(('/buy', 'bought ', 'buy ', '/voidtrade', '/trades', '/holdings', '/target', '/fees')):
-        reply = portfolio_commands.handle(text, _get_portfolio_store(), source_key=transport.current_message_key())
-        if reply is not None:
-            return reply
-    if text == '/portfolio':
-        store = _get_portfolio_store()
-        return personal_presentation.portfolio_message(personal_quotes.all_quotes(store), store.holdings())
+    if text.lower().startswith(('/target', '/fees')):
+        return portfolio_commands.handle(text, _get_portfolio_store())
     # Outside market hours prefer the cache: the data cannot have moved.
     open_now = market_open()
     if text == "/signal":
@@ -415,12 +383,8 @@ def handle_message(text: str) -> str | Report | None:
         return _single_signal(lambda: market_signal.score(allow_refresh=open_now))
     if text in _SIGNAL_COMMANDS:
         return _single_signal(_SIGNAL_COMMANDS[text])
-    if text == "/whattobuy":
-        return _whattobuy()
-    if text.lower().startswith("/cash"):
-        return _cash(text)
-    if text == "/entries":
-        return _entries()
+    if text.lower().startswith("/whattobuy"):
+        return _whattobuy(text)
     if text == "/refresh":
         return _refresh()
     if text == "/status":

@@ -6,10 +6,11 @@ command ran, and what reached the transport.
 """
 
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-from buysignal.portfolio.journal import PortfolioStore
+from buysignal.portfolio.store import PortfolioStore
 from buysignal.schedule.journal import RefreshJournal
 from buysignal.telegram_bot import app, pushes
 from buysignal.telegram_bot.messages import Report
@@ -442,7 +443,7 @@ def test_handle_tick_refresh_failures_do_not_corrupt_the_daily_report(
 
 def test_handle_message_help_and_start_identical():
     assert app.handle_message("/help") == app.handle_message("/start")
-    assert "Commands:" in app.handle_message("/help")
+    assert all(command in app.handle_message("/help") for command in ("/signal", "/whattobuy", "/target"))
 
 
 def test_handle_message_unrecognized():
@@ -536,108 +537,54 @@ def test_single_signal_handles_exception():
     assert "ValueError" in reply
 
 
-# --- /whattobuy ---------------------------------------------------------
+# --- /whattobuy, /target ---------------------------------------------------------------
+
+
+FLEX = (Path(__file__).parent / "fixtures" / "flex_statement.xml").read_bytes()
 
 
 @pytest.fixture
-def whattobuy_env(monkeypatch, make_opportunity, tmp_path):
-    """Offline /whattobuy: collectors fresh, analyzer canned, photo captured, an empty journal."""
-    monkeypatch.setattr(app, "_portfolio_store", PortfolioStore(tmp_path / "empty.sqlite3"))
-    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
-    monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
-    photos = []
-    monkeypatch.setattr(app.transport, "send_photo", lambda png, caption: photos.append(png))
-    monkeypatch.setattr(app.chart, "render_chart", lambda opp, dips=None: b"\x89PNG-fake")
-    monkeypatch.setattr(app.personal_quotes, "dips", lambda store: {"VUAA": {"drawdown": -.02}})
-    return photos
-
-
-def test_handle_message_whattobuy_sends_chart_and_facts(whattobuy_env):
-    reply = app.handle_message("/whattobuy")
-    assert whattobuy_env == [b"\x89PNG-fake"]
-    assert "What to buy" in reply
-    assert "20.0" in reply
-    assert "15.0" in reply
-    assert "<i>" not in reply and "Fed rate" not in reply  # figures only; the Fed odds live in /signal
-    assert "⚠️ Own-history comparison needs 12 monthly readings; 1 so far" in reply  # notes stay visible
-
-
-def test_whattobuy_leads_with_the_mix_and_where_new_cash_goes(whattobuy_env, monkeypatch, tmp_path):
-    store = PortfolioStore(tmp_path / "p.sqlite3")
-    store.record("VUAA", "10", "110", date(2026, 10, 5))   # 1,100 USD = 1,000 EUR at 1.10
-    store.record("VWCG", "10", "50", date(2026, 10, 5))    # 500 EUR
+def account(monkeypatch, tmp_path):
+    """An offline account read from the synthetic IBKR statement, with prices canned."""
+    from buysignal.broker import flex
+    from buysignal.portfolio import instruments
+    store = PortfolioStore(tmp_path / "portfolio.sqlite3")
+    store.save_statement(flex.parse(FLEX), datetime(2026, 11, 18, 7, tzinfo=timezone.utc))
     monkeypatch.setattr(app, "_portfolio_store", store)
-    quotes = [{"symbol": "VUAA", "price": 110.}, {"symbol": "VWCG", "price": 50.}, {"symbol": "AVWS", "price": 25.}]
-    monkeypatch.setattr(app.personal_quotes, "all_quotes", lambda store: quotes)
-    monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (1.10, "2026-11-13", False))
-    reply = app.handle_message("/whattobuy")
-    assert reply.startswith("<b>What to buy</b>\n<pre>") and "no mix set: /target" in reply
-    assert "VUAA   1,000  67%" in reply and "Total  1,500" in reply
-
-    assert app.handle_message("/target VUAA 50 VWCG 30 AVWS 20") == "Mix set: VUAA 50% VWCG 30% AVWS 20%"
-    reply = app.handle_message("/whattobuy")
-    assert reply.startswith("<b>What to buy</b> · new cash → AVWS\n<pre>")
-    table = reply.split("<pre>")[1].split("</pre>")[0].splitlines()
-    assert table[1].split() == ["VUAA", "1,000", "67%", "50%", "+250"]
-    assert table[3].split() == ["AVWS", "0", "0%", "20%", "-300"]
-    assert max(map(len, table)) <= 32 and "EUR/USD 1.1000 · 2026-11-13" in reply
-
-    monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (None, None, True))
-    reply = app.handle_message("/whattobuy")
-    assert "new cash" not in reply and "positions cannot be valued" in reply  # no weights from a partial total
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "t" * 24)
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+    monkeypatch.setattr(app.broker_sync, "demands_refresh", lambda store: False)
+    prices = [{"symbol": "VUAA", "price": 121.35}, {"symbol": "VWCG", "price": 44.10}, {"symbol": "AVWS", "price": 27.02}]
+    monkeypatch.setattr(app.personal_quotes, "all_quotes", lambda store: prices)
+    monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (1.10, "2026-11-17", False))
+    yield store
+    instruments.set_current(None)
 
 
-def test_handle_message_whattobuy_chart_failure_degrades_to_text(whattobuy_env, monkeypatch):
-    def boom(opp, dips=None):
-        raise RuntimeError("no display")
-
-    monkeypatch.setattr(app.chart, "render_chart", boom)
-    reply = app.handle_message("/whattobuy")
-    assert whattobuy_env == []  # no photo sent
-    assert "What to buy" in reply  # text still delivered
-    assert "chart rendering failed" in reply
-
-
-def test_handle_message_whattobuy_surfaces_refresh_errors(whattobuy_env, monkeypatch):
-    monkeypatch.setattr(
-        app.runner, "refresh_macro", lambda **kwargs: [("valuations", "ValueError: FY1 not found")]
-    )
-    reply = app.handle_message("/whattobuy")
-    assert "Refresh failed" in reply
-    assert "FY1 not found" in reply
-
-
-def test_handle_message_whattobuy_refreshes_only_valuations(whattobuy_env, monkeypatch):
-    """Everything else on the /whattobuy path reads a cache; none of it is worth a scrape here."""
-    calls = []
-    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: calls.append(kwargs) or [])
-
-    app.handle_message("/whattobuy")
-
-    assert calls == [{"only": ("valuations",)}]
-
-
-def test_whattobuy_says_so_when_valuations_is_failing_but_was_not_retried(whattobuy_env, reset_state):
-    """Inside the retry backoff nothing is attempted and nothing fails, so without this the
-    reply would render a stale snapshot with no warning at all.
-    """
-    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.market_hours.ET))
+def test_whattobuy_spends_the_cash_at_ibkr(account):
+    app.handle_message("/target VUAA 55 VWCG 20 AVWS 20 CASH 5")
 
     reply = app.handle_message("/whattobuy")
 
-    assert "valuations refresh is failing" in reply
-    assert "FY1 not found" in reply
+    assert reply.startswith("🛒 <b>What to buy</b> · IBKR cash 2026-11-17")
+    assert "Cash target keeps" in reply and "VUAA" in reply.split("<pre>")[1]
 
 
-def test_whattobuy_does_not_double_report_a_failure_it_just_surfaced(whattobuy_env, monkeypatch, reset_state):
-    monkeypatch.setattr(
-        app.runner, "refresh_macro", lambda **kw: [("valuations", "ValueError: FY1 not found")]
-    )
-    reset_state.record("valuations", ok=False, error="ValueError: FY1 not found", now=datetime.now(app.market_hours.ET))
+def test_whattobuy_with_an_amount_plans_that_many_euros_without_the_cash_target(account):
+    app.handle_message("/target VUAA 55 VWCG 20 AVWS 20 CASH 5")
 
-    reply = app.handle_message("/whattobuy")
+    reply = app.handle_message("/whattobuy 500")
 
-    assert reply.count("FY1 not found") == 1
+    assert "for €500" in reply and "Cash target keeps" not in reply
+
+
+def test_whattobuy_asks_for_a_target_first(account):
+    assert "Set a target mix first" in app.handle_message("/whattobuy")
+
+
+@pytest.mark.parametrize("retired", ["/buy 10 VUAA @ 100", "bought 10 VUAA @ 100", "/portfolio", "/cash 500", "/entries", "/trades", "/holdings"])
+def test_hand_entered_purchase_commands_are_gone(retired):
+    assert app.handle_message(retired) == "Unrecognized command, try /help."
 
 
 # /refresh

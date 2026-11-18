@@ -25,31 +25,20 @@ TABLE_LABELS = {
 # Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
     {"command": "signal", "description": "Entry checklist, with chart buttons"},
-    {"command": "cash", "description": "Orders for the cash you have, fees included: /cash 500"},
-    {"command": "whattobuy", "description": "Your mix, where new cash goes, valuations"},
-    {"command": "portfolio", "description": "Your ETF prices and recorded positions"},
-    {"command": "buy", "description": "Record a purchase: /buy 10 VUAA @ 151.25"},
-    {"command": "entries", "description": "Your purchase prices against each month's average"},
+    {"command": "portfolio", "description": "Holdings, mix, growth, entries and cash from IBKR"},
+    {"command": "whattobuy", "description": "Whole-share orders for your IBKR cash, fees included"},
+    {"command": "target", "description": "Set your target mix: /target VUAA 60 VWCG 20 AVWS 15 CASH 5"},
     {"command": "help", "description": "All commands"},
 ]
 
 HELP_TEXT = (
-    "Commands:\n"
-    "/signal — entry checklist, with charts\n"
-    "/portfolio — your ETF prices and positions\n"
-    "/whattobuy — where new cash goes, valuations\n"
-    "/cash 500 — orders for that many euros, fees included\n"
-    "/target — set your mix: /target VUAA 60 VWCG 20 AVWS 20\n"
-    "/fees — your broker's fees: /fees VUAA 1.70 0.05\n"
-    "/entries — your prices against each month's average\n"
-    "/trades — purchase history\n"
-    "/refresh — fresh data\n"
-    "/status — bot and data health\n\n"
-    "Record a purchase:\n"
-    "bought 10 VUAA @ 151.25\n"
-    "or /buy 10 VUAA @ 151.25 USD on 2026-11-05 fees 1.00\n"
-    "No date = today. /voidtrade ID corrects a record.\n\n"
-    "Shortcuts: /holdings /vix /fedrate /margin /dip /sector /credit /curve"
+    "📊 /signal — entry checklist, with charts\n"
+    "💼 /portfolio — holdings, mix, growth, entries, cash, P/E (read from IBKR)\n"
+    "🛒 /whattobuy — orders for your IBKR cash · /whattobuy 500 for 500 €\n"
+    "🎯 /target — /target VUAA 60 VWCG 20 AVWS 15 CASH 5\n"
+    "🧾 /fees — fee schedule: /fees tiered, /fees VUAA 1.70 0.05\n"
+    "🔄 /refresh — fresh data · /status — bot and data health\n\n"
+    "Shortcuts: /vix /fedrate /margin /dip /sector /credit /curve"
 )
 
 _STATUS_ERROR_WIDTH = 40  # a stack-trace-shaped error still has to fit a phone screen
@@ -96,8 +85,8 @@ def _own_history_word(z: float) -> str:
     return "cheap" if z >= 1 else "rich" if z <= -1 else "usual"
 
 
-def opportunity_message(opp, dips: dict | None = None, plan: dict | None = None, notes=(), real: tuple | None = None) -> str:
-    """Where new cash goes under the owner's mix, then what each market earns on its price.
+def opportunity_message(opp, dips: dict | None = None, notes=(), real: tuple | None = None) -> str:
+    """What each market earns on its price, the owner's ETFs first.
 
     Earn is next year's expected earnings over the price; Over is that minus the 10-year
     inflation-protected Treasury yield in `real` (value, date), i.e. the pay for holding shares.
@@ -116,33 +105,22 @@ def opportunity_message(opp, dips: dict | None = None, plan: dict | None = None,
     if rate is not None:
         rows.append(("Real 10y", "", f"{rate:.1%}", "", ""))
     body = [f"{name:<9}{pe:>5}{earned:>6}{over:>6}{dip:>7}".rstrip() for name, pe, earned, over, dip in rows]
-    table = "<pre>" + esc("\n".join(body)) + "</pre>"
-
-    lines = []
+    lines = ["📊 <b>P/E</b> · what each market earns", "<pre>" + esc("\n".join(body)) + "</pre>",
+             "<i>Earn: forecast earnings ÷ price. Over: that minus the inflation-protected 10-year yield. "
+             "Dip: below the ETF's 3-month high.</i>"]
     judged = [(s.etf or TABLE_LABELS.get(s.name, s.label), s.fwd_z) for s in opp.segments if s.fwd_z is not None]
     if judged:
-        lines.append("Own past: " + " · ".join(f"{name} {_own_history_word(z)}" for name, z in judged))
+        lines.append(esc("Own past: " + " · ".join(f"{name} {_own_history_word(z)}" for name, z in judged)))
     asofs = {s.asof for s in opp.segments if s.asof}
     if len(asofs) == 1:
-        lines.append(f"MSCI {asofs.pop()}" + (f" · real yield {real[1]}" if real and real[1] else ""))
+        lines.append(esc(f"🕒 MSCI {asofs.pop()}" + (f" · real yield {real[1]}" if real and real[1] else "")))
     elif asofs:
-        lines.append("MSCI: " + ", ".join(f"{s.etf or s.label} {s.asof}" for s in opp.segments if s.asof))
-    if plan and plan.get("eurusd"):
-        lines.append(f"EUR/USD {plan['eurusd']:.4f}" + (f" · {plan['fx_date']}" if plan.get("fx_date") else ""))
+        lines.append(esc("🕒 MSCI: " + ", ".join(f"{s.etf or s.label} {s.asof}" for s in opp.segments if s.asof)))
     stale = [symbol for symbol, item in dips.items() if item.get("refresh_failed")]
     if stale:
-        lines.append("⚠️ Dip from cached prices: " + ", ".join(stale))
-    lines.extend("⚠️ " + note for note in (*opp.notes, *notes))
-
-    title = "<b>What to buy</b>"
-    if plan and plan["destination"]:
-        title += f" · new cash → {esc(plan['destination'])}"
-    allocation = ""
-    if plan:
-        from buysignal.portfolio.presentation import allocation_table
-        allocation = allocation_table(plan)
-    blocks = [title, allocation, table, "\n".join(esc(line) for line in lines)]
-    return "\n".join(block for block in blocks if block)
+        lines.append(esc("⚠️ Dip from cached prices: " + ", ".join(stale)))
+    lines.extend(esc("⚠️ " + note) for note in (*opp.notes, *notes))
+    return "\n".join(lines)
 
 
 def collector_table(statuses: list[CollectorStatus], now: datetime) -> str:

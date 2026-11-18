@@ -127,17 +127,14 @@ def test_refresh_failures_lists_each_collector_and_escapes_it():
     assert "&lt;503&gt;" in block
 
 
-# --- /whattobuy ---------------------------------------------------------------
+# --- /portfolio P/E tab ---------------------------------------------------------------
 
 
-def test_opportunity_message_is_rendered_from_the_opportunity_alone(make_opportunity):
-    message = render.opportunity_message(make_opportunity())
+def test_valuations_show_what_each_market_earns_over_the_real_yield(make_opportunity):
+    message = render.opportunity_message(make_opportunity(), real=(.02, "2026-11-12"))
 
-    assert "What to buy" in message
-    assert "20.0" in message and "5.0%" in message and "Over" in message
-    paid = render.opportunity_message(make_opportunity(), real=(.02, "2026-11-12"))
-    assert "S&amp;P 500   20.0  5.0% +3.0%" in paid and "Real 10y        2.0%" in paid and "real yield 2026-11-12" in paid
-    assert "<i>" not in message
+    assert "S&amp;P 500   20.0  5.0% +3.0%" in message and "Real 10y        2.0%" in message
+    assert "real yield 2026-11-12" in message
     # Jargon and internal labels stay out of the message.
     for term in ("Small-cap band", "rate support", "relZ", "z-score"):
         assert term not in message

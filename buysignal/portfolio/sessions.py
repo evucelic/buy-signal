@@ -6,7 +6,7 @@ import os
 
 import pandas_market_calendars as mcal
 
-from buysignal.portfolio.instruments import INSTRUMENTS
+from buysignal.portfolio import instruments
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def upcoming(now):
     now = now.astimezone(timezone.utc)
     minutes = int(os.environ.get('PRECLOSE_MINUTES', '60'))
     result = []
-    for exchange in dict.fromkeys(i.exchange for i in INSTRUMENTS):
+    for exchange in dict.fromkeys(i.exchange for i in instruments.all() if i.exchange):
         result.extend(calendar_sessions(exchange, now.date(), minutes))
     return result
 

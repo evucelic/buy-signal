@@ -86,28 +86,20 @@ def sample_assessment() -> BuySignal:
     return assess([vix, rate, leverage, market, earnings, credit_reading, yield_reading])
 
 
-def sample_personal() -> list[str]:
-    """The /whattobuy allocation table and /entries, from an illustrative journal and synthetic prices."""
-    import numpy as np
+FLEX_FIXTURE = Path(__file__).resolve().parent.parent / 'tests' / 'fixtures' / 'flex_statement.xml'
+
+
+def sample_personal(directory: Path) -> str:
+    """A /whattobuy reply from the synthetic IBKR statement used by the tests."""
+    from buysignal.broker import flex
     from buysignal.portfolio import plan, presentation
-    index = pd.bdate_range('2025-01-01', NOW.date())
-    wave = np.sin(np.arange(len(index)) / 9.)
-    closes = {'VUAA': pd.Series(140 + 6 * wave, index=index), 'VWCG': pd.Series(60 + 2 * wave, index=index),
-              'AVWS': pd.Series(25 + wave, index=index)}
-    purchases = []
-    for number, month in enumerate(pd.period_range('2026-04', NOW.strftime('%Y-%m'), freq='M')):
-        symbol = ('VUAA', 'VWCG', 'AVWS')[number % 3]
-        days = closes[symbol][closes[symbol].index.to_period('M') == month]
-        day = days.index[min(3 + number, len(days) - 1)]
-        purchases.append({'id': number, 'symbol': symbol, 'quantity': '5', 'price': f'{days.loc[day]:.2f}', 'fees': '1.25',
-                          'trade_date': day.date().isoformat(), 'voided_at': None})
-    holdings = {}
-    for item in purchases:
-        holdings.setdefault(item['symbol'], {'quantity': 0})['quantity'] += 5
-    quotes = [{'symbol': symbol, 'price': float(series.iloc[-1])} for symbol, series in closes.items()]
-    mix = plan.allocation(holdings, quotes, 1.10, {'VUAA': .6, 'VWCG': .2, 'AVWS': .2})
-    whattobuy = f'<b>What to buy</b> · new cash → {mix["destination"]}\n' + presentation.allocation_table(mix)
-    return [whattobuy, presentation.entries_message(plan.scorecard(purchases, closes))]
+    from buysignal.portfolio.store import PortfolioStore
+    store = PortfolioStore(directory / 'portfolio.sqlite3')
+    store.save_statement(flex.parse(FLEX_FIXTURE.read_bytes()), NOW)
+    store.set_targets({'VUAA': 55, 'VWCG': 20, 'AVWS': 20, 'CASH': 5})
+    prices = {'VUAA': 121.35, 'VWCG': 44.10, 'AVWS': 27.02}
+    orders = plan.purchase_plan(store.cash(), store.holdings(), prices, 1.085, store.targets())
+    return presentation.orders_message(orders, source='IBKR cash 2026-11-17')
 
 
 def build_preview(output: Path) -> Path:
@@ -124,6 +116,7 @@ def build_preview(output: Path) -> Path:
             (output / files[job.key]).write_bytes(png)
     content = {view: {'caption': item['caption'], 'image': files.get(item['chart_key']), 'keyboard': item['keyboard']}
                for view, item in planned.items()}
+    orders = sample_personal(output)
     payload = json.dumps({'views': content, 'keyboard': views.keyboard('preview')}).replace('<', r'\u003c')
     page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BuySignal · interactive preview</title><style>
@@ -131,7 +124,7 @@ body{margin:0;background:#eaf0f6;color:#17293e;font:16px/1.4 system-ui,sans-seri
 h1{font-size:21px}.notice{color:#617085;font-size:12px;margin-bottom:18px}
 article{background:#fff;border:1px solid #dbe3ed;border-radius:14px;margin:16px 0;overflow:hidden;box-shadow:0 3px 12px #18334b08}.text{padding:12px;white-space:pre-wrap}
 pre{font:13px/1.5 monospace;white-space:pre;overflow-x:auto;margin:8px 0}img{display:block;width:100%}.buttons{padding:0 8px 8px}.row{display:flex;gap:4px;margin-top:5px}button{flex:1;cursor:pointer;border:0;border-radius:6px;background:#edf4fc;color:#2864dc;min-width:0;white-space:nowrap;padding:10px 4px;font:600 14px system-ui}button:hover,button:focus{background:#dceaff}b{font-weight:650}
-</style><main><h1>Entry checklist</h1><div class="notice">Interactive local preview · synthetic data · nothing sent to Telegram.</div><article><div class="text">''' + report.messages[0].text + '''</div><div id="overview" class="buttons"></div></article><article id="panel" hidden><img id="chart" alt="Selected signal chart"><div id="caption" class="text"></div><div id="navigation" class="buttons"></div></article>''' + ''.join(f'<article><div class="text">{text}</div></article>' for text in sample_personal()) + '''</main><script id="data" type="application/json">''' + payload + '''</script><script>
+</style><main><h1>Entry checklist</h1><div class="notice">Interactive local preview · synthetic data · nothing sent to Telegram.</div><article><div class="text">''' + report.messages[0].text + '''</div><div id="overview" class="buttons"></div></article><article id="panel" hidden><img id="chart" alt="Selected signal chart"><div id="caption" class="text"></div><div id="navigation" class="buttons"></div></article><article><div class="text">''' + orders + '''</div></article></main><script id="data" type="application/json">''' + payload + '''</script><script>
 const data=JSON.parse(document.getElementById('data').textContent);
 function buttons(target,keyboard){target.replaceChildren();for(const row of keyboard.inline_keyboard){const r=document.createElement('div');r.className='row';for(const b of row){const el=document.createElement('button');el.textContent=b.text;el.onclick=()=>openView(b.callback_data.split(':')[2]);r.append(el)}target.append(r)}}
 function openView(key){const panel=document.getElementById('panel');if(key==='close'){panel.hidden=true;return}const view=data.views[key];if(!view)return;document.getElementById('caption').innerHTML=view.caption;const img=document.getElementById('chart');img.hidden=!view.image;if(view.image)img.src=view.image;buttons(document.getElementById('navigation'),view.keyboard);panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'})}

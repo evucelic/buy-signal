@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from unittest.mock import Mock
 import pytest
 from buysignal.portfolio import sessions
-from buysignal.portfolio.journal import PortfolioStore
+from buysignal.portfolio.store import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 from buysignal.telegram_bot import app, transport
 from buysignal.telegram_bot.messages import Report, ReportMessage
@@ -61,7 +61,7 @@ def test_preclose_combines_personal_quotes_and_global_overview_once(store,monkey
     assert not service.check(NOW)
     assert len(sent)==1
     text=sent[0].messages[0].text
-    assert 'London' in text and 'IBIS2/Xetra' in text and '17:30 CET' in text
+    assert 'London' in text and 'Xetra' in text and '17:30 CET' in text
     assert 'VUAA' in text and 'GLOBAL OVERVIEW' in text
 
 def test_regular_watch_during_preclose_window_covers_the_scheduled_ping(store,monkeypatch):
