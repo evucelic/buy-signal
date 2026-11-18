@@ -32,7 +32,7 @@ Measured locally on 2026-11-14 from daily closes (SPY from 1993, VGK from 2005, 
 | Best minus worst calendar-year return of US large, Europe, US small value, 2006 to 2025 | median 15.1%, range 5.6% to 31.6% |
 | Fixed 1.25 fee per trade on 300 of monthly cash: three purchases, or one | 1.25% or 0.42% of the cash |
 
-Telling a real timing edge of 0.5% per purchase from luck takes about 60 monthly purchases (five years); 0.25% takes about 240. This is why `/entries` reports the chance range beside the mean.
+Telling a real timing edge of 0.5% per purchase from luck takes about 60 monthly purchases (five years); 0.25% takes about 240. This is why the `/portfolio` Entries tab reports the chance range beside the mean.
 
 Sending each month's cash to the ETF furthest below a 60/20/20 mix, against splitting it 60/20/20, over the same 2005 to 2026 stand-ins: the mix stayed within 1.0% of target on average (largest miss 3.9%) instead of drifting 5.9% on average (to 72/12/16 by the end), with a third of the trades. It ended with 3.0% less money before fees, because it kept buying the two that lagged the US over this period. It is a way to hold a chosen mix cheaply, and on this history it cost return; nothing here says which mix to choose.
 
