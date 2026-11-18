@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass
 from copy import deepcopy
 import shutil
 import json
@@ -84,27 +86,39 @@ class SnapshotStore:
         self.prepare(token, result, now.isoformat())
         return token
 
-    def save_panels(self, panels: dict, keyboard, now: datetime) -> str:
-        """Store ready-made tabs, {view: (caption, png or None)}; return the token their buttons carry.
+    def save_panels(self, panels: dict, keyboard, now: datetime, first: str | None = None) -> str:
+        """Store tabs, {view: (caption, png, callable or None)}, and return their token.
 
-        `keyboard(token, view)` builds each tab's buttons once the token exists. Every chart is
-        already drawn, so nothing is queued for the background worker.
+        The `first` view's chart is drawn now; with background on, the rest follow on the chart worker.
         """
+        drawn, later = {}, []
+        for index, (view, (caption, chart)) in enumerate(panels.items()):
+            key = _panel_key(view)
+            if callable(chart) and self.background and view != first:
+                later.append((('@' in view, index), PanelJob(key, chart)))
+            else:
+                drawn[view] = PanelJob(key, chart).render() if callable(chart) else chart
+        later = [job for _, job in sorted(later, key=lambda item: item[0])]
+        queued = {job.key for job in later}
         with _LOCK:
             self.directory.mkdir(parents=True, exist_ok=True)
             token = secrets.token_hex(6)
             created = time.time()
             self._write(token, {'created': created, 'sent_at': now.isoformat(), 'panel': None})
             views, used = {}, 0
-            for view, (caption, png) in panels.items():
-                base, _, chosen = view.partition('@')
-                key = f'{base}:' + (f'@{chosen}' if chosen else '')
+            for view, (caption, _) in panels.items():
+                key = _panel_key(view)
+                png = drawn.get(view)
                 total = self._store_chart(token, key, png, used) if png else None
                 used = total if total is not None else used
-                views[view] = {'caption': caption, 'keyboard': keyboard(token, view), 'chart_key': key if total is not None else None}
-            self._write_views(token, {'created': created, 'views': views, 'panel': None, 'file_ids': {}, 'pending': {},
-                                      'self_panel': True})
+                stored = total is not None or key in queued
+                views[view] = {'caption': caption, 'keyboard': keyboard(token, view), 'chart_key': key if stored else None}
+            self._write_views(token, {'created': created, 'views': views, 'panel': None, 'file_ids': {},
+                                      'pending': {key: created for key in queued}, 'self_panel': True})
             self._trim_assets(token)
+        if later:
+            _JOBS.put((self, token, later, used))
+            _start_worker()
         return token
 
     def load(self, token):
@@ -160,7 +174,7 @@ class SnapshotStore:
         for job in jobs:
             if self.background and not job.primary:
                 continue
-            total = self._store_chart(token, job.key, prepared.render(job), used)
+            total = self._store_chart(token, job.key, job.render(), used)
             if total is None:
                 missing.add(job.key)
             else:
@@ -194,9 +208,8 @@ class SnapshotStore:
 
     def _finish(self, token, jobs, used):
         """Draw the remaining ranges one by one, publishing each as soon as it exists."""
-        from buysignal.telegram_bot import prepared
         for job in jobs:
-            total = self._store_chart(token, job.key, prepared.render(job), used)
+            total = self._store_chart(token, job.key, job.render(), used)
             with _LOCK:
                 try:
                     manifest = self.load_views(token)
@@ -268,6 +281,27 @@ class SnapshotStore:
             manifest = self.load_views(token)
             manifest['panel'] = panel
             self._write_views(token, manifest)
+
+
+def _panel_key(view: str) -> str:
+    base, _, chosen = view.partition('@')
+    return f'{base}:' + (f'@{chosen}' if chosen else '')
+
+
+@dataclass(frozen=True)
+class PanelJob:
+    key: str
+    draw: Callable[[], bytes | None] | None
+    primary: bool = False
+
+    def render(self) -> bytes | None:
+        if self.draw is None or not config.TELEGRAM_CHARTS:
+            return None
+        try:
+            return self.draw()
+        except Exception as exc:
+            log.warning("Chart preparation failed for %s (%s)", self.key, type(exc).__name__)
+            return None
 
 
 def _work():

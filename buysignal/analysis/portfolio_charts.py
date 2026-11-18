@@ -3,13 +3,10 @@ dark grey the world index.
 """
 from __future__ import annotations
 
-from io import BytesIO
-
 import pandas as pd
 
 from buysignal.analysis import signal_charts as style
 from buysignal.analysis.signal_charts import RANGES
-from buysignal.config import TELEGRAM_CHART_DPI
 from buysignal.resources import HEAVY_WORK_LOCK
 
 CASH = "CASH"
@@ -36,11 +33,7 @@ def _figure(height: float):
 
 
 def _png(figure) -> bytes:
-    buffer = BytesIO()
-    figure.savefig(buffer, format="png", dpi=TELEGRAM_CHART_DPI, facecolor=style._SURFACE)
-    figure.clear()
-    figure.set_canvas(None)
-    return buffer.getvalue()
+    return style.png_bytes(figure)
 
 
 def _span_words(series: pd.Series, range_key: str) -> str:

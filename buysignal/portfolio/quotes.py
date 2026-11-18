@@ -1,4 +1,5 @@
 """Quotes and daily closes for the listings, benchmarks, EUR/USD and the TIPS yield, cached in the store."""
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
 import math
@@ -66,25 +67,34 @@ def get(store, instrument, *, now=None, refresh=True):
                 return cached
         elif not refresh:
             return {'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None}
-        try:
-            result = _fetch(instrument, now)
-        except Exception as exc:
-            log.warning('Personal quote failed for %s (%s)', instrument.yahoo, type(exc).__name__)
-            result = dict(cached or {'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None})
-            result.update(last_attempt=now.isoformat(), refresh_failed=True)
+    try:
+        result = _fetch(instrument, now)
+    except Exception as exc:
+        log.warning('Personal quote failed for %s (%s)', instrument.yahoo, type(exc).__name__)
+        result = dict(cached or {'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None})
+        result.update(last_attempt=now.isoformat(), refresh_failed=True)
+    with _LOCK:
         store.save_quote(instrument.symbol, result)
-        return result
+    return result
+
+
+def _each(items, fetch):
+    """fetch(item) for every item concurrently, results in order."""
+    items = list(items)
+    if len(items) < 2:
+        return [fetch(item) for item in items]
+    with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
+        return list(pool.map(fetch, items))
 
 
 def all_quotes(store, *, now=None, refresh=True):
-    result = []
-    for instrument in instruments.all():
+    def one(instrument):
         try:
-            result.append(get(store, instrument, now=now, refresh=refresh))
+            return get(store, instrument, now=now, refresh=refresh)
         except Exception as exc:
             log.warning('Personal quote cache unavailable for %s (%s)', instrument.symbol, type(exc).__name__)
-            result.append({'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None})
-    return result
+            return {'symbol': instrument.symbol, 'currency': instrument.currency, 'price': None}
+    return _each(instruments.all(), one)
 
 
 _DAILY_TTL_SEC = 12 * 3600
@@ -113,17 +123,18 @@ def _cached_series(store, key, yahoo, period, ttl, now, refresh):
             return _series(cached), False
         if not refresh:
             return None, False
-        try:
-            closes = _fetch_closes(yahoo, period)
-            if closes.index[-1] > now.tz_localize(None).normalize() + pd.Timedelta(days=1):
-                raise ValueError('Future price observation')
-            payload = {'retrieved_at': now.isoformat(),
-                       'closes': {day.strftime('%Y-%m-%d'): float(value) for day, value in closes.items()}}
+    try:
+        closes = _fetch_closes(yahoo, period)
+        if closes.index[-1] > now.tz_localize(None).normalize() + pd.Timedelta(days=1):
+            raise ValueError('Future price observation')
+        payload = {'retrieved_at': now.isoformat(),
+                   'closes': {day.strftime('%Y-%m-%d'): float(value) for day, value in closes.items()}}
+        with _LOCK:
             store.save_quote(key, payload)
-            return closes, False
-        except Exception as exc:
-            log.warning('Daily history failed for %s (%s)', yahoo, type(exc).__name__)
-            return (_series(cached), True) if cached else (None, True)
+        return closes, False
+    except Exception as exc:
+        log.warning('Daily history failed for %s (%s)', yahoo, type(exc).__name__)
+        return (_series(cached), True) if cached else (None, True)
 
 
 def _series(payload):
@@ -140,8 +151,9 @@ def _utc(now):
 def daily_closes(store, *, now=None, refresh=True):
     """({symbol: closes in the trading currency}, [symbols served from an old copy])."""
     now, result, stale = _utc(now), {}, []
-    for instrument in instruments.all():
-        series, old = _cached_series(store, instrument.symbol + ':daily', instrument.yahoo, _DAILY_PERIOD, _DAILY_TTL_SEC, now, refresh)
+    listed = instruments.all()
+    found = _each(listed, lambda i: _cached_series(store, i.symbol + ':daily', i.yahoo, _DAILY_PERIOD, _DAILY_TTL_SEC, now, refresh))
+    for instrument, (series, old) in zip(listed, found):
         if series is not None:
             result[instrument.symbol] = series
         if old:
@@ -184,16 +196,17 @@ def real_yield(store, *, now=None, refresh=True):
             return cached['value'], cached['date'], False
         if not refresh:
             return None, None, True
-        try:
-            latest = fetch_series(REAL_YIELD_SERIES).iloc[-1]
-            if not -.05 < latest.value / 100 < .15:
-                raise ValueError('Implausible real yield')
-            payload = {'retrieved_at': now.isoformat(), 'value': float(latest.value) / 100, 'date': latest.date.date().isoformat()}
+    try:
+        latest = fetch_series(REAL_YIELD_SERIES).iloc[-1]
+        if not -.05 < latest.value / 100 < .15:
+            raise ValueError('Implausible real yield')
+        payload = {'retrieved_at': now.isoformat(), 'value': float(latest.value) / 100, 'date': latest.date.date().isoformat()}
+        with _LOCK:
             store.save_quote(REAL_YIELD_SERIES, payload)
-            return payload['value'], payload['date'], False
-        except Exception as exc:
-            log.warning('Real yield failed (%s)', type(exc).__name__)
-            return (cached['value'], cached['date'], True) if cached else (None, None, True)
+        return payload['value'], payload['date'], False
+    except Exception as exc:
+        log.warning('Real yield failed (%s)', type(exc).__name__)
+        return (cached['value'], cached['date'], True) if cached else (None, None, True)
 
 
 def eurusd_history(store, *, now=None, refresh=True):
@@ -207,9 +220,9 @@ BENCHMARKS = {'S&P 500': 'SXR8.DE', 'All-World': 'VWCE.DE'}
 
 def benchmarks(store, *, now=None, refresh=True):
     """({name: daily closes in euros}, [names served from an old copy or missing])."""
-    result, stale = {}, []
-    for name, yahoo in BENCHMARKS.items():
-        series, old = _cached_series(store, yahoo + ':bench', yahoo, _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
+    result, stale, now = {}, [], _utc(now)
+    found = _each(BENCHMARKS.items(), lambda item: _cached_series(store, item[1] + ':bench', item[1], _DAILY_PERIOD, _DAILY_TTL_SEC, now, refresh))
+    for name, (series, old) in zip(BENCHMARKS, found):
         if series is not None:
             result[name] = series
         if old or series is None:

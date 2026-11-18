@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from functools import partial
 
 import pandas as pd
 
@@ -215,7 +216,7 @@ def value_tab(account: Account, past: History | None, range_key: str) -> tuple[s
         lines.append(f"<i>Held: money in before {_date(start)}, the oldest IBKR day read so far.</i>")
     lines += _footer(account)
     money_in = opening + past.paid.reindex(value.index) - (0. if whole else float(past.paid[start]))
-    return "\n".join(lines), charts.value(value, money_in, compared, range_key)
+    return "\n".join(lines), partial(charts.value, value, money_in, compared, range_key)
 
 
 def returns_tab(account: Account, past: History | None, range_key: str) -> tuple[str, bytes | None]:
@@ -244,7 +245,7 @@ def returns_tab(account: Account, past: History | None, range_key: str) -> tuple
     lines = [_head("Returns", _range_words(range_key, value.index[0]), "deposits removed"),
              "<b>" + esc(" · ".join(lead)) + "</b>" if lead else "", _pre(_lines(rows)),
              "<i>Worst: deepest fall from a high. Vol: yearly swing size.</i>", *_footer(account)]
-    return "\n".join(line for line in lines if line), charts.returns(cumulative, range_key)
+    return "\n".join(line for line in lines if line), partial(charts.returns, cumulative, range_key)
 
 
 def mix_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
@@ -261,7 +262,7 @@ def mix_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
     if not targeted:
         lines.append("Set a target: /target " + " ".join(f"{s} {100 // max(1, len(account.holdings))}" for s in account.holdings))
     lines += _footer(account)
-    return "\n".join(lines), charts.mix(mix["rows"], mix["total"])
+    return "\n".join(lines), partial(charts.mix, mix["rows"], mix["total"])
 
 
 def risk_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
@@ -283,7 +284,7 @@ def risk_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
              _pre(_lines(rows) + (["", "Correlation", *_lines(table)] if table else [])),
              f"<i>Risk: share of the swings. Effective bets: equal, unrelated holdings with the same spread. "
              f"{result['sessions']} sessions.</i>", *_footer(account)]
-    return "\n".join(lines), charts.risk(result)
+    return "\n".join(lines), partial(charts.risk, result)
 
 
 def _fees(account: Account) -> tuple[float, float, int]:
@@ -329,7 +330,7 @@ def trades_tab(account: Account) -> tuple[str, bytes | None]:
              _pre(_lines(rows) + (["* month still running"] if running else []) + [""] + _lines(totals)),
              "<i>vs month: your price against that month's average close.</i>", *_footer(account)]
     noises = [row["noise"] for row in card["rows"] if row.get("noise")]
-    return "\n".join(lines), charts.timing(card["rows"], sum(noises) / len(noises) if noises else None)
+    return "\n".join(lines), partial(charts.timing, card["rows"], sum(noises) / len(noises) if noises else None)
 
 
 def _days_to_invest(account: Account) -> float | None:
@@ -371,7 +372,7 @@ def cash_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
     balance = None
     if len(account.nav) > 1:
         balance = pd.Series([cash for _, cash, _ in account.nav], index=pd.to_datetime([day for day, _, _ in account.nav]), dtype=float)
-    return "\n".join(lines), charts.cash(deposits, balance)
+    return "\n".join(lines), partial(charts.cash, deposits, balance)
 
 
 def _history_from(account: Account) -> date | None:
@@ -405,7 +406,7 @@ def tax_tab(account: Account) -> tuple[str, bytes | None]:
         lines.append(f"<i>{esc(held)} bought before {esc(_date(history_from))}: taxed here until IBKR history shows the date.</i>")
     lines.append("<i>12% on gains held ≤2 years, first in first out, losses offset. Sale fees left out.</i>")
     lines += _footer(account)
-    return "\n".join(lines), charts.tax(result["schedule"], lots, account.today)
+    return "\n".join(lines), partial(charts.tax, result["schedule"], lots, account.today)
 
 
 def valuation_tab(account: Account) -> tuple[str, bytes | None]:
@@ -438,15 +439,23 @@ def valuation_tab(account: Account) -> tuple[str, bytes | None]:
                  "Over: forward earnings yield minus 10y TIPS.</i>")
     lines.append("<i>" + esc(" · ".join([f"Shiller {s['date']:%b %Y}", *account.sources])) + "</i>")
     lines += ["⚠️ " + esc(note) for note in account.notes]
-    return "\n".join(lines), charts.valuation(account.cape, s)
+    return "\n".join(lines), partial(charts.valuation, account.cape, s)
 
 
 def view_name(base: str, range_key: str) -> str:
     return base if range_key == DEFAULT_RANGE else f"{base}@{range_key}"
 
 
+def draw(tabs: dict) -> dict:
+    """Every tab with its chart drawn now."""
+    return {view: (caption, chart() if chart else None) for view, (caption, chart) in tabs.items()}
+
+
 def build(account: Account) -> dict:
-    """{view: (caption, png or None)} for every tab; Value and Returns have one view per range."""
+    """{view: (caption, chart)}, the chart a callable that draws the PNG, or None.
+
+    Drawing is left to the snapshot store, so a reply waits only for its first chart.
+    """
     base = account.meta.get("base_currency")
     if base and base != plan.REPORT_CURRENCY:
         account.notes.append(f"IBKR account values are in {base}, shown with a € sign")

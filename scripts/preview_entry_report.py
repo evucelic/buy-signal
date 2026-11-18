@@ -126,7 +126,7 @@ def sample_personal(directory: Path):
                              eurusd_history=fx, benchmarks=benchmarks, history_complete=store.history_complete(),
                              cape=sample_cape(), sleeves=[('VUAA', 22.1), ('VWCG', 14.6), ('AVWS', 11.9)],
                              real_yield=(.018, '2026-10-30'), sources=['MSCI Oct 31, 2026', 'TIPS 2026-10-30'], today=NOW.date())
-    tabs = panels.build(account)
+    tabs = panels.draw(panels.build(account))
     orders = plan.purchase_plan(store.cash(), store.holdings(), plan.prices(quotes, positions), 1.085, store.targets())
     return tabs, presentation.orders_message(orders, source='IBKR cash 2026-11-17')
 

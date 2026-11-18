@@ -21,6 +21,9 @@ class ChartJob:
     range_key: str
     primary: bool
 
+    def render(self) -> bytes | None:
+        return render(self)
+
 
 def chart_key(name: str, index: str = "", range_key: str = DEFAULT_RANGE) -> str:
     return f"{name}:{index}" + ("" if range_key == DEFAULT_RANGE else "@" + range_key)

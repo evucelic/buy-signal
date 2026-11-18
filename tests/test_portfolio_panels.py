@@ -40,7 +40,7 @@ def deck(tmp_path_factory):
     store = PortfolioStore(tmp_path_factory.mktemp("deck") / "portfolio.sqlite3")
     store.save_statement(STATEMENT, datetime(2026, 11, 18, 7, tzinfo=timezone.utc))
     store.set_targets({"VUAA": 55, "VWCG": 20, "AVWS": 20, "CASH": 5})
-    yield panels.build(make_account(store))
+    yield panels.draw(panels.build(make_account(store)))
     instruments.set_current(None)
 
 

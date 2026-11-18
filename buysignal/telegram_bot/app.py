@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -361,25 +362,29 @@ def _account(store, notes) -> portfolio_panels.Account:
     left = broker_sync.token_days_left(_utc_now().date())
     if left is not None and left <= broker_sync.TOKEN_WARNING_DAYS:
         notes.append(f"IBKR token expires in {left} days: generate a new one and update IBKR_FLEX_TOKEN")
-    quotes = personal_quotes.all_quotes(store)
-    eurusd, _, fx_stale = personal_quotes.eurusd(store)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        pending = {name: pool.submit(getattr(personal_quotes, name), store)
+                   for name in ("all_quotes", "eurusd", "daily_closes", "eurusd_history", "benchmarks")}
+        valuation = pool.submit(_valuation, store)
+    quotes = pending["all_quotes"].result()
+    eurusd, _, fx_stale = pending["eurusd"].result()
     if fx_stale:
         notes.append("EUR/USD refresh failed; using the last rate")
     positions = store.positions()
     try:
-        closes, stale = personal_quotes.daily_closes(store)
+        closes, stale = pending["daily_closes"].result()
         if stale:
             notes.append("daily prices from an older copy: " + ", ".join(stale))
     except Exception:
         log.exception('Daily closes unavailable')
         closes = {}
-    history, history_stale = personal_quotes.eurusd_history(store)
+    history, history_stale = pending["eurusd_history"].result()
     if history_stale:
         notes.append("EUR/USD history from an older copy" if history is not None else "EUR/USD history unavailable")
-    benchmarks, bench_stale = personal_quotes.benchmarks(store)
+    benchmarks, bench_stale = pending["benchmarks"].result()
     if bench_stale:
         notes.append("benchmark prices from an older copy or missing: " + ", ".join(bench_stale))
-    cape, sleeves, real, sources, more = _valuation(store)
+    cape, sleeves, real, sources, more = valuation.result()
     return portfolio_panels.Account(
         positions=positions, holdings=store.holdings(), cash=store.cash(), nav=store.nav(), deposits=store.deposits(),
         trades=store.trades(), meta=store.account(), targets=store.targets(), prices=portfolio_plan.prices(quotes, positions),
@@ -397,7 +402,7 @@ def _portfolio() -> str | Report:
     now = _utc_now()
     tabs = portfolio_panels.build(account)
     try:
-        token = _snapshot_store.save_panels(tabs, portfolio_panels.keyboard, now)
+        token = _snapshot_store.save_panels(tabs, portfolio_panels.keyboard, now, first=portfolio_panels.FIRST)
     except (OSError, ValueError):
         return tabs[portfolio_panels.FIRST][0] + "\nTab buttons unavailable: the panel could not be saved."
     item = _snapshot_store.load_views(token)["views"][portfolio_panels.FIRST]

@@ -105,6 +105,19 @@ def _range_words(range_key: str, index: pd.DatetimeIndex, frequency: str) -> str
     return f"{words} · {frequency}"
 
 
+def png_bytes(figure) -> bytes:
+    """The figure as a 128-colour palette PNG, about a quarter of the full-colour size."""
+    from PIL import Image
+    buffer = BytesIO()
+    figure.savefig(buffer, format="png", dpi=TELEGRAM_CHART_DPI, facecolor=_SURFACE)
+    figure.clear()
+    figure.set_canvas(None)
+    image = Image.open(buffer).convert("RGB").quantize(colors=128, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
 def _frame(ax, title: str | None = None, subtitle: str | None = None):
     ax.set_facecolor(_SURFACE)
     ax.tick_params(colors=_MUTED, labelsize=_TICK, length=0, pad=6)
@@ -501,9 +514,4 @@ def _render_signal_chart(signal: SubSignal, range_key: str = DEFAULT_RANGE) -> b
             _sector(figure, signal)
         else:
             return None
-        buffer = BytesIO()
-        figure.savefig(buffer, format="png", dpi=TELEGRAM_CHART_DPI, facecolor=_SURFACE)
-        png = buffer.getvalue()
-        figure.clear()
-        figure.set_canvas(None)
-        return png
+        return png_bytes(figure)

@@ -176,3 +176,15 @@ def test_a_command_panel_whose_send_timed_out_is_edited_in_place(tmp_path,wire,m
     tapped={'id':'q','data':f'r:{token}:pf_cash','message':{'message_id':77,'chat':{'id':12345},'photo':[{'file_id':'x'}]}}
     interactive.handle_callback(tapped,store)
     assert shown[0]['message_id']==77 and shown[0]['photo']
+
+
+def test_a_command_panel_waits_only_for_its_first_chart(tmp_path):
+    store=SnapshotStore(tmp_path,background=True); drawn=[]
+    def chart(name):
+        return lambda:drawn.append(name) or b'png:'+name.encode()
+    token=store.save_panels({'pf_value':('Value',chart('value')),'pf_mix':('Mix',chart('mix')),'pf_tax':('Tax',None)},lambda t,v:{},NOW,first='pf_value')
+    manifest=store.load_views(token)
+    assert store.chart_bytes(token,'pf_value:')==b'png:value' and set(manifest['pending'])=={'pf_mix:'}
+    assert manifest['views']['pf_tax']['chart_key'] is None
+    store.drain()
+    assert store.chart_bytes(token,'pf_mix:')==b'png:mix' and not store.load_views(token)['pending']
