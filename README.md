@@ -1,6 +1,6 @@
 # BuySignal
 
-A Telegram bot that helps judge an entry point for long-term ETF purchases. Each day it reports a five-condition checklist with its data dates, and plans whole-share purchases against a target mix, fees included. It never places orders and does not estimate a probability of profit.
+A Telegram bot that helps judge an entry point for long-term ETF purchases. Each day it reports a five-condition checklist with its data dates. It reads the owner's Interactive Brokers account (read only) to show how the portfolio is doing and which whole shares bring it back to a target mix, fees included. It never places orders and does not estimate a probability of profit.
 
 ## The checklist
 
@@ -28,19 +28,46 @@ Every NYSE session, the end-of-day report appends one line to `data/checklistlog
 
 | Command | |
 |---|---|
-| `/signal` | the checklist, with chart buttons |
-| `/cash 500` | whole-share orders for that many euros, fees included |
-| `/whattobuy` | your mix, where new cash goes, forward P/E and what each market earns over the real yield |
-| `/portfolio` | ETF prices and recorded positions |
-| `/buy 10 VUAA @ 151.25` | record a purchase (`on 2026-11-05`, `fees 1.00`, a currency are optional); `bought …` also works |
-| `/target VUAA 60 VWCG 20 AVWS 20` | set the target mix |
-| `/fees` | broker fees; starts from Interactive Brokers' published tiered rates (read 2026-11-14); `/fees fixed`, `/fees VUAA 1.70 0.05` |
-| `/entries` | each purchase price against that listing's average close in the same month |
-| `/trades`, `/holdings`, `/voidtrade ID` | purchase history, positions, correct a record |
+| `/signal` | the checklist, with chart buttons; each panel's numbers follow its 3M / 1Y / 5Y / All button |
+| `/portfolio` | a deck of tabs, each a chart and its numbers (below) |
+| `/whattobuy` | whole-share orders for the cash at IBKR, fees included; `/whattobuy 500` plans 500 € instead |
+| `/target VUAA 55 VWCG 20 AVWS 20 CASH 5` | the target mix: held listings, and optionally cash kept uninvested |
+| `/fees` | the fee schedule the planner uses; starts from IBKR's published tiered rates (read 2026-11-14); `/fees fixed`, `/fees VUAA 1.70 0.05`, `/fees FX 0 0.03` |
 | `/vix` `/fedrate` `/margin` `/dip` `/sector` `/credit` `/curve` | one reading's panel |
-| `/refresh`, `/status` | fresh data; bot and collector health |
+| `/refresh`, `/status` | fresh data; bot, collector and IBKR health |
 
-Listings: VUAA (London, USD), VWCG and AVWS (Xetra, EUR).
+The `/portfolio` tabs:
+
+| Tab | Chart | Numbers |
+|---|---|---|
+| Overview | account value against money paid in; on All, the same deposits put into the benchmark on the day they arrived | value, paid in, market gain, you against the benchmark |
+| Returns | time-weighted return (deposits removed) against the benchmark | return, per year (after a year), worst fall |
+| Mix | share of the account now against the target | holdings with gain on IBKR's cost basis, gap to target in euros |
+| Risk | each holding's share of the money beside its share of the portfolio's swings | volatility, correlation, effective number of bets |
+| Entries | each purchase against its month's average close | mean difference and the range chance alone gives |
+| Fees | commissions paid, running and per order | total, share of money invested |
+| Cash | cash balance over time | per currency, cash target, recent deposits |
+| P/E | forward P/E by market | earnings yield over the real 10-year yield, each ETF's dip |
+
+The benchmark is `BUYSIGNAL_BENCHMARK` (default `VWCE.DE`, Vanguard FTSE All-World, accumulating, in euros). Listings are whatever IBKR reports; before the first statement the defaults are VUAA (London, USD), VWCG and AVWS (Xetra, EUR).
+
+## Interactive Brokers (read only)
+
+The bot uses IBKR's Flex Web Service, which can only download reports: it cannot place orders, move money or change settings.
+
+1. Client Portal → Performance & Reports → Flex Queries → create an **Activity Flex Query**, format XML, period **Last 365 Calendar Days**, with these sections:
+   - Account Information (currency)
+   - Cash Report (currency breakdown)
+   - Net Asset Value (NAV) in Base (daily)
+   - Open Positions (Summary)
+   - Trades (Execution)
+   - Cash Transactions (Deposits & Withdrawals)
+
+   Keep the default date format. Note the Query ID.
+2. Flex Queries → Flex Web Service Configuration → activate it, then generate a token. Set **Valid For IP Address** to the server's Elastic IP and choose an expiry.
+3. In the server's `.env`: `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`, and `IBKR_FLEX_TOKEN_EXPIRES=YYYY-MM-DD` (the expiry chosen). `/status` and `/portfolio` warn 14 days before it.
+
+The statement is read once a weekday after IBKR publishes the previous day, again every three hours until it does, and on `/portfolio` or `/whattobuy` when the stored one is behind. A statement is checked for every section before it replaces the stored holdings, and an older one is refused. Trades, daily values and deposits are kept beyond the 365-day window.
 
 ## Setup
 
@@ -52,4 +79,4 @@ docker compose up -d            # or in Docker; data/ is a mounted volume
 .venv/bin/python -m scripts.preview_entry_report   # synthetic preview in /tmp/buysignal-report-preview
 ```
 
-Caches, the purchase journal (`data/portfolio.sqlite3`) and the checklist log live in `data/`, which is excluded from Git and the image.
+Caches, the account read from IBKR (`data/portfolio.sqlite3`) and the checklist log live in `data/`, which is excluded from Git and the image.
