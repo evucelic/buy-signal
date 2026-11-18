@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 # Unbuffered stdout so `docker compose logs` shows output in real time, not just on exit/flush.
 ENV PYTHONUNBUFFERED=1 \
