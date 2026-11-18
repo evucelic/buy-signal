@@ -2,9 +2,11 @@
 
 On the server, where the token's IP lock and .env are:
     docker compose run --rm --no-deps bot python -m scripts.check_ibkr
+An older year, as the history read asks for it: ... check_ibkr --period 2024-11-18 2025-11-17
 Against a saved statement: python -m scripts.check_ibkr --file statement.xml
 Prints counts, symbols, currencies and dates; no balances, prices or account number.
 """
+from datetime import date
 import os
 import sys
 
@@ -37,8 +39,12 @@ def main(argv) -> int:
         if not token or not query:
             print("IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID are not set in this environment")
             return 2
+        period = None
+        if "--period" in argv:
+            at = argv.index("--period")
+            period = (date.fromisoformat(argv[at + 1]), date.fromisoformat(argv[at + 2]))
         try:
-            payload = fetch(token, query)
+            payload = fetch(token, query, period=period)
         except FlexError as exc:
             print(f"download failed: {exc}")
             return 1

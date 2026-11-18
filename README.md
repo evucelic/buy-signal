@@ -105,6 +105,7 @@ To check the query and token, run on the server (it downloads one statement and 
 
 ```
 docker compose run --rm --no-deps bot python -m scripts.check_ibkr
+docker compose run --rm --no-deps bot python -m scripts.check_ibkr --period 2024-11-18 2025-11-17   # an older year, as the history read asks for it
 ```
 
 `docker compose up -d` (or the next deploy) picks it up. `/status` then shows the statement date and the days left on the token, and warns from 14 days before expiry. If the read fails, `/status` lists the error beside `ibkr`: 1012 an expired token, 1013 a request from another IP, 1014 a wrong query ID, 1015 a wrong token.
