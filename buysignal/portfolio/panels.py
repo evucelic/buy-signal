@@ -213,13 +213,13 @@ def value_tab(account: Account, past: History | None, range_key: str) -> tuple[s
         for name, series in compared.items():
             rows.append((_SHORT[name], _euros(series.iloc[-1]), _signed(float(value.iloc[-1]) - float(series.iloc[-1]))))
     lines = [_head("Value", _range_words(range_key, start)),
-             f"<b>{_euros(value.iloc[-1])}</b> · {_signed(gain)} market gain" + (f" · {_pct(mwr)} on money in" if mwr is not None else ""),
+             f"<b>{_euros(value.iloc[-1])}</b>" + (f" · {_pct(mwr)} on money in" if mwr is not None else ""),
              _pre(_lines(rows))]
     if whole and opening > 0.5 and not account.history_complete:
         lines.append(f"<i>Held: money in before {_date(start)}, the oldest IBKR day read so far.</i>")
     lines += _footer(account)
     money_in = opening + past.paid.reindex(value.index) - (0. if whole else float(past.paid[start]))
-    return "\n".join(lines), partial(charts.value, value, money_in, compared, range_key)
+    return "\n".join(lines), partial(charts.value, value, money_in, compared)
 
 
 def returns_tab(account: Account, past: History | None, range_key: str) -> tuple[str, bytes | None]:
@@ -232,7 +232,7 @@ def returns_tab(account: Account, past: History | None, range_key: str) -> tuple
         cumulative[name] = performance.time_weighted(series, deposits)
     days = (value.index[-1] - value.index[0]).days
     yearly = days > 400
-    rows = [("", "Per yr" if yearly else "Return", "Worst", "Vol")]
+    rows = [("", "Per yr" if yearly else "Return", "Fall", "Vol")]
     for name, series in cumulative.items():
         result = performance.annualised(series) if yearly else float(series.iloc[-1])
         vol = performance.volatility(series)
@@ -245,10 +245,9 @@ def returns_tab(account: Account, past: History | None, range_key: str) -> tuple
     if TARGET_MIX in cumulative:
         gap = float(mine.iloc[-1] - cumulative[TARGET_MIX].iloc[-1])
         lead.append(f"{gap * 100:+.1f} vs target".replace("-", "−"))
-    lines = [_head("Returns", _range_words(range_key, value.index[0]), "deposits removed"),
-             "<b>" + esc(" · ".join(lead)) + "</b>" if lead else "", _pre(_lines(rows)),
-             "<i>Worst: deepest fall from a high. Vol: yearly swing size.</i>", *_footer(account)]
-    return "\n".join(line for line in lines if line), partial(charts.returns, cumulative, range_key)
+    lines = [_head("Returns", _range_words(range_key, value.index[0])),
+             "<b>" + esc(" · ".join(lead)) + "</b>" if lead else "", _pre(_lines(rows)), *_footer(account)]
+    return "\n".join(line for line in lines if line), partial(charts.returns, cumulative)
 
 
 def mix_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
@@ -274,7 +273,7 @@ def risk_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
     if result is None:
         return _empty("Risk", "Not enough shared price history to measure risk.", account)
     symbols = result["symbols"]
-    rows = [("", "Money", "Risk", "Vol/yr")]
+    rows = [("", "Money", "Swings", "Vol/yr")]
     rows += [(s, f"{result['weights'][s]:.0%}", f"{result['risk'][s]:.0%}", f"{result['volatility'][s]:.0%}") for s in symbols]
     rows.append(("All", "", "", f"{result['portfolio_volatility']:.0%}"))
     corr = result["correlation"]
@@ -283,10 +282,8 @@ def risk_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
         table = [("",) + tuple(symbols)]
         table += [(a,) + tuple("1" if a == b else f"{corr.loc[a, b]:.2f}" for b in symbols) for a in symbols]
     bets = result["effective_bets"]
-    lines = [_head("Risk", f"{bets:.1f} effective bets of {len(symbols)}" if bets else ""),
-             _pre(_lines(rows) + (["", "Correlation", *_lines(table)] if table else [])),
-             f"<i>Risk: share of the swings. Effective bets: equal, unrelated holdings with the same spread. "
-             f"{result['sessions']} sessions.</i>", *_footer(account)]
+    lines = [_head("Risk", f"{result['sessions']} days", f"{bets:.1f} effective bets of {len(symbols)}" if bets else ""),
+             _pre(_lines(rows) + (["", "Correlation", *_lines(table)] if table else [])), *_footer(account)]
     return "\n".join(lines), partial(charts.risk, result)
 
 
@@ -313,7 +310,7 @@ def trades_tab(account: Account) -> tuple[str, bytes | None]:
     if not card["rows"]:
         return _empty("Trades", "No purchases in the IBKR statements yet.", account)
     summary = card["summary"]
-    rows = [("", "", "Paid", "vs month")]
+    rows = [("", "", "Paid", "vs avg")]
     running = False
     for row in card["rows"][-_RECENT:]:
         mark = "" if row["complete"] or row["diff"] is None else "*"
@@ -330,8 +327,7 @@ def trades_tab(account: Account) -> tuple[str, bytes | None]:
     verdict = {"better than chance": "timing beat chance ✓", "worse than chance": "timing worse than chance",
                "within chance": "timing within chance"}[summary["verdict"]] if summary else "no finished month yet"
     lines = [_head("Trades", f"{card['count']} buys", verdict),
-             _pre(_lines(rows) + (["* month still running"] if running else []) + [""] + _lines(totals)),
-             "<i>vs month: your price against that month's average close.</i>", *_footer(account)]
+             _pre(_lines(rows) + (["* month still running"] if running else []) + [""] + _lines(totals)), *_footer(account)]
     noises = [row["noise"] for row in card["rows"] if row.get("noise")]
     return "\n".join(lines), partial(charts.timing, card["rows"], sum(noises) / len(noises) if noises else None)
 
@@ -353,7 +349,7 @@ def cash_tab(account: Account, mix: dict | None) -> tuple[str, bytes | None]:
     rows = []
     if len(deposits):
         year_ago = pd.Timestamp(account.today) - pd.DateOffset(years=1)
-        rows += [("Deposited", _euros(deposits.sum())), ("Deposits", f"{(deposits > 0).sum()} · avg {_euros(deposits[deposits > 0].mean())}"),
+        rows += [("Deposits", f"{(deposits > 0).sum()} · avg {_euros(deposits[deposits > 0].mean())}"),
                  ("Last 12 months", _euros(deposits[deposits.index > year_ago].sum())),
                  (f"In {account.today.year}", _euros(deposits[deposits.index.year == account.today.year].sum()))]
         wait = _days_to_invest(account)
@@ -407,7 +403,6 @@ def tax_tab(account: Account) -> tuple[str, bytes | None]:
     if result["undated"] and not account.history_complete and history_from:
         held = ", ".join(f"{lot.quantity:,.0f} {lot.symbol}" for lot in result["undated"])
         lines.append(f"<i>{esc(held)} bought before {esc(_date(history_from))}: taxed here until IBKR history shows the date.</i>")
-    lines.append("<i>12% on gains held ≤2 years, first in first out, losses offset. Sale fees left out.</i>")
     lines += _footer(account)
     return "\n".join(lines), partial(charts.tax, result["schedule"], lots, account.today)
 
@@ -420,13 +415,12 @@ def valuation_tab(account: Account) -> tuple[str, bytes | None]:
     rows = [("", "Now", "Median"), ("CAPE", f"{s['cape']:.1f}", f"{s['cape_median']:.1f}"),
             ("Earnings yield", f"{s['earnings_yield']:.1%}", ""), ("Real 10y bond", f"{s['real_bond']:.1%}", ""),
             ("Excess yield", f"{s['excess_yield']:.1%}", f"{s['excess_median']:.1%}")]
-    lines = [_head("Valuation", "US stocks", f"CAPE {s['cape']:.1f}"),
+    lines = [_head("Valuation", "US stocks"),
              esc(f"CAPE higher than {s['cape_rank']:.0%} of months since {s['since']:%Y}."), _pre(_lines(rows))]
     outcome = s["outcome"]
     if outcome:
         low, high = s["excess_yield"] - s["band"], s["excess_yield"] + s["band"]
-        lines.append(esc(f"Next 10 years after an excess yield of {low:.1%} to {high:.1%} "
-                         f"({outcome['months']} months, {outcome['decades']} decades):"))
+        lines.append(esc(f"Next 10 years from {low:.1%} to {high:.1%} excess yield, {outcome['months']} months:"))
         lines.append(_pre(_lines([("Real, per yr", "Low", "Mid", "High"),
                                   ("Stocks", *(_pct(v) for v in outcome["stocks"])),
                                   ("Over bonds", *(_pct(v) for v in outcome["over_bonds"]))])))
@@ -438,8 +432,6 @@ def valuation_tab(account: Account) -> tuple[str, bytes | None]:
             sleeve.append((name, f"{forward:.1f}" if forward else "—", "—" if earned is None else f"{earned:.1%}",
                            "—" if over is None else _pct(over)))
         lines.append(_pre(_lines(sleeve)))
-    lines.append("<i>Excess yield: 1/CAPE minus the real 10y yield. Low/High: 10th/90th percentile. "
-                 "Over: forward earnings yield minus 10y TIPS.</i>")
     lines.append("<i>" + esc(" · ".join([f"Shiller {s['date']:%b %Y}", *account.sources])) + "</i>")
     lines += ["⚠️ " + esc(note) for note in account.notes]
     return "\n".join(lines), partial(charts.valuation, account.cape, s)
