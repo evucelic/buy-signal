@@ -48,6 +48,71 @@ def same_deposits_in(prices: pd.Series, deposits, index: pd.DatetimeIndex, start
     return (units * aligned).where(aligned.notna())
 
 
+def same_deposits_in_mix(closes: dict[str, pd.Series], weights: dict[str, float], deposits, index: pd.DatetimeIndex,
+                         start_value: float = 0.) -> pd.Series | None:
+    """Value had every deposit been split by the target weights that day; no rebalancing, cash kept as cash.
+
+    None when a weighted listing has no prices.
+    """
+    total = sum(weights.values())
+    if total <= 0:
+        return None
+    value = pd.Series(0., index=index)
+    for symbol, weight in weights.items():
+        share = weight / total
+        if symbol == "CASH":
+            flow = flows(deposits, index)
+            flow.iloc[0] += start_value
+            value = value + (flow * share).cumsum()
+            continue
+        prices = closes.get(symbol)
+        if prices is None or prices.dropna().empty:
+            return None
+        part = same_deposits_in(prices, [(day, amount * share) for day, amount in deposits], index, start_value * share)
+        value = value + part
+    return value.dropna()
+
+
+def money_weighted(flows_in: list[tuple], final_value: float, final_day) -> float | None:
+    """The investor's own return: the rate that grows every flow into the final value.
+
+    Per year from one year on, else over the period.
+    """
+    flows_in = [(pd.Timestamp(day), float(amount)) for day, amount in flows_in if amount]
+    end = pd.Timestamp(final_day)
+    if not flows_in or final_value <= 0:
+        return None
+    first = min(day for day, _ in flows_in)
+    days = (end - first).days
+    if days <= 0:
+        return None
+
+    def surplus(rate):
+        return sum(amount * (1 + rate) ** ((end - day).days / 365.25) for day, amount in flows_in) - final_value
+    low, high = -.99, 10.
+    if surplus(low) * surplus(high) > 0:
+        return None
+    for _ in range(100):
+        middle = (low + high) / 2
+        if surplus(low) * surplus(middle) <= 0:
+            high = middle
+        else:
+            low = middle
+    yearly = (low + high) / 2
+    return yearly if days >= 365 else (1 + yearly) ** (days / 365.25) - 1
+
+
+def drawdown(cumulative: pd.Series) -> pd.Series:
+    wealth = 1 + cumulative
+    return wealth / wealth.cummax() - 1
+
+
+def volatility(cumulative: pd.Series) -> float | None:
+    """Yearly standard deviation of daily returns; None with fewer than 40 days."""
+    daily = (1 + cumulative).pct_change().dropna()
+    return float(daily.std() * math.sqrt(TRADING_DAYS)) if len(daily) >= 40 else None
+
+
 def window(series: pd.Series, start) -> pd.Series:
     return series[series.index >= start]
 

@@ -1,4 +1,6 @@
 """Returns with and without deposits, the benchmark comparison and where the risk sits."""
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -68,3 +70,24 @@ def test_dollar_closes_are_converted_at_each_days_rate():
     eurusd = pd.Series([1.10, 1.00], index=DAYS[:2])
 
     assert performance.in_euros(closes, "USD", eurusd).tolist() == pytest.approx([100, 110])
+
+
+def test_the_target_mix_is_bought_with_each_deposit_and_keeps_its_cash_share():
+    days = pd.bdate_range("2026-01-05", periods=3)
+    closes = {"A": pd.Series([10., 20., 20.], index=days), "B": pd.Series([10., 10., 5.], index=days)}
+
+    value = performance.same_deposits_in_mix(closes, {"A": .5, "B": .3, "CASH": .2}, [(days[0], 100.)], days)
+
+    assert list(value.round(6)) == [100., 150., 135.]
+
+
+def test_the_money_weighted_return_of_one_deposit_is_its_plain_return():
+    assert performance.money_weighted([(date(2026, 1, 2), 100.)], 110., date(2026, 7, 2)) == pytest.approx(.10, abs=1e-6)
+
+
+def test_the_money_weighted_return_weighs_late_deposits_less():
+    flows = [(date(2025, 1, 2), 100.), (date(2025, 12, 31), 100.)]
+
+    rate = performance.money_weighted(flows, 220., date(2026, 1, 2))
+
+    assert .15 < rate < .25  # the 20 gained came almost all on the first 100, held a year
