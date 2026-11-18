@@ -53,21 +53,53 @@ The benchmark is `BUYSIGNAL_BENCHMARK` (default `VWCE.DE`, Vanguard FTSE All-Wor
 
 ## Interactive Brokers (read only)
 
-The bot uses IBKR's Flex Web Service, which can only download reports: it cannot place orders, move money or change settings.
+The bot uses IBKR's Flex Web Service. Its token can only download reports built in Client Portal: it cannot place orders, move money or change settings, and it can be locked to one IP address. What a leak could expose is the report itself, so the query carries only what the bot reads.
 
-1. Client Portal → Performance & Reports → Flex Queries → create an **Activity Flex Query**, format XML, period **Last 365 Calendar Days**, with these sections:
-   - Account Information (currency)
-   - Cash Report (currency breakdown)
-   - Net Asset Value (NAV) in Base (daily)
-   - Open Positions (Summary)
-   - Trades (Execution)
-   - Cash Transactions (Deposits & Withdrawals)
+### 1. The Flex query
 
-   Keep the default date format. Note the Query ID.
-2. Flex Queries → Flex Web Service Configuration → activate it, then generate a token. Set **Valid For IP Address** to the server's Elastic IP and choose an expiry.
-3. In the server's `.env`: `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`, and `IBKR_FLEX_TOKEN_EXPIRES=YYYY-MM-DD` (the expiry chosen). `/status` and `/portfolio` warn 14 days before it.
+Client Portal → Performance & Reports → Flex Queries → create an **Activity Flex Query**.
 
-The statement is read once a weekday after IBKR publishes the previous day, again every three hours until it does, and on `/portfolio` or `/whattobuy` when the stored one is behind. A statement is checked for every section before it replaces the stored holdings, and an older one is refused. Trades, daily values and deposits are kept beyond the 365-day window.
+| Section | Options | Fields |
+|---|---|---|
+| Account Information | | **Currency only** |
+| Cash Report | Currency Breakout; Exclude segments and MTD/YTD breakout | Currency, Level of Detail, Ending Cash |
+| Cash Transactions | Deposits & Withdrawals; Detail | all except Description |
+| Net Asset Value (NAV) in Base | Exclude long and short breakout | all (needs Report Date, Cash, Total) |
+| Open Positions | Summary | all |
+| Trades | Execution | all |
+
+Delivery and general configuration: Format **XML**, Period **Last 365 Calendar Days**, Date Format yyyyMMdd, Time Format HHmmss, separator `;`, Profit and Loss **Default**, and **No** for every Yes/No option. "Breakout by Day" must stay No: it splits the report into one statement per day.
+
+Leave out:
+- Every other field of Account Information: name, address, email and account details. The bot needs only the base currency.
+- Description in Cash Transactions: for a deposit it can name the sending bank.
+- Any other section. Account ID and Alias can stay; IBKR prints the account number in the report header anyway.
+
+Save the query and note its **Query ID**.
+
+### 2. The token
+
+Flex Queries → Flex Web Service Configuration → activate it → Generate New Token:
+- **Valid For IP Address:** the server's public Elastic IP (not the private 172.31.x.x address). Check that the server sends from it: `curl -s https://checkip.amazonaws.com` on the server must print the same address, or IBKR answers with error 1013.
+- **Should Expire After:** the longest offered. Note the date.
+
+Generating a token cancels the previous one. Copy it straight into the server's `.env`, nowhere else.
+
+### 3. The server's `.env`
+
+No quotes and no spaces around `=` (some Docker Compose versions keep quote marks as part of the value):
+
+```
+IBKR_FLEX_TOKEN=123456789012345678901234
+IBKR_FLEX_QUERY_ID=1234567
+IBKR_FLEX_TOKEN_EXPIRES=2027-11-18
+```
+
+`docker compose up -d` (or the next deploy) picks it up. `/status` then shows the statement date and the days left on the token, and warns from 14 days before expiry. If the read fails, `/status` lists the error beside `ibkr`: 1012 an expired token, 1013 a request from another IP, 1014 a wrong query ID, 1015 a wrong token.
+
+### How it is read
+
+The statement is read once a weekday after IBKR publishes the previous day, again every three hours until it does, and on `/portfolio` or `/whattobuy` when the stored one is behind. A deposit that cleared today therefore shows from the next day; `/whattobuy 500` plans for it meanwhile. A statement is checked for every section before it replaces the stored holdings, and an older one is refused. Trades, daily values and deposits are kept beyond the 365-day window.
 
 ## Setup
 
