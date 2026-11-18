@@ -1,6 +1,6 @@
 """The account as stored from IBKR statements, the listings it defines, and when it is read again."""
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -157,3 +157,20 @@ def test_a_period_ibkr_did_not_honour_is_refused(store, monkeypatch):
     with pytest.raises(ValueError, match="instead of"):
         sync.backfill(store, fetch=lambda token, query, period: b"")
     assert sync.history_due(store)
+
+
+def test_an_account_stored_before_the_history_read_existed_still_reads_older_years(store, monkeypatch):
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "t" * 24)
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+    store.save_statement(replace(STATEMENT, nav=STATEMENT.nav[1:]), NOW)
+    with store.connection() as db:
+        db.execute("DELETE FROM account WHERE key='history_from'")
+    first_day = store.nav()[0][0]
+    asked = []
+    monkeypatch.setattr(sync.flex, "parse", lambda payload: replace(STATEMENT, from_date=date(2024, 11, 17), to_date=asked[-1][1], positions=(), cash={}, trades=(), nav=(), deposits=()))
+
+    assert sync.history_due(store)
+    sync.backfill(store, fetch=lambda token, query, period: asked.append(period) or b"")
+
+    assert asked[0][1] == first_day - timedelta(days=1)
+    assert not sync.history_due(store)

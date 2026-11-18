@@ -101,6 +101,14 @@ class PortfolioStore:
         start = min(statement.from_date, date.fromisoformat(stored[0])) if stored else statement.from_date
         db.execute("INSERT OR REPLACE INTO account VALUES ('history_from',?)", (start.isoformat(),))
 
+    def history_from(self) -> date | None:
+        """Falls back to the first daily value for statements saved before history_from was recorded."""
+        stored = self.account().get('history_from')
+        if stored:
+            return date.fromisoformat(stored)
+        nav = self.nav()
+        return nav[0][0] if nav else None
+
     def history_complete(self) -> bool:
         """Whether stored history reaches the account's start."""
         if self.account().get('history_complete'):

@@ -35,10 +35,10 @@ def update(store=None, *, now: datetime | None = None, fetch=flex.fetch) -> str 
 def backfill(store=None, *, fetch=flex.fetch) -> str | None:
     """Store the 365 days before the oldest stored day, one statement per call."""
     store = _store(store)
-    start = store.account().get('history_from')
+    start = store.history_from()
     if not start or store.history_complete():
         return None
-    last = date.fromisoformat(start) - timedelta(days=1)
+    last = start - timedelta(days=1)
     first = max(OLDEST, last - timedelta(days=364))
     payload = fetch(os.environ["IBKR_FLEX_TOKEN"], os.environ["IBKR_FLEX_QUERY_ID"], period=(first, last))
     statement = flex.parse(payload)
@@ -51,8 +51,8 @@ def backfill(store=None, *, fetch=flex.fetch) -> str | None:
 def history_due(store=None) -> bool:
     """Whether the stored history still starts after the account opened."""
     store = _store(store)
-    start = store.account().get('history_from')
-    return bool(start) and date.fromisoformat(start) > OLDEST and not store.history_complete()
+    start = store.history_from()
+    return bool(start) and start > OLDEST and not store.history_complete()
 
 
 def last_weekday(today: date) -> date:
