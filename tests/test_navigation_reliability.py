@@ -146,3 +146,33 @@ def test_uncertain_edit_failure_forces_media_restore_on_next_click(report,wire,m
     monkeypatch.setattr(transport,'show_panel',show)
     interactive.handle_callback(query(token,'vix'),store)
     assert calls==['vix-file']
+
+
+def test_a_tap_is_answered_before_its_edit_runs(report,wire,monkeypatch):
+    store,token=report; events,jobs=[],[]
+    monkeypatch.setattr(transport,'answer_callback',lambda *a:events.append('answered'))
+    monkeypatch.setattr(transport,'show_panel',lambda *a:events.append('edited') or {'message_id':10,'photo':True})
+    interactive.handle_callback(query(token,'vix'),store,run=jobs.append)
+    assert events==['answered'] and len(jobs)==1
+    jobs[0]()
+    assert events==['answered','edited']
+
+
+def test_only_the_latest_tap_on_a_busy_message_is_drawn():
+    navigator=transport._Navigator(); started,release,done=threading.Event(),threading.Event(),threading.Event(); ran=[]
+    navigator.submit(10,lambda:(started.set(),release.wait(2)))
+    assert started.wait(2)
+    navigator.submit(10,lambda:ran.append('mix'))
+    navigator.submit(10,lambda:(ran.append('cash'),done.set()))
+    release.set()
+    assert done.wait(2) and ran==['cash']
+
+
+def test_a_command_panel_whose_send_timed_out_is_edited_in_place(tmp_path,wire,monkeypatch):
+    store=SnapshotStore(tmp_path)
+    token=store.save_panels({'pf_mix':('Mix',b'png'),'pf_cash':('Cash',None)},lambda t,v:{},NOW)
+    shown=[]
+    monkeypatch.setattr(transport,'show_panel',lambda text,keyboard,media,existing:shown.append(existing) or {'message_id':77,'photo':False})
+    tapped={'id':'q','data':f'r:{token}:pf_cash','message':{'message_id':77,'chat':{'id':12345},'photo':[{'file_id':'x'}]}}
+    interactive.handle_callback(tapped,store)
+    assert shown[0]['message_id']==77 and shown[0]['photo']

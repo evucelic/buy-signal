@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 POLL_TIMEOUT = 30  # seconds, Telegram long-poll
 RETRY_DELAY_SEC = 5
+# (connect, read): Telegram can take tens of seconds on a photo, and one that timed out may still arrive.
+UPLOAD_TIMEOUT = (10, 60)
 
 
 def chat_id() -> str:
@@ -113,7 +115,7 @@ def send(text: str, keyboard: dict | None = None) -> bool:
 def send_photo(png: bytes, caption: str) -> bool:
     return _post(
         "sendPhoto", data={"chat_id": chat_id(), "caption": caption[:900]},
-        files={"photo": ("chart.png", png, "image/png")}, timeout=20,
+        files={"photo": ("chart.png", png, "image/png")}, timeout=UPLOAD_TIMEOUT,
     )
 
 
@@ -199,10 +201,10 @@ def show_panel(text: str, keyboard: dict, png: bytes | str | None, existing: dic
                 elif message_id:
                     payload["media"] = jsonlib.dumps({"type": "photo", "media": "attach://chart", "caption": text, "parse_mode": "HTML"})
                     payload["reply_markup"] = jsonlib.dumps(keyboard)
-                    result = _post("editMessageMedia", data=payload, files={"chart": ("chart.png", png, "image/png")}, timeout=20, return_result=True)
+                    result = _post("editMessageMedia", data=payload, files={"chart": ("chart.png", png, "image/png")}, timeout=UPLOAD_TIMEOUT, return_result=True)
                 else:
                     payload.update(caption=text, parse_mode="HTML", reply_markup=jsonlib.dumps(keyboard))
-                    result = _post("sendPhoto", data=payload, files={"photo": ("chart.png", png, "image/png")}, timeout=20, return_result=True)
+                    result = _post("sendPhoto", data=payload, files={"photo": ("chart.png", png, "image/png")}, timeout=UPLOAD_TIMEOUT, return_result=True)
             elif message_id and existing.get("photo"):
                 # Detail toggles reuse the same chart and edit only its caption.
                 payload.update(caption=text, parse_mode="HTML")
@@ -235,6 +237,43 @@ def show_panel(text: str, keyboard: dict, png: bytes | str | None, existing: dic
 
 def close_panel(message_id: int) -> bool:
     return _post("deleteMessage", json={"chat_id": chat_id(), "message_id": message_id})
+
+
+class _Navigator:
+    """One thread for panel edits, keyed by message; a newer tap replaces a queued one."""
+    def __init__(self):
+        self.jobs: dict = {}
+        self.ready = threading.Condition()
+        self.thread = None
+
+    def submit(self, key, job) -> None:
+        with self.ready:
+            self.jobs.pop(key, None)
+            self.jobs[key] = job
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self._run, daemon=True, name='telegram-navigation')
+                self.thread.start()
+            self.ready.notify()
+
+    def _run(self):
+        while True:
+            with self.ready:
+                while not self.jobs:
+                    self.ready.wait()
+                key = next(iter(self.jobs))
+                job = self.jobs.pop(key)
+            try:
+                job()
+            except Exception as exc:
+                log.error("Panel navigation failed (%s: %s)", type(exc).__name__, exc)
+
+
+_navigator = _Navigator()
+
+
+def navigate(key, job) -> None:
+    """Queue a panel edit for message `key`."""
+    _navigator.submit(key, job)
 
 
 def _deliver(reply):

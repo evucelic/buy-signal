@@ -276,6 +276,7 @@ def _single_signal(score_fn) -> str | Report:
         return views.panel_caption(s, s.name, now.isoformat())
     key = item['chart_key']
     png = store.chart_bytes(token, key) if key else None
+    store.mark_self_panel(token)
     def delivered(panel):
         file_id = panel.pop('file_id', None)
         store.remember_media(token, key, file_id)
@@ -482,7 +483,8 @@ def handle_message(text: str) -> str | Report | None:
 
 
 def handle_callback(query) -> None:
-    interactive.handle_callback(query, _snapshot_store)
+    message = query.get('message', {}).get('message_id')
+    interactive.handle_callback(query, _snapshot_store, run=lambda job: transport.navigate(message, job))
 
 
 def start() -> None:

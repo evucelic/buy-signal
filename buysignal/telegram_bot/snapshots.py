@@ -102,7 +102,8 @@ class SnapshotStore:
                 total = self._store_chart(token, key, png, used) if png else None
                 used = total if total is not None else used
                 views[view] = {'caption': caption, 'keyboard': keyboard(token, view), 'chart_key': key if total is not None else None}
-            self._write_views(token, {'created': created, 'views': views, 'panel': None, 'file_ids': {}, 'pending': {}})
+            self._write_views(token, {'created': created, 'views': views, 'panel': None, 'file_ids': {}, 'pending': {},
+                                      'self_panel': True})
             self._trim_assets(token)
         return token
 
@@ -254,6 +255,13 @@ class SnapshotStore:
                     return
                 manifest['file_ids'][chart_key] = file_id
                 self._write_views(token, manifest)
+
+    def mark_self_panel(self, token):
+        """The report is sent as its own panel, so a tap on it edits that message."""
+        with _LOCK:
+            manifest = self.load_views(token)
+            manifest['self_panel'] = True
+            self._write_views(token, manifest)
 
     def set_panel(self, token, panel):
         with _LOCK:
