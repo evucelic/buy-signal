@@ -89,17 +89,31 @@ def sample_assessment() -> BuySignal:
 FLEX_FIXTURE = Path(__file__).resolve().parent.parent / 'tests' / 'fixtures' / 'flex_statement.xml'
 
 
-def sample_personal(directory: Path) -> str:
-    """A /whattobuy reply from the synthetic IBKR statement used by the tests."""
+def sample_personal(directory: Path):
+    """The /portfolio tabs and a /whattobuy reply from the synthetic IBKR statement used by the tests."""
+    import numpy as np
     from buysignal.broker import flex
-    from buysignal.portfolio import plan, presentation
+    from buysignal.portfolio import panels, plan, presentation
     from buysignal.portfolio.store import PortfolioStore
     store = PortfolioStore(directory / 'portfolio.sqlite3')
     store.save_statement(flex.parse(FLEX_FIXTURE.read_bytes()), NOW)
     store.set_targets({'VUAA': 55, 'VWCG': 20, 'AVWS': 20, 'CASH': 5})
-    prices = {'VUAA': 121.35, 'VWCG': 44.10, 'AVWS': 27.02}
-    orders = plan.purchase_plan(store.cash(), store.holdings(), prices, 1.085, store.targets())
-    return presentation.orders_message(orders, source='IBKR cash 2026-11-17')
+    index = pd.bdate_range('2025-01-01', NOW.date())
+    wave = np.sin(np.arange(len(index)) / 9.)
+    closes = {'VUAA': pd.Series(np.linspace(100, 121, len(index)) + 3 * wave, index=index),
+              'VWCG': pd.Series(np.linspace(38, 44, len(index)) + wave, index=index),
+              'AVWS': pd.Series(np.linspace(23, 27, len(index)) + .6 * wave, index=index)}
+    quotes = [{'symbol': s, 'price': float(c.iloc[-1]), 'observed_at': NOW.isoformat()} for s, c in closes.items()]
+    positions = store.positions()
+    fx = pd.Series(1.085 + .02 * np.sin(np.arange(len(index)) / 40.), index=index)
+    benchmark = pd.Series(np.linspace(118, 136, len(index)) + 2.5 * np.sin(np.arange(len(index)) / 13.), index=index)
+    account = panels.Account(positions=positions, holdings=store.holdings(), cash=store.cash(), nav=store.nav(),
+                             deposits=store.deposits(), trades=store.trades(), meta=store.account(), targets=store.targets(),
+                             prices=plan.prices(quotes, positions), quotes=quotes, eurusd=1.085, closes=closes,
+                             eurusd_history=fx, benchmark=benchmark)
+    tabs = panels.build(account)
+    orders = plan.purchase_plan(store.cash(), store.holdings(), plan.prices(quotes, positions), 1.085, store.targets())
+    return tabs, presentation.orders_message(orders, source='IBKR cash 2026-11-17')
 
 
 def build_preview(output: Path) -> Path:
@@ -116,19 +130,27 @@ def build_preview(output: Path) -> Path:
             (output / files[job.key]).write_bytes(png)
     content = {view: {'caption': item['caption'], 'image': files.get(item['chart_key']), 'keyboard': item['keyboard']}
                for view, item in planned.items()}
-    orders = sample_personal(output)
-    payload = json.dumps({'views': content, 'keyboard': views.keyboard('preview')}).replace('<', r'\u003c')
+    from buysignal.portfolio import panels
+    tabs, orders = sample_personal(output)
+    for view, (caption, png) in tabs.items():
+        image = None
+        if png:
+            image = view.replace('@', '-') + '.png'
+            (output / image).write_bytes(png)
+        content[view] = {'caption': caption, 'image': image, 'keyboard': panels.keyboard('preview', view)}
+    payload = json.dumps({'views': content, 'keyboard': views.keyboard('preview'),
+                          'portfolio': panels.keyboard('preview', 'pf_overview')}).replace('<', r'\u003c')
     page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BuySignal · interactive preview</title><style>
 body{margin:0;background:#eaf0f6;color:#17293e;font:16px/1.4 system-ui,sans-serif}*{box-sizing:border-box}main{max-width:440px;margin:24px auto;padding:0 10px}
 h1{font-size:21px}.notice{color:#617085;font-size:12px;margin-bottom:18px}
 article{background:#fff;border:1px solid #dbe3ed;border-radius:14px;margin:16px 0;overflow:hidden;box-shadow:0 3px 12px #18334b08}.text{padding:12px;white-space:pre-wrap}
 pre{font:13px/1.5 monospace;white-space:pre;overflow-x:auto;margin:8px 0}img{display:block;width:100%}.buttons{padding:0 8px 8px}.row{display:flex;gap:4px;margin-top:5px}button{flex:1;cursor:pointer;border:0;border-radius:6px;background:#edf4fc;color:#2864dc;min-width:0;white-space:nowrap;padding:10px 4px;font:600 14px system-ui}button:hover,button:focus{background:#dceaff}b{font-weight:650}
-</style><main><h1>Entry checklist</h1><div class="notice">Interactive local preview · synthetic data · nothing sent to Telegram.</div><article><div class="text">''' + report.messages[0].text + '''</div><div id="overview" class="buttons"></div></article><article id="panel" hidden><img id="chart" alt="Selected signal chart"><div id="caption" class="text"></div><div id="navigation" class="buttons"></div></article><article><div class="text">''' + orders + '''</div></article></main><script id="data" type="application/json">''' + payload + '''</script><script>
+</style><main><h1>Entry checklist</h1><div class="notice">Interactive local preview · synthetic data · nothing sent to Telegram.</div><article><div class="text">''' + report.messages[0].text + '''</div><div id="overview" class="buttons"></div></article><article id="panel" hidden><img id="chart" alt="Selected signal chart"><div id="caption" class="text"></div><div id="navigation" class="buttons"></div></article><article><div class="text"><b>/portfolio</b></div><div id="portfolio" class="buttons"></div></article><article><div class="text">''' + orders + '''</div></article></main><script id="data" type="application/json">''' + payload + '''</script><script>
 const data=JSON.parse(document.getElementById('data').textContent);
 function buttons(target,keyboard){target.replaceChildren();for(const row of keyboard.inline_keyboard){const r=document.createElement('div');r.className='row';for(const b of row){const el=document.createElement('button');el.textContent=b.text;el.onclick=()=>openView(b.callback_data.split(':')[2]);r.append(el)}target.append(r)}}
 function openView(key){const panel=document.getElementById('panel');if(key==='close'){panel.hidden=true;return}const view=data.views[key];if(!view)return;document.getElementById('caption').innerHTML=view.caption;const img=document.getElementById('chart');img.hidden=!view.image;if(view.image)img.src=view.image;buttons(document.getElementById('navigation'),view.keyboard);panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'})}
-buttons(document.getElementById('overview'),data.keyboard);
+buttons(document.getElementById('overview'),data.keyboard);buttons(document.getElementById('portfolio'),data.portfolio);
 </script></html>'''
     (output / 'index.html').write_text(page)
     (output / 'telegram_messages.txt').write_text(report.messages[0].text)

@@ -41,7 +41,7 @@ def make_buy_signal():
 
 @pytest.fixture
 def make_opportunity():
-    """A canned /whattobuy analysis: small caps at a 25% forward-P/E discount, cuts priced in."""
+    """A canned valuation analysis: small caps at a 25% forward-P/E discount, cuts priced in."""
 
     def _make():
         from buysignal.analysis import opportunity as az

@@ -33,7 +33,9 @@ GLOSSES = {
                "Stress line: the spread was wider only 1 day in 5 over the last 10 years."),
     "yield_curve": "Long minus short Treasury yield. Below 0 (inverted) has come before most US recessions.",
 }
-VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES}
+# The /portfolio tabs share the panel machinery; their names are listed here so buttons validate.
+PORTFOLIO_VIEWS = {"pf_overview", "pf_returns", "pf_mix", "pf_risk", "pf_entries", "pf_fees", "pf_cash", "pf_pe"}
+VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES} | PORTFOLIO_VIEWS
 # Retired view names that old reports' buttons still send.
 LEGACY_VIEWS = {"market_info", "eps_info", "fed_changes"}
 _SELECTED = "● "

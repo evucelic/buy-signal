@@ -10,13 +10,13 @@ from datetime import date, datetime, timezone
 from buysignal import config
 from buysignal.resources import force_refreshes
 from buysignal.broker import sync as broker_sync
-from buysignal.portfolio import plan as portfolio_plan, commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
+from buysignal.portfolio import panels as portfolio_panels, plan as portfolio_plan, commands as portfolio_commands, quotes as personal_quotes, sessions as personal_sessions, presentation as personal_presentation
 from buysignal.portfolio.instruments import CASH, resolve as resolve_instrument
 from buysignal.portfolio.store import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import checklist_log
+from buysignal.analysis import chart, checklist_log, opportunity
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
@@ -323,6 +323,92 @@ def _read_account(store) -> list[str]:
             f"{store.account().get('statement_to', 'none')}" for _, error in failed]
 
 
+def _valuations(store) -> tuple[str | None, bytes | None, list[str]]:
+    """The P/E tab: caption and chart from the valuation cache, with each ETF's own dip."""
+    with buy_signal.SIGNAL_LOCK:
+        failed = runner.refresh_macro(only=("valuations",))  # only when its daily refresh is due
+    notes = [f"valuations refresh failed ({error.splitlines()[0][:120]})" for _, error in failed]
+    try:
+        opp = opportunity.analyze()
+    except Exception as exc:
+        log.exception('Valuations unavailable')
+        return None, None, [*notes, f"valuations unavailable ({type(exc).__name__})"]
+    opp.notes.extend(render.stale_collector_notes("valuations", failed, runner.macro_journal().statuses()))
+    try:
+        dips = personal_quotes.dips(store)
+    except Exception:
+        log.exception('ETF dip context unavailable')
+        dips = {}
+    real = None
+    try:
+        rate, observed, old = personal_quotes.real_yield(store)
+        real = (rate, observed) if rate is not None else None
+        if old:
+            notes.append("real yield refresh failed" + ("; using the last value" if rate is not None else ""))
+    except Exception:
+        log.exception('Real yield unavailable')
+    caption = views.caption_pages(render.opportunity_message(opp, dips, notes, real))[0]
+    try:
+        png = chart.render_chart(opp, dips=dips)
+    except Exception as exc:
+        log.warning("P/E chart failed (%s)", type(exc).__name__)
+        png = None
+    return caption, png, []
+
+
+def _account(store, notes) -> portfolio_panels.Account:
+    left = broker_sync.token_days_left(_utc_now().date())
+    if left is not None and left <= broker_sync.TOKEN_WARNING_DAYS:
+        notes.append(f"IBKR token expires in {left} days: generate a new one and update IBKR_FLEX_TOKEN")
+    quotes = personal_quotes.all_quotes(store)
+    eurusd, _, fx_stale = personal_quotes.eurusd(store)
+    if fx_stale:
+        notes.append("EUR/USD refresh failed; using the last rate")
+    positions = store.positions()
+    try:
+        closes, stale = personal_quotes.daily_closes(store)
+        if stale:
+            notes.append("daily prices from an older copy: " + ", ".join(stale))
+    except Exception:
+        log.exception('Daily closes unavailable')
+        closes = {}
+    caption, png, more = _valuations(store)
+    history, history_stale = personal_quotes.eurusd_history(store)
+    bench, bench_stale = personal_quotes.benchmark(store)
+    if history_stale or bench_stale:
+        notes.append("EUR/USD or benchmark history from an older copy" if (history is not None and bench is not None)
+                     else "EUR/USD or benchmark history unavailable")
+    return portfolio_panels.Account(
+        positions=positions, holdings=store.holdings(), cash=store.cash(), nav=store.nav(), deposits=store.deposits(),
+        trades=store.trades(), meta=store.account(), targets=store.targets(), prices=portfolio_plan.prices(quotes, positions),
+        quotes=quotes, eurusd=eurusd, closes=closes, eurusd_history=history, benchmark=bench,
+        benchmark_name=personal_quotes.BENCHMARK.split(".")[0], valuations=caption, valuation_png=png, notes=[*notes, *more],
+    )
+
+
+def _portfolio() -> str | Report:
+    store = _get_portfolio_store()
+    if not broker_sync.configured() and not store.positions():
+        return _NOT_CONNECTED
+    account = _account(store, _read_account(store))
+    now = _utc_now()
+    tabs = portfolio_panels.build(account)
+    try:
+        token = _snapshot_store.save_panels(tabs, portfolio_panels.keyboard, now)
+    except (OSError, ValueError):
+        return tabs["pf_overview"][0] + "\nTab buttons unavailable: the panel could not be saved."
+    item = _snapshot_store.load_views(token)["views"]["pf_overview"]
+    key = item["chart_key"]
+    png = _snapshot_store.chart_bytes(token, key) if key else None
+
+    def delivered(panel):
+        _snapshot_store.remember_media(token, key, panel.pop("file_id", None))
+        panel.update(chart_key=key if panel.get("photo") else None, view="pf_overview")
+        _snapshot_store.set_panel(token, panel)
+    return Report([ReportMessage(item["caption"], key="portfolio", photo=png, keyboard=item["keyboard"],
+                                 panel=True, on_delivery=delivered)])
+
+
 def _whattobuy(text: str) -> str:
     match = re.fullmatch(r'/whattobuy(?:\s+(\d+(?:\.\d+)?)\s*(?:eur|€)?)?', text.strip(), re.I)
     if not match:
@@ -372,6 +458,8 @@ def handle_message(text: str) -> str | Report | None:
     text = text.strip()
     if text.lower().startswith(('/target', '/fees')):
         return portfolio_commands.handle(text, _get_portfolio_store())
+    if text == '/portfolio':
+        return _portfolio()
     # Outside market hours prefer the cache: the data cannot have moved.
     open_now = market_open()
     if text == "/signal":

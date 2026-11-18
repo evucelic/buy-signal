@@ -1,6 +1,7 @@
 """Quotes and daily closes for the listings, benchmarks, EUR/USD and the TIPS yield, cached in the store."""
 from datetime import datetime, timezone
 import logging
+import os
 import math
 import threading
 
@@ -241,3 +242,15 @@ def real_yield(store, *, now=None, refresh=True):
             log.warning('Real yield failed (%s)', type(exc).__name__)
             return (cached['value'], cached['date'], True) if cached else (None, None, True)
 
+
+def eurusd_history(store, *, now=None, refresh=True):
+    """(daily dollars per euro over five years, stale) for converting dollar closes day by day."""
+    return _cached_series(store, 'EURUSD:daily', 'EURUSD=X', _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
+
+
+BENCHMARK = os.environ.get('BUYSIGNAL_BENCHMARK', 'VWCE.DE')  # Vanguard FTSE All-World, accumulating, Xetra, EUR
+
+
+def benchmark(store, *, now=None, refresh=True):
+    """(daily closes of the benchmark in euros, stale)."""
+    return _cached_series(store, BENCHMARK + ':bench', BENCHMARK, _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
