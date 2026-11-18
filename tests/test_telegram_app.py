@@ -479,7 +479,7 @@ FLEX = (Path(__file__).parent / "fixtures" / "flex_statement.xml").read_bytes()
 
 
 @pytest.fixture
-def account(monkeypatch, tmp_path, make_opportunity):
+def account(monkeypatch, tmp_path):
     """An offline account read from the synthetic IBKR statement, with prices and valuations canned."""
     from buysignal.broker import flex
     from buysignal.portfolio import instruments
@@ -496,7 +496,7 @@ def account(monkeypatch, tmp_path, make_opportunity):
     monkeypatch.setattr(app.personal_quotes, "benchmarks", lambda store: ({}, []))
     monkeypatch.setattr(app.personal_quotes, "daily_closes", lambda store: ({}, []))
     monkeypatch.setattr(app.personal_quotes, "real_yield", lambda store: (None, None, False))
-    monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
+    monkeypatch.setattr("buysignal.collectors.valuations.latest_forward_pe", lambda: ([("VUAA", 20.)], "October 31, 2026"))
     monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
     yield store
     instruments.set_current(None)

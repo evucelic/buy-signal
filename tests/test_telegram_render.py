@@ -94,64 +94,9 @@ def test_status_message_truncates_a_runaway_error():
 # stale-collector notes
 
 
-def test_stale_collector_notes_warns_when_a_collector_is_failing():
-    statuses = [CollectorStatus("valuations", NOW, False, "ValueError: FY1 not found")]
-
-    notes = render.stale_collector_notes("valuations", [], statuses)
-
-    assert len(notes) == 1
-    assert "FY1 not found" in notes[0]
-
-
-def test_stale_collector_notes_stays_quiet_when_the_failure_was_already_reported():
-    statuses = [CollectorStatus("valuations", NOW, False, "boom")]
-
-    assert render.stale_collector_notes("valuations", [("valuations", "boom")], statuses) == []
-
-
-def test_stale_collector_notes_stays_quiet_when_the_collector_is_healthy():
-    statuses = [CollectorStatus("valuations", NOW, True, None)]
-
-    assert render.stale_collector_notes("valuations", [], statuses) == []
-
-
-def test_stale_collector_notes_stays_quiet_when_the_collector_is_unknown():
-    assert render.stale_collector_notes("valuations", [], []) == []
-
-
 def test_refresh_failures_lists_each_collector_and_escapes_it():
     block = render.refresh_failures([("fed_rate", "HTTPError: <503>")])
 
     assert "Refresh failed" in block
     assert "fed_rate" in block
     assert "&lt;503&gt;" in block
-
-
-# --- /portfolio P/E tab ---------------------------------------------------------------
-
-
-def test_valuations_show_what_each_market_earns_over_the_real_yield(make_opportunity):
-    message = render.opportunity_message(make_opportunity(), real=(.02, "2026-11-12"))
-
-    assert "S&amp;P 500   20.0  5.0% +3.0%" in message and "Real 10y        2.0%" in message
-    assert "real yield 2026-11-12" in message
-    # Jargon and internal labels stay out of the message.
-    for term in ("Small-cap band", "rate support", "relZ", "z-score"):
-        assert term not in message
-
-
-def test_opportunity_message_leads_with_the_owners_etfs_and_their_own_dips(make_opportunity):
-    opp = make_opportunity()
-    opp.segments[0].etf, opp.segments[2].etf = "VUAA", "VWCG"
-    opp.segments[2].fwd_z = 1.4
-    dips = {"VUAA": {"drawdown": -.031}, "VWCG": {"drawdown": 0., "refresh_failed": True}}
-    message = render.opportunity_message(opp, dips)
-    table = message.split("<pre>")[1].split("</pre>")[0].splitlines()
-    assert [line.split()[0] for line in table[1:]] == ["VUAA", "VWCG", "SmallCap"]
-    assert table[1].split() == ["VUAA", "20.0", "5.0%", "-3.1%"]
-    assert table[2].split() == ["VWCG", "16.0", "6.2%", "0.0%"]
-    assert max(map(len, table)) <= 33
-    assert "Own past: VWCG cheap" in message
-    assert "Dip from cached prices: VWCG" in message
-
-

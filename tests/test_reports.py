@@ -166,15 +166,6 @@ def test_routine_report_is_clinical_without_repeated_coaching():
     assert 'report 2026-11-02' in text
 
 
-def test_valuation_report_keeps_facts_without_allocation_advice(make_opportunity):
-    opportunity = make_opportunity()
-    opportunity.verdict = 'S&P 500 default; investigate before acting'
-    text = render.opportunity_message(opportunity)
-    assert '20.0' in text and '15.0' in text
-    assert 'Verdict:' not in text
-    assert 'investigate before acting' not in text
-
-
 def test_telegram_overview_tables_fit_a_small_phone_at_normal_monospace_size():
     from scripts.preview_entry_report import sample_assessment
     import re

@@ -507,7 +507,7 @@ def test_update_valuations_appends_one_row_per_segment_per_day(tmp_path):
 
 def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
     path = tmp_path / "valuations.csv"
-    small_code = valuations.OPPORTUNITY_SEGMENTS["world_small"]["msci_code"]
+    small_code = valuations.OPPORTUNITY_SEGMENTS["world_small_value"]["msci_code"]
 
     def flaky_metrics(driver, msci_code):
         if msci_code == small_code:
@@ -518,11 +518,23 @@ def test_update_valuations_partial_failure_writes_the_rest(tmp_path):
         "buysignal.collectors.valuations._fetch_index_metrics", side_effect=flaky_metrics
     ), patch("buysignal.collectors.valuations.time.sleep"):
         error = valuations.update_valuations_data(path)
-    assert "world_small" in error
+    assert "world_small_value" in error
     assert "not found" in error
     history = valuations.valuations_history(path)
     assert len(history) == len(valuations.OPPORTUNITY_SEGMENTS) - 1
-    assert "world_small" not in set(history["segment"])
+    assert "world_small_value" not in set(history["segment"])
+
+
+def test_the_latest_forward_pe_is_read_for_each_etf(tmp_path):
+    path = tmp_path / "valuations.csv"
+    pd.DataFrame([["2026-10-02", "sp500", 21.0, 26.0, "September 30, 2026"],
+                  ["2026-11-02", "sp500", 20.4, 25.0, "October 31, 2026"],
+                  ["2026-11-02", "europe", 15.0, 18.0, "October 31, 2026"]],
+                 columns=["date", "segment", "fwd_pe", "trailing_pe", "asof"]).to_csv(path, index=False)
+
+    rows, asof = valuations.latest_forward_pe(path)
+
+    assert rows == [("VUAA", 20.4), ("VWCG", 15.0)] and asof == "October 31, 2026"
 
 
 def test_update_valuations_webdriver_failure_returns_error(tmp_path):

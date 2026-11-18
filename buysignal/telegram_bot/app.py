@@ -16,7 +16,7 @@ from buysignal.portfolio.store import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import checklist_log, opportunity
+from buysignal.analysis import checklist_log
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
@@ -329,7 +329,7 @@ def _valuation(store) -> tuple:
 
     Only HTTP sources refresh here; the MSCI cache needs a browser and is left to the scheduled refresh.
     """
-    from buysignal.collectors import cape
+    from buysignal.collectors import cape, valuations
     with buy_signal.SIGNAL_LOCK:
         failed = runner.refresh_macro(only=("cape",))  # at most weekly, Shiller updates monthly
     notes = [f"CAPE refresh failed ({error.splitlines()[0][:120]})" for _, error in failed]
@@ -339,12 +339,10 @@ def _valuation(store) -> tuple:
         frame = None
     sources, sleeves = [], []
     try:
-        opp = opportunity.analyze()
-        sleeves = [(s.etf, s.fwd_pe) for s in opp.segments if s.etf]
-        asofs = sorted({s.asof for s in opp.segments if s.etf and s.asof})
-        if asofs:
-            sources.append(f"MSCI {asofs[-1]}")
-    except Exception:
+        sleeves, asof = valuations.latest_forward_pe()
+        if asof:
+            sources.append(f"MSCI {asof}")
+    except (OSError, ValueError, KeyError):
         log.exception('MSCI valuations unavailable')
     real = None
     try:

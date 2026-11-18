@@ -90,6 +90,16 @@ def valuations_history(filepath: Path | str = VALUATIONS_CSV) -> pd.DataFrame:
     return df.sort_values(["date", "segment"]).reset_index(drop=True)
 
 
+def latest_forward_pe(filepath: Path | str = VALUATIONS_CSV) -> tuple[list[tuple[str, float]], str | None]:
+    """([(ETF, latest forward P/E)], MSCI's as-of date) for the segments that stand in for an ETF."""
+    history = valuations_history(filepath)
+    latest = history.groupby("segment").tail(1).set_index("segment")
+    rows = [(spec["etf"], float(latest.loc[segment, "fwd_pe"])) for segment, spec in OPPORTUNITY_SEGMENTS.items()
+            if spec.get("etf") and segment in latest.index]
+    asofs = [str(latest.loc[segment, "asof"]) for segment in latest.index if pd.notna(latest.loc[segment, "asof"])]
+    return rows, max(asofs, key=lambda text: pd.Timestamp(text)) if asofs else None
+
+
 
 if __name__ == "__main__":
     from buysignal import logs

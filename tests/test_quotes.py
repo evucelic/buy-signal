@@ -79,23 +79,6 @@ def test_the_pre_close_table_fits_a_phone_and_marks_cached_prices():
     assert "* Cached: VWCG" in text and "VWCG 2026-11-04" in text
 
 
-def test_each_etf_has_its_own_dip_and_a_failure_blanks_only_that_one(store):
-    closes = pd.Series([100.] * 80 + [94.], index=pd.bdate_range(end="2026-11-05", periods=81, tz="Europe/London"))
-    def ticker(symbol):
-        item = Mock()
-        if symbol == "VWCG.DE":
-            item.history.side_effect = TimeoutError("provider unavailable")
-        else:
-            item.history.return_value = pd.DataFrame({"Close": closes})
-        return item
-
-    with patch.object(quotes.yf, "Ticker", side_effect=ticker):
-        result = quotes.dips(store, now=NOW)
-
-    assert set(result) == {"VUAA", "AVWS"}
-    assert result["VUAA"]["drawdown"] == pytest.approx(-.06)
-
-
 def test_daily_history_survives_a_failed_refresh_marked_as_old(store):
     now = datetime(2026, 11, 13, 18, tzinfo=timezone.utc)
     frame = pd.DataFrame({"Close": [1.09, 1.10]}, index=pd.to_datetime(["2026-11-12", "2026-11-13"]).tz_localize("UTC"))

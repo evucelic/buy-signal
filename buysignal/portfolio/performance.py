@@ -33,12 +33,6 @@ def time_weighted(nav: pd.Series, deposits) -> pd.Series:
     return (1 + daily).cumprod() - 1
 
 
-def benchmark_return(prices: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
-    """The benchmark's own cumulative return over `index`, from its first day."""
-    aligned = prices.sort_index().reindex(index.union(prices.index)).ffill().reindex(index).dropna()
-    return aligned / aligned.iloc[0] - 1 if len(aligned) else aligned
-
-
 def same_deposits_in(prices: pd.Series, deposits, index: pd.DatetimeIndex, start_value: float = 0.) -> pd.Series:
     """Value had the starting value and every deposit bought the benchmark that day."""
     aligned = prices.sort_index().reindex(index.union(prices.index)).ffill().reindex(index)

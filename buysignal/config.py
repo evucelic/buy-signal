@@ -103,17 +103,12 @@ CREDIT_STRESS_WINDOW = 2520        # about 10 years of sessions
 CREDIT_STRESS_MIN_OBS = 1260       # fewer than about 5 years cannot define "stressed"
 CREDIT_MAX_OBSERVATION_AGE_DAYS = 7  # calendar-day tolerance for weekends/holidays
 
-# Equity opportunity analyzer (#8): which segment looks attractive
-# Segments compared on MSCI trailing and forward P/E (see collectors/valuations.py).
+# MSCI forward P/E behind each ETF (collectors/valuations.py)
 OPPORTUNITY_SEGMENTS = {
     "sp500": {
         "label": "MSCI USA",
         "msci_code": "984000",
         "etf": "VUAA",  # S&P 500; MSCI USA is the closest index MSCI publishes ratios for
-    },
-    "world_small": {
-        "label": "World Small Cap",
-        "msci_code": "106230",  # broad index: drives the small-cap decision matrix
     },
     "world_small_value": {
         "label": "World SC Value",
@@ -129,9 +124,6 @@ OPPORTUNITY_SEGMENTS = {
 MSCI_INDEX_URL = "https://www.msci.com/indexes/index/{code}"
 MSCI_PAGE_LOAD_TIMEOUT_SEC = 60
 MSCI_RENDER_WAIT_SEC = 15            # JS challenge + SPA render time before reading the page
-SMALL_CAP_DISCOUNT_BANDS = (0.10, 0.20, 0.30)  # fwd-P/E discount vs MSCI USA: little / mild / candidate / investigate
-SMALL_CAP_EASING_OBS = 1             # FedWatch horizons (from nearest) expected to ease, for small-cap rate support
-VALUATION_Z_MIN_OBS = 12             # unique monthly MSCI observations needed before z-scores are shown
 
 # Runner cadence
 # Two ticks: spares a rate-limited source without losing a day to a transient failure.
