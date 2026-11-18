@@ -75,6 +75,7 @@ def _macro_collectors() -> list[MacroCollector]:
     """The macro caches refresh_macro() drives, cheapest and most reliable first, so a browser
     that won't start costs only the two collectors that need one.
     """
+    from buysignal.broker import sync
     from buysignal.collectors import credit, fed_rate, margin_debt, sectors, valuations, vix_history, yield_curve
 
     return [
@@ -89,6 +90,7 @@ def _macro_collectors() -> list[MacroCollector]:
         ),
         MacroCollector("fed_rate", fed_rate.update_fed_rate_data, fed_rate.demands_refresh),
         MacroCollector("valuations", valuations.update_valuations_data),
+        *([MacroCollector(sync.NAME, sync.update, sync.demands_refresh)] if sync.configured() else []),
     ]
 
 

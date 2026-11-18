@@ -8,9 +8,12 @@ import pandas as pd
 import yfinance as yf
 
 from buysignal.config import LIVE_CACHE_TTL_SEC, YAHOO_TIMEOUT_SEC
-from buysignal.portfolio.instruments import INSTRUMENTS
+from buysignal.portfolio import instruments
 
 log = logging.getLogger(__name__)
+# Where a listing's bars are stamped without a zone.
+_ZONES = {'LSE': 'Europe/London', 'XETR': 'Europe/Berlin', 'XAMS': 'Europe/Amsterdam', 'XPAR': 'Europe/Paris',
+          'XSWX': 'Europe/Zurich', 'XMIL': 'Europe/Rome', 'XNYS': 'America/New_York'}
 _LOCK = threading.Lock()
 
 
@@ -27,7 +30,7 @@ def _fetch(instrument, now):
             if closes.empty or not closes.map(math.isfinite).all() or (closes <= 0).any():
                 raise ValueError('Invalid price observations')
             index = pd.to_datetime(closes.index)
-            zone = 'Europe/London' if instrument.exchange == 'LSE' else 'Europe/Berlin'
+            zone = _ZONES.get(instrument.exchange, 'UTC')
             if index.tz is None:
                 index = index.tz_localize(zone)
             closes.index = index.tz_convert('UTC')
@@ -75,7 +78,7 @@ def get(store, instrument, *, now=None, refresh=True):
 
 def all_quotes(store, *, now=None, refresh=True):
     result = []
-    for instrument in INSTRUMENTS:
+    for instrument in instruments.all():
         try:
             result.append(get(store, instrument, now=now, refresh=refresh))
         except Exception as exc:
@@ -109,7 +112,7 @@ def dips(store, *, now=None, refresh=True):
     now = pd.Timestamp(now or datetime.now(timezone.utc))
     now = now.tz_localize('UTC') if now.tzinfo is None else now.tz_convert('UTC')
     result = {}
-    for instrument in INSTRUMENTS:
+    for instrument in instruments.all():
         key = instrument.symbol + ':dip'
         cached = None
         try:
@@ -183,7 +186,7 @@ def _utc(now):
 def daily_closes(store, *, now=None, refresh=True):
     """({symbol: closes in the trading currency}, [symbols served from an old copy])."""
     now, result, stale = _utc(now), {}, []
-    for instrument in INSTRUMENTS:
+    for instrument in instruments.all():
         series, old = _cached_series(store, instrument.symbol + ':daily', instrument.yahoo, _DAILY_PERIOD, _DAILY_TTL_SEC, now, refresh)
         if series is not None:
             result[instrument.symbol] = series
@@ -200,7 +203,7 @@ def session_closes(store, *, now=None):
     from that copy.
     """
     now, result = _utc(now), {}
-    for instrument in INSTRUMENTS:
+    for instrument in instruments.all():
         series, old = _cached_series(store, instrument.symbol + ':daily', instrument.yahoo, _DAILY_PERIOD, 0, now, True)
         if series is not None and not old:
             result[instrument.symbol] = (float(series.iloc[-1]), series.index[-1].date().isoformat(), instrument.currency)
@@ -239,3 +242,4 @@ def real_yield(store, *, now=None, refresh=True):
         except Exception as exc:
             log.warning('Real yield failed (%s)', type(exc).__name__)
             return (cached['value'], cached['date'], True) if cached else (None, None, True)
+

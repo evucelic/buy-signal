@@ -1,0 +1,61 @@
+<FlexQueryResponse queryName="buysignal" type="AF">
+<FlexStatements count="1">
+<FlexStatement accountId="U0000000" fromDate="20251118" toDate="20261117" period="Last365CalendarDays" whenGenerated="20261118;061502">
+<AccountInformation accountId="U0000000" currency="EUR" />
+<CashReport>
+<CashReportCurrency accountId="U0000000" currency="BASE_SUMMARY" levelOfDetail="BaseCurrency" endingCash="1712.40" />
+<CashReportCurrency accountId="U0000000" currency="EUR" levelOfDetail="Currency" endingCash="1650.10" />
+<CashReportCurrency accountId="U0000000" currency="USD" levelOfDetail="Currency" endingCash="67.75" />
+</CashReport>
+<EquitySummaryInBase>
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20251118" cash="150.00" stock="-150.00" total="0.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20251202" cash="600.00" stock="2404.62" total="3004.62" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20251216" cash="600.00" stock="2409.23" total="3009.23" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20251230" cash="600.00" stock="2413.85" total="3013.85" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260113" cash="600.00" stock="2418.46" total="3018.46" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260127" cash="600.00" stock="2423.08" total="3023.08" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260210" cash="600.00" stock="2427.69" total="3027.69" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260224" cash="900.00" stock="3648.46" total="4548.46" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260310" cash="900.00" stock="3655.38" total="4555.38" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260324" cash="900.00" stock="3662.31" total="4562.31" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260407" cash="900.00" stock="3669.23" total="4569.23" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260421" cash="900.00" stock="3676.15" total="4576.15" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260505" cash="900.00" stock="3683.08" total="4583.08" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260519" cash="1100.00" stock="4510.00" total="5610.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260602" cash="1100.00" stock="4518.46" total="5618.46" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260616" cash="1100.00" stock="4526.92" total="5626.92" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260630" cash="1100.00" stock="4535.38" total="5635.38" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260714" cash="1100.00" stock="4543.85" total="5643.85" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260728" cash="1100.00" stock="4552.31" total="5652.31" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260811" cash="1100.00" stock="4560.77" total="5660.77" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260825" cash="1300.00" stock="5400.00" total="6700.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260908" cash="1300.00" stock="5410.00" total="6710.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20260922" cash="1300.00" stock="5420.00" total="6720.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20261006" cash="1300.00" stock="5430.00" total="6730.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20261020" cash="1300.00" stock="5440.00" total="6740.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20261103" cash="1300.00" stock="5450.00" total="6750.00" />
+<EquitySummaryByReportDateInBase accountId="U0000000" currency="EUR" reportDate="20261117" cash="1713.38" stock="6190.62" total="7904.00" />
+</EquitySummaryInBase>
+<OpenPositions>
+<OpenPosition accountId="U0000000" currency="USD" fxRateToBase="0.92" assetCategory="STK" symbol="VUAA" description="VANGUARD S&amp;P 500 UCITS ETF ACC" conid="100" isin="IE00BFMXXD54" listingExchange="LSEETF" reportDate="20261117" position="18" markPrice="121.35" positionValue="2184.30" costBasisPrice="111.33" costBasisMoney="2003.94" side="Long" levelOfDetail="SUMMARY" />
+<OpenPosition accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="VWCG" description="VANGUARD FTSE DEV EUROPE ACC" conid="101" isin="IE00BK5BQX27" listingExchange="IBIS2" reportDate="20261117" position="45" markPrice="44.10" positionValue="1984.50" costBasisPrice="41.75" costBasisMoney="1878.75" side="Long" levelOfDetail="SUMMARY" />
+<OpenPosition accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="AVWS" description="AVANTIS GLOBAL SMALL CAP VALUE" conid="102" isin="IE0003R87OG3" listingExchange="IBIS2" reportDate="20261117" position="80" markPrice="27.02" positionValue="2161.60" costBasisPrice="25.18" costBasisMoney="2014.50" side="Long" levelOfDetail="SUMMARY" />
+</OpenPositions>
+<Trades>
+<Trade accountId="U0000000" currency="USD" fxRateToBase="0.92" assetCategory="STK" symbol="VUAA" description="VUAA ETF" conid="100" isin="IE00TEST0000" listingExchange="LSEETF" tradeID="9000" tradeDate="20251124" dateTime="20251124;101500" exchange="LSEETF" quantity="10" tradePrice="108.42" ibCommission="-1.7" ibCommissionCurrency="USD" buySell="BUY" levelOfDetail="EXECUTION" />
+<Trade accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="VWCG" description="VWCG ETF" conid="101" isin="IE00TEST0001" listingExchange="IBIS2" tradeID="9001" tradeDate="20251203" dateTime="20251203;101500" exchange="IBIS2" quantity="20" tradePrice="40.15" ibCommission="-1.25" ibCommissionCurrency="EUR" buySell="BUY" levelOfDetail="EXECUTION" />
+<Trade accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="AVWS" description="AVWS ETF" conid="102" isin="IE00TEST0002" listingExchange="IBIS2" tradeID="9002" tradeDate="20260218" dateTime="20260218;101500" exchange="IBIS2" quantity="60" tradePrice="24.8" ibCommission="-1.25" ibCommissionCurrency="EUR" buySell="BUY" levelOfDetail="EXECUTION" />
+<Trade accountId="U0000000" currency="USD" fxRateToBase="0.92" assetCategory="STK" symbol="VUAA" description="VUAA ETF" conid="103" isin="IE00TEST0003" listingExchange="LSEETF" tradeID="9003" tradeDate="20260519" dateTime="20260519;101500" exchange="LSEETF" quantity="8" tradePrice="114.9" ibCommission="-1.7" ibCommissionCurrency="USD" buySell="BUY" levelOfDetail="EXECUTION" />
+<Trade accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="VWCG" description="VWCG ETF" conid="104" isin="IE00TEST0004" listingExchange="IBIS2" tradeID="9004" tradeDate="20260819" dateTime="20260819;101500" exchange="IBIS2" quantity="25" tradePrice="43.02" ibCommission="-1.25" ibCommissionCurrency="EUR" buySell="BUY" levelOfDetail="EXECUTION" />
+<Trade accountId="U0000000" currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="AVWS" description="AVWS ETF" conid="105" isin="IE00TEST0005" listingExchange="IBIS2" tradeID="9005" tradeDate="20260819" dateTime="20260819;101500" exchange="IBIS2" quantity="20" tradePrice="26.11" ibCommission="-1.25" ibCommissionCurrency="EUR" buySell="BUY" levelOfDetail="EXECUTION" />
+</Trades>
+<CashTransactions>
+<CashTransaction accountId="U0000000" currency="EUR" fxRateToBase="1" type="Deposits/Withdrawals" amount="3000" dateTime="20251120" reportDate="20251120" description="CASH RECEIPTS" levelOfDetail="DETAIL" />
+<CashTransaction accountId="U0000000" currency="EUR" fxRateToBase="1" type="Deposits/Withdrawals" amount="1500" dateTime="20260216" reportDate="20260216" description="CASH RECEIPTS" levelOfDetail="DETAIL" />
+<CashTransaction accountId="U0000000" currency="EUR" fxRateToBase="1" type="Deposits/Withdrawals" amount="1000" dateTime="20260515" reportDate="20260515" description="CASH RECEIPTS" levelOfDetail="DETAIL" />
+<CashTransaction accountId="U0000000" currency="EUR" fxRateToBase="1" type="Deposits/Withdrawals" amount="1000" dateTime="20260817" reportDate="20260817" description="CASH RECEIPTS" levelOfDetail="DETAIL" />
+<CashTransaction accountId="U0000000" currency="EUR" fxRateToBase="1" type="Deposits/Withdrawals" amount="1100" dateTime="20261116" reportDate="20261116" description="CASH RECEIPTS" levelOfDetail="DETAIL" />
+</CashTransactions>
+</FlexStatement>
+</FlexStatements>
+</FlexQueryResponse>
