@@ -118,3 +118,15 @@ def test_buttons_keep_the_chosen_range_when_switching_tabs():
     assert "r:abcdef123456:pf_value@3m" in data and "r:abcdef123456:pf_mix" in data
     assert all(len(item.encode()) <= 64 for item in data)  # Telegram's callback limit
     assert [len(row) for row in keyboard["inline_keyboard"]] == [3, 3, 3, 3]
+
+
+def test_days_before_the_account_was_funded_do_not_stretch_the_history(tmp_path):
+    store = PortfolioStore(tmp_path / "portfolio.sqlite3")
+    store.save_statement(STATEMENT, datetime(2026, 11, 18, 7, tzinfo=timezone.utc))
+    unfunded = tuple((day.date(), 0., 0.) for day in pd.bdate_range("2025-08-01", "2025-11-17"))
+    account = make_account(store)
+    padded = replace(account, nav=list(unfunded) + account.nav)
+
+    for view in ("pf_value@max", "pf_returns@max"):
+        assert panels.build(padded)[view][0] == panels.build(account)[view][0], view
+    instruments.set_current(None)

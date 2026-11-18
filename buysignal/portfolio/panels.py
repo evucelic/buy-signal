@@ -154,9 +154,12 @@ def _euro_closes(account: Account) -> dict:
 
 
 def history(account: Account) -> History | None:
-    if len(account.nav) < 2:
+    # IBKR reports zeros before the first deposit; the last one lets that deposit start from €0.
+    funded = next((i for i, (_, _, total) in enumerate(account.nav) if total > 0.01), len(account.nav))
+    nav = account.nav[max(funded - 1, 0):]
+    if len(nav) < 2:
         return None
-    value = pd.Series([total for _, _, total in account.nav], index=pd.to_datetime([day for day, _, _ in account.nav]), dtype=float)
+    value = pd.Series([total for _, _, total in nav], index=pd.to_datetime([day for day, _, _ in nav]), dtype=float)
     return History(value, performance.flows(account.deposits, value.index).cumsum(), dict(account.benchmarks))
 
 
