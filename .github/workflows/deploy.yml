@@ -84,4 +84,4 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes "$SSH_USER@$HOST" \
-            'cd ~/buy-signal && git pull --ff-only && docker compose pull && docker compose up -d && docker image prune -f'
+            'cd ~/buy-signal && git pull --ff-only && docker compose pull && docker compose up -d && docker image prune -a -f'
