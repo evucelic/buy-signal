@@ -443,7 +443,7 @@ def test_handle_tick_refresh_failures_do_not_corrupt_the_daily_report(
 
 def test_handle_message_help_and_start_identical():
     assert app.handle_message("/help") == app.handle_message("/start")
-    assert all(command in app.handle_message("/help") for command in ("/signal", "/whattobuy", "/target"))
+    assert all(command in app.handle_message("/help") for command in ("/signal", "/portfolio", "/whattobuy", "/target"))
 
 
 def test_handle_message_unrecognized():
@@ -537,15 +537,15 @@ def test_single_signal_handles_exception():
     assert "ValueError" in reply
 
 
-# --- /whattobuy, /target ---------------------------------------------------------------
+# --- /portfolio, /whattobuy, /target ---------------------------------------------------------------
 
 
 FLEX = (Path(__file__).parent / "fixtures" / "flex_statement.xml").read_bytes()
 
 
 @pytest.fixture
-def account(monkeypatch, tmp_path):
-    """An offline account read from the synthetic IBKR statement, with prices canned."""
+def account(monkeypatch, tmp_path, make_opportunity):
+    """An offline account read from the synthetic IBKR statement, with prices and valuations canned."""
     from buysignal.broker import flex
     from buysignal.portfolio import instruments
     store = PortfolioStore(tmp_path / "portfolio.sqlite3")
@@ -557,8 +557,51 @@ def account(monkeypatch, tmp_path):
     prices = [{"symbol": "VUAA", "price": 121.35}, {"symbol": "VWCG", "price": 44.10}, {"symbol": "AVWS", "price": 27.02}]
     monkeypatch.setattr(app.personal_quotes, "all_quotes", lambda store: prices)
     monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (1.10, "2026-11-17", False))
+    monkeypatch.setattr(app.personal_quotes, "eurusd_history", lambda store: (None, False))
+    monkeypatch.setattr(app.personal_quotes, "benchmark", lambda store: (None, False))
+    monkeypatch.setattr(app.personal_quotes, "daily_closes", lambda store: ({}, []))
+    monkeypatch.setattr(app.personal_quotes, "dips", lambda store: {})
+    monkeypatch.setattr(app.personal_quotes, "real_yield", lambda store: (None, None, False))
+    monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
+    monkeypatch.setattr(app.chart, "render_chart", lambda opp, dips=None: b"\x89PNG-fake")
     yield store
     instruments.set_current(None)
+
+
+def test_portfolio_opens_on_the_overview_with_a_button_for_every_tab(account):
+    reply = app.handle_message("/portfolio")
+
+    message = reply.messages[0]
+    assert message.panel and message.text.startswith("💼 <b>Portfolio</b>")
+    labels = {button["text"].lstrip("● ") for row in message.keyboard["inline_keyboard"] for button in row}
+    assert {"Overview", "Returns", "Mix", "Risk", "Entries", "Fees", "Cash", "P/E", "1Y"} <= labels
+
+
+def test_portfolio_without_ibkr_explains_how_to_connect(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "_portfolio_store", PortfolioStore(tmp_path / "empty.sqlite3"))
+    monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+
+    assert "IBKR not connected" in app.handle_message("/portfolio")
+
+
+def test_portfolio_reads_ibkr_first_when_the_statement_is_behind(account, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app.broker_sync, "demands_refresh", lambda store: True)
+    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: calls.append(kwargs) or [])
+
+    app.handle_message("/portfolio")
+
+    assert {"force": True, "only": ("ibkr",)} in calls
+
+
+def test_a_failed_ibkr_read_still_shows_the_stored_statement_with_a_warning(account, monkeypatch):
+    monkeypatch.setattr(app.broker_sync, "demands_refresh", lambda store: True)
+    monkeypatch.setattr(app.runner, "refresh_macro",
+                        lambda **kwargs: [("ibkr", "IBKR Flex 1012: the token has expired")] if kwargs.get("only") == ("ibkr",) else [])
+
+    text = app.handle_message("/portfolio").messages[0].text
+
+    assert "IBKR read failed" in text and "through 2026-11-17" in text
 
 
 def test_whattobuy_spends_the_cash_at_ibkr(account):
@@ -582,7 +625,7 @@ def test_whattobuy_asks_for_a_target_first(account):
     assert "Set a target mix first" in app.handle_message("/whattobuy")
 
 
-@pytest.mark.parametrize("retired", ["/buy 10 VUAA @ 100", "bought 10 VUAA @ 100", "/portfolio", "/cash 500", "/entries", "/trades", "/holdings"])
+@pytest.mark.parametrize("retired", ["/buy 10 VUAA @ 100", "bought 10 VUAA @ 100", "/cash 500", "/entries", "/trades", "/holdings"])
 def test_hand_entered_purchase_commands_are_gone(retired):
     assert app.handle_message(retired) == "Unrecognized command, try /help."
 

@@ -87,6 +87,28 @@ class SnapshotStore:
         self.prepare(token, result, now.isoformat())
         return token
 
+    def save_panels(self, panels: dict, keyboard, now: datetime) -> str:
+        """Store ready-made tabs, {view: (caption, png or None)}; return the token their buttons carry.
+
+        `keyboard(token, view)` builds each tab's buttons once the token exists. Every chart is
+        already drawn, so nothing is queued for the background worker.
+        """
+        with _LOCK:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            token = secrets.token_hex(6)
+            created = time.time()
+            self._write(token, {'created': created, 'sent_at': now.isoformat(), 'panel': None})
+            views, used = {}, 0
+            for view, (caption, png) in panels.items():
+                base, _, chosen = view.partition('@')
+                key = f'{base}:' + (f'@{chosen}' if chosen else '')
+                total = self._store_chart(token, key, png, used) if png else None
+                used = total if total is not None else used
+                views[view] = {'caption': caption, 'keyboard': keyboard(token, view), 'chart_key': key if total is not None else None}
+            self._write_views(token, {'created': created, 'views': views, 'panel': None, 'file_ids': {}, 'pending': {}})
+            self._trim_assets(token)
+        return token
+
     def load(self, token):
         with _LOCK:
             path = self._path(token)
