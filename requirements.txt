@@ -1357,6 +1357,10 @@ wsproto==1.3.2 \
     --hash=sha256:61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584 \
     --hash=sha256:b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294
     # via trio-websocket
+xlrd==2.0.2 \
+    --hash=sha256:08b5e25de58f21ce71dc7db3b3b8106c1fa776f3024c54e45b45b374e89234c9 \
+    --hash=sha256:ea762c3d29f4cca48d82df517b6d89fbce4db3107f9d78713e48cd321d5c9aa9
+    # via -r requirements.in
 yfinance==1.5.2 \
     --hash=sha256:197fc03485c246547a5a9184956c60150ea33b6f740d877e02a97f123d5cd2b9 \
     --hash=sha256:5935d457fc62cf2f7e9bf1b2d019a8fec8fb0072f58a095eb53740b70a6a06ed

@@ -19,6 +19,8 @@ CREDIT_CSV = DATA_DIR / "creditbaa.csv"  # Baa spread (credit.csv is a different
 YIELD_CURVE_CSV = DATA_DIR / "yieldcurve.csv"
 CHECKLIST_LOG = DATA_DIR / "checklistlog.jsonl"  # append-only, one line per NYSE session
 VALUATIONS_CSV = DATA_DIR / "valuations.csv"
+CAPE_CSV = DATA_DIR / "cape.csv"  # Shiller's monthly CAPE and excess CAPE yield
+SHILLER_DATA_URL = "https://shillerdata.com/"
 CHROMEDRIVER_LOG = DATA_DIR / "chromedriver.log"  # latest Selenium session only, for "Chrome instance exited"
 REFRESH_JOURNAL_JSON = DATA_DIR / "buysignal.schedule.journal.json"  # how each macro collector is doing
 

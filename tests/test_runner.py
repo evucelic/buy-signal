@@ -238,6 +238,7 @@ def test_macro_collectors_covers_every_macro_cache_cheapest_first():
         "credit",
         "yield_curve",
         "vix_history",
+        "cape",
         "sector",
         "margin_debt",
         "fed_rate",

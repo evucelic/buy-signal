@@ -41,12 +41,13 @@ class MacroCollector:
 def _macro_collectors() -> list[MacroCollector]:
     """Collectors in run order, cheapest first, so a browser that won't start costs only the two that need it."""
     from buysignal.broker import sync
-    from buysignal.collectors import credit, fed_rate, margin_debt, sectors, valuations, vix_history, yield_curve
+    from buysignal.collectors import cape, credit, fed_rate, margin_debt, sectors, valuations, vix_history, yield_curve
 
     return [
         MacroCollector("credit", credit.update_credit_data, credit.demands_refresh),
         MacroCollector("yield_curve", yield_curve.update_yield_curve_data, yield_curve.demands_refresh),
         MacroCollector("vix_history", vix_history.update_vix_history),
+        MacroCollector("cape", cape.update_cape_data, cape.demands_refresh),
         MacroCollector("sector", sectors.update_sector_data, sectors.demands_refresh),
         MacroCollector(
             "margin_debt",
