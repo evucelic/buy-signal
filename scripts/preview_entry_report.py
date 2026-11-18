@@ -89,6 +89,18 @@ def sample_assessment() -> BuySignal:
 FLEX_FIXTURE = Path(__file__).resolve().parent.parent / 'tests' / 'fixtures' / 'flex_statement.xml'
 
 
+def sample_cape() -> pd.DataFrame:
+    """Synthetic monthly CAPE since 1881."""
+    months = pd.date_range('1881-01-01', '2026-10-01', freq='MS')
+    step = np.arange(len(months))
+    cape = 16 + 7 * np.sin(step / 70.) + 4 * np.sin(step / 23.) + np.clip(step - 1500, 0, None) * .08
+    excess = 1 / cape - (.02 + .015 * np.sin(step / 40.))
+    stocks = .02 + 1.1 * excess + .03 * np.sin(step / 11.)
+    frame = pd.DataFrame({'date': months, 'cape': cape, 'excess_yield': excess, 'stocks_10y': stocks, 'bonds_10y': .02 + 0 * step})
+    frame.loc[frame.date > '2016-10-01', ['stocks_10y', 'bonds_10y']] = np.nan
+    return frame
+
+
 def sample_personal(directory: Path):
     """The /portfolio tabs and a /whattobuy reply from the synthetic IBKR statement used by the tests."""
     import numpy as np
@@ -106,11 +118,14 @@ def sample_personal(directory: Path):
     quotes = [{'symbol': s, 'price': float(c.iloc[-1]), 'observed_at': NOW.isoformat()} for s, c in closes.items()]
     positions = store.positions()
     fx = pd.Series(1.085 + .02 * np.sin(np.arange(len(index)) / 40.), index=index)
-    benchmark = pd.Series(np.linspace(118, 136, len(index)) + 2.5 * np.sin(np.arange(len(index)) / 13.), index=index)
+    benchmarks = {'S&P 500': pd.Series(np.linspace(560, 690, len(index)) + 14 * np.sin(np.arange(len(index)) / 13.), index=index),
+                  'All-World': pd.Series(np.linspace(118, 136, len(index)) + 2.5 * np.sin(np.arange(len(index)) / 15.), index=index)}
     account = panels.Account(positions=positions, holdings=store.holdings(), cash=store.cash(), nav=store.nav(),
                              deposits=store.deposits(), trades=store.trades(), meta=store.account(), targets=store.targets(),
                              prices=plan.prices(quotes, positions), quotes=quotes, eurusd=1.085, closes=closes,
-                             eurusd_history=fx, benchmark=benchmark)
+                             eurusd_history=fx, benchmarks=benchmarks, history_complete=store.history_complete(),
+                             cape=sample_cape(), sleeves=[('VUAA', 22.1), ('VWCG', 14.6), ('AVWS', 11.9)],
+                             real_yield=(.018, '2026-10-30'), sources=['MSCI Oct 31, 2026', 'TIPS 2026-10-30'], today=NOW.date())
     tabs = panels.build(account)
     orders = plan.purchase_plan(store.cash(), store.holdings(), plan.prices(quotes, positions), 1.085, store.targets())
     return tabs, presentation.orders_message(orders, source='IBKR cash 2026-11-17')
@@ -139,7 +154,7 @@ def build_preview(output: Path) -> Path:
             (output / image).write_bytes(png)
         content[view] = {'caption': caption, 'image': image, 'keyboard': panels.keyboard('preview', view)}
     payload = json.dumps({'views': content, 'keyboard': views.keyboard('preview'),
-                          'portfolio': panels.keyboard('preview', 'pf_overview')}).replace('<', r'\u003c')
+                          'portfolio': panels.keyboard('preview', panels.FIRST)}).replace('<', r'\u003c')
     page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BuySignal · interactive preview</title><style>
 body{margin:0;background:#eaf0f6;color:#17293e;font:16px/1.4 system-ui,sans-serif}*{box-sizing:border-box}main{max-width:440px;margin:24px auto;padding:0 10px}

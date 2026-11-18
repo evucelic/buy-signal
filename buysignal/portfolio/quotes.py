@@ -1,7 +1,6 @@
 """Quotes and daily closes for the listings, benchmarks, EUR/USD and the TIPS yield, cached in the store."""
 from datetime import datetime, timezone
 import logging
-import os
 import math
 import threading
 
@@ -248,9 +247,17 @@ def eurusd_history(store, *, now=None, refresh=True):
     return _cached_series(store, 'EURUSD:daily', 'EURUSD=X', _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
 
 
-BENCHMARK = os.environ.get('BUYSIGNAL_BENCHMARK', 'VWCE.DE')  # Vanguard FTSE All-World, accumulating, Xetra, EUR
+# Accumulating UCITS ETFs quoted in euros on Xetra, so their closes are total returns for a euro investor.
+BENCHMARKS = {'S&P 500': 'SXR8.DE', 'All-World': 'VWCE.DE'}
 
 
-def benchmark(store, *, now=None, refresh=True):
-    """(daily closes of the benchmark in euros, stale)."""
-    return _cached_series(store, BENCHMARK + ':bench', BENCHMARK, _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
+def benchmarks(store, *, now=None, refresh=True):
+    """({name: daily closes in euros}, [names served from an old copy or missing])."""
+    result, stale = {}, []
+    for name, yahoo in BENCHMARKS.items():
+        series, old = _cached_series(store, yahoo + ':bench', yahoo, _DAILY_PERIOD, _DAILY_TTL_SEC, _utc(now), refresh)
+        if series is not None:
+            result[name] = series
+        if old or series is None:
+            stale.append(name)
+    return result, stale

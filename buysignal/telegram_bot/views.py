@@ -32,7 +32,7 @@ GLOSSES = {
     "yield_curve": "Long minus short Treasury yield. Below 0 (inverted) has come before most US recessions.",
 }
 # The /portfolio tabs share the panel machinery; their names are listed here so buttons validate.
-PORTFOLIO_VIEWS = {"pf_overview", "pf_returns", "pf_mix", "pf_risk", "pf_entries", "pf_fees", "pf_cash", "pf_pe"}
+PORTFOLIO_VIEWS = {"pf_value", "pf_returns", "pf_mix", "pf_risk", "pf_trades", "pf_cash", "pf_tax", "pf_valuation"}
 VIEWS = {name for name, _ in SECTIONS} | {"close"} | {"index_" + name for name in INDEXES} | PORTFOLIO_VIEWS
 _SELECTED = "● "
 _HISTORY_ROWS = 6  # recent observations listed in a monthly panel

@@ -16,7 +16,7 @@ from buysignal.portfolio.store import PortfolioStore
 from buysignal.portfolio.service import PrecloseService
 import os
 import logging
-from buysignal.analysis import chart, checklist_log, opportunity
+from buysignal.analysis import checklist_log, opportunity
 from buysignal.collectors import freshness
 from buysignal.schedule import market_hours, runner
 from buysignal.signals import buy_signal, credit_signal, margin_signal, market_signal, rate_signal, sector_signal, vix_signal, yield_curve_signal
@@ -324,37 +324,39 @@ def _read_account(store) -> list[str]:
             f"{store.account().get('statement_to', 'none')}" for _, error in failed]
 
 
-def _valuations(store) -> tuple[str | None, bytes | None, list[str]]:
-    """The P/E tab: caption and chart from the valuation cache, with each ETF's own dip."""
+def _valuation(store) -> tuple:
+    """(CAPE history, [(ETF, forward P/E)], (TIPS yield, date), sources, notes) for the Valuation tab.
+
+    Only HTTP sources refresh here; the MSCI cache needs a browser and is left to the scheduled refresh.
+    """
+    from buysignal.collectors import cape
     with buy_signal.SIGNAL_LOCK:
-        failed = runner.refresh_macro(only=("valuations",))  # only when its daily refresh is due
-    notes = [f"valuations refresh failed ({error.splitlines()[0][:120]})" for _, error in failed]
+        failed = runner.refresh_macro(only=("cape",))  # at most weekly, Shiller updates monthly
+    notes = [f"CAPE refresh failed ({error.splitlines()[0][:120]})" for _, error in failed]
+    try:
+        frame = cape.history()
+    except (OSError, ValueError):
+        frame = None
+    sources, sleeves = [], []
     try:
         opp = opportunity.analyze()
-    except Exception as exc:
-        log.exception('Valuations unavailable')
-        return None, None, [*notes, f"valuations unavailable ({type(exc).__name__})"]
-    opp.notes.extend(render.stale_collector_notes("valuations", failed, runner.macro_journal().statuses()))
-    try:
-        dips = personal_quotes.dips(store)
+        sleeves = [(s.etf, s.fwd_pe) for s in opp.segments if s.etf]
+        asofs = sorted({s.asof for s in opp.segments if s.etf and s.asof})
+        if asofs:
+            sources.append(f"MSCI {asofs[-1]}")
     except Exception:
-        log.exception('ETF dip context unavailable')
-        dips = {}
+        log.exception('MSCI valuations unavailable')
     real = None
     try:
         rate, observed, old = personal_quotes.real_yield(store)
         real = (rate, observed) if rate is not None else None
+        if real:
+            sources.append(f"TIPS {observed}")
         if old:
             notes.append("real yield refresh failed" + ("; using the last value" if rate is not None else ""))
     except Exception:
         log.exception('Real yield unavailable')
-    caption = views.caption_pages(render.opportunity_message(opp, dips, notes, real))[0]
-    try:
-        png = chart.render_chart(opp, dips=dips)
-    except Exception as exc:
-        log.warning("P/E chart failed (%s)", type(exc).__name__)
-        png = None
-    return caption, png, []
+    return frame, sleeves, real, sources, notes
 
 
 def _account(store, notes) -> portfolio_panels.Account:
@@ -373,17 +375,19 @@ def _account(store, notes) -> portfolio_panels.Account:
     except Exception:
         log.exception('Daily closes unavailable')
         closes = {}
-    caption, png, more = _valuations(store)
     history, history_stale = personal_quotes.eurusd_history(store)
-    bench, bench_stale = personal_quotes.benchmark(store)
-    if history_stale or bench_stale:
-        notes.append("EUR/USD or benchmark history from an older copy" if (history is not None and bench is not None)
-                     else "EUR/USD or benchmark history unavailable")
+    if history_stale:
+        notes.append("EUR/USD history from an older copy" if history is not None else "EUR/USD history unavailable")
+    benchmarks, bench_stale = personal_quotes.benchmarks(store)
+    if bench_stale:
+        notes.append("benchmark prices from an older copy or missing: " + ", ".join(bench_stale))
+    cape, sleeves, real, sources, more = _valuation(store)
     return portfolio_panels.Account(
         positions=positions, holdings=store.holdings(), cash=store.cash(), nav=store.nav(), deposits=store.deposits(),
         trades=store.trades(), meta=store.account(), targets=store.targets(), prices=portfolio_plan.prices(quotes, positions),
-        quotes=quotes, eurusd=eurusd, closes=closes, eurusd_history=history, benchmark=bench,
-        benchmark_name=personal_quotes.BENCHMARK.split(".")[0], valuations=caption, valuation_png=png, notes=[*notes, *more],
+        quotes=quotes, eurusd=eurusd, closes=closes, eurusd_history=history, benchmarks=benchmarks,
+        history_complete=store.history_complete(), cape=cape, sleeves=sleeves, real_yield=real, sources=sources,
+        today=_utc_now().date(), notes=[*notes, *more],
     )
 
 
@@ -397,14 +401,14 @@ def _portfolio() -> str | Report:
     try:
         token = _snapshot_store.save_panels(tabs, portfolio_panels.keyboard, now)
     except (OSError, ValueError):
-        return tabs["pf_overview"][0] + "\nTab buttons unavailable: the panel could not be saved."
-    item = _snapshot_store.load_views(token)["views"]["pf_overview"]
+        return tabs[portfolio_panels.FIRST][0] + "\nTab buttons unavailable: the panel could not be saved."
+    item = _snapshot_store.load_views(token)["views"][portfolio_panels.FIRST]
     key = item["chart_key"]
     png = _snapshot_store.chart_bytes(token, key) if key else None
 
     def delivered(panel):
         _snapshot_store.remember_media(token, key, panel.pop("file_id", None))
-        panel.update(chart_key=key if panel.get("photo") else None, view="pf_overview")
+        panel.update(chart_key=key if panel.get("photo") else None, view=portfolio_panels.FIRST)
         _snapshot_store.set_panel(token, panel)
     return Report([ReportMessage(item["caption"], key="portfolio", photo=png, keyboard=item["keyboard"],
                                  panel=True, on_delivery=delivered)])

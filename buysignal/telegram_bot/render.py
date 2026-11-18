@@ -25,7 +25,7 @@ TABLE_LABELS = {
 # Keep the menu task-oriented; detailed signal shortcuts remain available in /help.
 COMMANDS = [
     {"command": "signal", "description": "Entry checklist, with chart buttons"},
-    {"command": "portfolio", "description": "Holdings, mix, growth, entries and cash from IBKR"},
+    {"command": "portfolio", "description": "Value, returns, mix, tax and cash from IBKR"},
     {"command": "whattobuy", "description": "Whole-share orders for your IBKR cash, fees included"},
     {"command": "target", "description": "Set your target mix: /target VUAA 60 VWCG 20 AVWS 15 CASH 5"},
     {"command": "help", "description": "All commands"},
@@ -33,7 +33,7 @@ COMMANDS = [
 
 HELP_TEXT = (
     "/signal — entry checklist, with charts\n"
-    "/portfolio — holdings, mix, growth, entries, cash, P/E (read from IBKR)\n"
+    "/portfolio — value, returns, mix, risk, trades, cash, tax, valuation (IBKR)\n"
     "/whattobuy — orders for your IBKR cash · /whattobuy 500 for 500 €\n"
     "/target — /target VUAA 60 VWCG 20 AVWS 15 CASH 5\n"
     "/fees — fee schedule: /fees tiered, /fees VUAA 1.70 0.05\n"

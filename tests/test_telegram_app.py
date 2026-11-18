@@ -493,23 +493,22 @@ def account(monkeypatch, tmp_path, make_opportunity):
     monkeypatch.setattr(app.personal_quotes, "all_quotes", lambda store: prices)
     monkeypatch.setattr(app.personal_quotes, "eurusd", lambda store: (1.10, "2026-11-17", False))
     monkeypatch.setattr(app.personal_quotes, "eurusd_history", lambda store: (None, False))
-    monkeypatch.setattr(app.personal_quotes, "benchmark", lambda store: (None, False))
+    monkeypatch.setattr(app.personal_quotes, "benchmarks", lambda store: ({}, []))
     monkeypatch.setattr(app.personal_quotes, "daily_closes", lambda store: ({}, []))
-    monkeypatch.setattr(app.personal_quotes, "dips", lambda store: {})
     monkeypatch.setattr(app.personal_quotes, "real_yield", lambda store: (None, None, False))
     monkeypatch.setattr(app.opportunity, "analyze", make_opportunity)
-    monkeypatch.setattr(app.chart, "render_chart", lambda opp, dips=None: b"\x89PNG-fake")
+    monkeypatch.setattr(app.runner, "refresh_macro", lambda **kwargs: [])
     yield store
     instruments.set_current(None)
 
 
-def test_portfolio_opens_on_the_overview_with_a_button_for_every_tab(account):
+def test_portfolio_opens_on_the_value_tab_with_a_button_for_every_tab(account):
     reply = app.handle_message("/portfolio")
 
     message = reply.messages[0]
-    assert message.panel and message.text.startswith("💼 <b>Portfolio</b>")
+    assert message.panel and message.text.startswith("<b>Value</b>")
     labels = {button["text"].lstrip("● ") for row in message.keyboard["inline_keyboard"] for button in row}
-    assert {"Overview", "Returns", "Mix", "Risk", "Entries", "Fees", "Cash", "P/E", "1Y"} <= labels
+    assert {"Value", "Returns", "Mix", "Risk", "Trades", "Cash", "Tax", "Valuation", "1Y"} <= labels
 
 
 def test_portfolio_without_ibkr_explains_how_to_connect(monkeypatch, tmp_path):
