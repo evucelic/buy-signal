@@ -108,3 +108,11 @@ def test_a_trade_listed_both_per_order_and_per_execution_counts_once():
     both = STATEMENT.replace(b"</Trades>", order_rows.split(b"<Trades>")[1].split(b"</Trades>")[0] + b"</Trades>")
 
     assert len(flex.parse(both).trades) == len(flex.parse(STATEMENT).trades)
+
+
+def test_a_deposit_counts_on_the_day_ibkr_booked_it():
+    booked_later = STATEMENT.replace(b'dateTime="20260515" reportDate="20260515"', b'dateTime="20260515" reportDate="20260518"')
+
+    deposits = dict(flex.parse(booked_later).deposits)
+
+    assert date(2026, 5, 18) in deposits and date(2026, 5, 15) not in deposits

@@ -173,7 +173,9 @@ def parse(payload: bytes) -> Statement:
     deposits = {}
     for item in _finest(node.iterfind("./CashTransactions/CashTransaction"), ("DETAIL", "SUMMARY")):
         if item.get("type") == "Deposits/Withdrawals":
-            day = _day(item.get("dateTime") or item.get("reportDate"))
+            # The day IBKR booked it, which is when the account's value includes it; the
+            # transaction's own time can be a day earlier.
+            day = _day(item.get("reportDate") or item.get("dateTime"))
             amount = _number(item.get("amount")) * _number(item.get("fxRateToBase") or "1")
             deposits[day] = deposits.get(day, Decimal(0)) + amount
     return Statement(
